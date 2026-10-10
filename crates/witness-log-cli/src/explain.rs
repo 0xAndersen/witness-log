@@ -26,13 +26,12 @@ const VERDICTS: &[VerdictDoc] = &[
     VerdictDoc {
         name: "WITNESSED",
         exit_code: 0,
-        summary: "Strongest verdict. Cryptography, identity, and structure all check out, AND independent witnesses from a directory YOU supplied corroborate this checkpoint.",
+        summary: "Strongest verdict. Cryptography and structure check out, AND witnesses run by at least two distinct independent operators, from a directory YOU supplied, cosigned this checkpoint.",
         proves: &[
             "the leaves reproduce the signed checkpoint root exactly",
-            "the checkpoint was signed by the identity you pinned with --identity",
-            "at least one witness that is NOT project-operated countersigned it",
-            "operator diversity across counted receipts is at least 50%",
-            "the receipt count met your --threshold",
+            "if you passed --identity: the checkpoint was signed by that identity. Without --identity the verdict says nothing about whose log this is (the output warns)",
+            "valid receipts from witnesses in YOUR trusted directory come from at least two distinct independent operators (project-operated witnesses count as one bucket; witnesses run by the log's own operator count as none)",
+            "the receipt count met your --threshold as a fraction of that directory",
         ],
         does_not_prove: &[
             "that the logged content is TRUE — an agent can honestly log a false statement",
@@ -44,22 +43,22 @@ const VERDICTS: &[VerdictDoc] = &[
     VerdictDoc {
         name: "CONSISTENT-UNWITNESSED",
         exit_code: 10,
-        summary: "Cryptography, identity, and structure all check out. You supplied a trusted directory, but witness coverage is absent, below your threshold, or entirely project-operated.",
+        summary: "Cryptography and structure check out. You supplied a trusted directory, but the receipts fall short of WITNESSED: none are from your directory, the count is below your threshold, or fewer than two distinct independent operators cosigned (the verdict line names which).",
         proves: &[
             "the leaves reproduce the signed checkpoint root exactly",
-            "the checkpoint was signed by the identity you pinned",
+            "if you passed --identity: the checkpoint was signed by that identity",
             "nothing was rewritten after signing",
         ],
         does_not_prove: &[
             "equivocation resistance — a log with no independent witnesses can show one history to you and a different one to someone else, and neither of you can tell",
             "that the checkpoint's own timestamp is accurate; it's self-asserted",
         ],
-        next_step: "Get more independent witnesses into your trusted directory, lower --threshold if your risk tolerance genuinely allows it, or treat this as the honest ceiling for a log that isn't witnessed yet.",
+        next_step: "Have the log submit its checkpoint to witnesses run by at least two distinct operators that are in your trusted directory (`witness-log witness submit`), lower --threshold if your risk tolerance allows it, or treat this as the honest ceiling for a log that isn't witnessed yet.",
     },
     VerdictDoc {
         name: "UNANCHORED",
         exit_code: 20,
-        summary: "Every check passed, but you supplied NO external trust anchor — so this proves the file doesn't contradict itself, and nothing more.",
+        summary: "Every check passed, but you supplied no --directory, so the receipts could not be scored against anything you trust. This proves the file doesn't contradict itself, and nothing more.",
         proves: &[
             "the dossier is internally consistent: leaves reproduce the root, signatures verify against the keys the dossier itself carries",
         ],
@@ -68,7 +67,7 @@ const VERDICTS: &[VerdictDoc] = &[
             "ANYTHING about authenticity to someone who doesn't already trust the author",
             "that the witnesses it lists are real, independent, or exist at all — a fabricated dossier ships its own witness directory and reaches exactly this verdict",
         ],
-        next_step: "Re-run with --identity <hex> (the identity you expected, from somewhere the dossier's author doesn't control) and --directory <path> (a witness directory you trust). Both are required to exceed this verdict; that requirement is the point, not an inconvenience.",
+        next_step: "Re-run with --directory <path> (a witness directory you trust): that is what lifts the ceiling. Pass --identity <hex> as well (the identity you expected, from somewhere the dossier's author doesn't control) so the verdict is about a specific party and not just about some log. A gate should always pass both.",
     },
     VerdictDoc {
         name: "DIVERGED",
@@ -80,7 +79,7 @@ const VERDICTS: &[VerdictDoc] = &[
         does_not_prove: &[
             "necessarily that someone acted maliciously — a truncated file or a mismatched --identity produces this too. The verdict says a check failed, not why someone caused it to fail.",
         ],
-        next_step: "Read the individual check lines above the verdict: exactly one of them will show which failed. If 'Identity bound' failed, confirm the --identity you passed is the one you actually expected.",
+        next_step: "Read the check lines above the verdict: the ones marked ✗ failed (a deleted or reordered leaf fails both leaf structure and Merkle continuity). If 'Identity bound' failed, confirm the --identity you passed is the one you actually expected. `--json` carries the same booleans.",
     },
 ];
 

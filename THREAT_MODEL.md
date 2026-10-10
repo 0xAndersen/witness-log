@@ -129,6 +129,14 @@ guarantees, and what it doesn't:
   Windows the operator removes them. Startup aborts on any unreadable or
   inconsistent record, and on a missing state directory, rather than
   silently starting from empty. Re-adding a known log never resets it.
+  **The one thing no code can catch is a key restored without its
+  memory**: `witness.key` with an empty `logs/` is a witness that will
+  cosign whatever size-N root it is shown next, contradicting what the
+  same key cosigned before. `witness.json` records the key it was
+  initialised with and `serve` refuses a mismatch, but an empty `logs/`
+  is indistinguishable from a new witness. Back up `witness.key`,
+  `witness.json` and `logs/` as one unit, always (see
+  `deploy/witness/OPERATORS.md`).
 - **Open enrollment cannot be abused to impersonate.** Only canonical
   origins (`witness-log/<identity key>`) are enrolled, and only when the
   checkpoint verifies under the key the origin names.
@@ -191,6 +199,17 @@ It does **not** tell you that the events described actually happened as
 described, that the log is complete, or that history hasn't been shown
 differently to someone else — unless the witness diversity is genuinely
 strong.
+
+Two inputs you control decide how much a run can conclude. `--directory`
+(a witness directory you trust) is what lifts the ceiling above
+UNANCHORED: receipts are scored only against it. `--identity` (the key you
+expected, from somewhere the dossier's author does not control) ties the
+verdict to a party: without it, WITNESSED means independent operators
+cosigned *a* log, not *whose*, and the CLI says so. A gate passes both.
+Timestamps in leaves and checkpoints are self-asserted; a verifier that
+cares about time uses the witnesses' `witnessed_at_ms` (`WitnessPolicy`
+does), and a leaf whose timestamp was edited after signing fails
+structural validation and reads as DIVERGED like any other alteration.
 
 ## Reporting an issue with this model
 

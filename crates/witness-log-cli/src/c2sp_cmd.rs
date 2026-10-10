@@ -19,13 +19,25 @@ fn rule() {
     println!("  {}", "─".repeat(66));
 }
 
-/// `witness-log c2sp show <dossier.json> --origin <name>`
+/// Options for `c2sp show`.
+pub struct ShowOptions {
+    /// Print only the checkpoint body (or the signed note with
+    /// `sign_with`), nothing else, for piping.
+    pub raw: bool,
+    /// Path of the log's journal. Its header holds the identity key, so
+    /// the body can be signed into a verifiable note here instead of in
+    /// the agent's process.
+    pub sign_with: Option<String>,
+}
+
+/// `witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]`
 ///
-/// Render this dossier's checkpoint as a C2SP checkpoint body. Does NOT
-/// sign — signing requires the log's private key, which this tool never
-/// handles. Use `witness_log_core::c2sp::bridge::sign_as_c2sp` from the
-/// process that holds the key.
-pub fn run_show(dossier_path: &str, origin: &str) -> ExitCode {
+/// Render this dossier's checkpoint as a C2SP checkpoint body. Without
+/// `--sign-with` nothing is signed: the body is what a witness cosigns,
+/// and the signed note is what `witness submit` produces for you. With
+/// `--sign-with <journal>` the journal's identity key signs the body, so
+/// the output is a note `c2sp verify` accepts.
+pub fn run_show(dossier_path: &str, origin: &str, opts: &ShowOptions) -> ExitCode {
     let raw = match std::fs::read_to_string(dossier_path) {
         Ok(r) => r,
         Err(e) => {
@@ -55,11 +67,61 @@ pub fn run_show(dossier_path: &str, origin: &str) -> ExitCode {
         }
     };
 
+    // Optional signing with the identity key held in a journal header.
+    let signed: Option<String> = match &opts.sign_with {
+        None => None,
+        Some(journal) => {
+            let (log, _) = match witness_log_core::journal::LeafJournal::replay(journal) {
+                Ok(x) => x,
+                Err(e) => {
+                    eprintln!("{journal}: {e}");
+                    return ExitCode::from(EXIT_USAGE);
+                }
+            };
+            if !log
+                .identity_pubkey_hex()
+                .eq_ignore_ascii_case(&dossier.checkpoint.signer_pubkey)
+            {
+                eprintln!(
+                    "{journal} holds identity {}, but the dossier's checkpoint was signed by {}: refusing to sign another log's head",
+                    log.identity_pubkey_hex(),
+                    dossier.checkpoint.signer_pubkey
+                );
+                return ExitCode::from(EXIT_USAGE);
+            }
+            let key = ed25519_dalek::SigningKey::from_bytes(&log.identity_bytes());
+            match bridge::sign_as_c2sp(&dossier.checkpoint, origin, &key).and_then(|n| n.encode()) {
+                Ok(text) => Some(text),
+                Err(e) => {
+                    eprintln!("could not sign note: {e}");
+                    return ExitCode::from(EXIT_USAGE);
+                }
+            }
+        }
+    };
+
+    if opts.raw {
+        print!("{}", signed.as_deref().unwrap_or(&body));
+        return ExitCode::from(EXIT_OK);
+    }
+
     println!();
-    println!("  C2SP checkpoint body (c2sp.org/tlog-checkpoint)");
-    rule();
-    print!("{body}");
-    rule();
+    match &signed {
+        Some(note) => {
+            println!(
+                "  C2SP signed note (c2sp.org/signed-note), signed by the journal's identity key"
+            );
+            rule();
+            print!("{note}");
+            rule();
+        }
+        None => {
+            println!("  C2SP checkpoint body (c2sp.org/tlog-checkpoint)");
+            rule();
+            print!("{body}");
+            rule();
+        }
+    }
     println!();
     println!("  This body is what a witness cosigns. It carries origin, tree size,");
     println!("  and root hash — and deliberately no timestamp: in C2SP, time is");
@@ -82,9 +144,24 @@ pub fn run_show(dossier_path: &str, origin: &str) -> ExitCode {
         None => println!("    (checkpoint signer_pubkey is not a valid Ed25519 key)"),
     }
     println!();
-    println!("  To sign this as a C2SP note, call bridge::sign_as_c2sp from the");
-    println!("  process holding the identity key. This tool never touches private keys.");
-    println!();
+    if signed.is_none() {
+        println!("  To get a signed note: `witness-log witness submit <journal> --directory ...`");
+        println!("  submits and cosigns it for you, or add `--sign-with <journal>` here to sign");
+        println!("  the body with the identity key in that journal. `--raw` prints only the");
+        println!("  body (or note) for piping into `c2sp verify`.");
+        println!();
+    }
+    let canonical = format!(
+        "{}{}",
+        witness_log_core::c2sp::CANONICAL_ORIGIN_PREFIX,
+        dossier.checkpoint.signer_pubkey.to_ascii_lowercase()
+    );
+    if origin != canonical {
+        println!("  Note: this origin is not the canonical `witness-log/<identity hex>`.");
+        println!("  Witnesses with open enrollment accept only the canonical origin, and only");
+        println!("  cosignatures under it count toward a WITNESSED verdict (SPEC.md §9.3).");
+        println!();
+    }
     ExitCode::from(EXIT_OK)
 }
 
@@ -162,6 +239,15 @@ pub fn run_verify(note_path: &str, vkey_strings: &[String]) -> ExitCode {
         .iter()
         .filter(|k| k.sig_type == witness_log_core::c2sp::SIG_TYPE_COSIGNATURE_V1)
         .collect();
+    let has_log_key = vkeys
+        .iter()
+        .any(|k| k.sig_type != witness_log_core::c2sp::SIG_TYPE_COSIGNATURE_V1);
+    if !has_log_key {
+        println!("  ⚠ Only cosignature (witness) keys were supplied. The note's own signature");
+        println!("    cannot be checked without the log's vkey (printed by `c2sp show`);");
+        println!("    the cosignatures below are checked, but the note itself is unverified.");
+        println!();
+    }
     let mut verdict = match note.verify(&vkeys) {
         Ok(names) => {
             println!("  ✓ Verified by {} known key(s):", names.len());
@@ -190,7 +276,11 @@ pub fn run_verify(note_path: &str, vkey_strings: &[String]) -> ExitCode {
             EXIT_OK
         }
         Err(e) => {
-            println!("  ✗ Verification FAILED: {e}");
+            if has_log_key {
+                println!("  ✗ Verification FAILED: {e}");
+            } else {
+                println!("  ✗ Note not verified: no log vkey supplied ({e})");
+            }
             EXIT_DIVERGED
         }
     };

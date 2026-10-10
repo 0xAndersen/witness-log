@@ -57,7 +57,10 @@ const USAGE: &str = "usage:
   witness-log witness add-log <dir> <origin> <log-vkey>
   witness-log witness info <http://witness-url>
   witness-log witness submit <journal> --directory <witnesses.json> [--out dossier.json]
-                                  [--state <client-state.json>] [--min <n>]";
+                                  [--state <client-state.json>] [--min <n>]
+  witness-log witness verify-evidence <evidence.json>
+      Check an equivocation proof a witness recorded under evidence/:
+      exit 0 if it proves two signed roots for one size, 30 if not.";
 
 #[derive(Serialize, Deserialize, Clone)]
 struct WitnessConfig {
@@ -66,6 +69,12 @@ struct WitnessConfig {
     public_url: String,
     #[serde(default)]
     compute_provider: Option<String>,
+    /// Hex public key of `witness.key` at init. `serve` refuses to start
+    /// if the key on disk is a different one: a state directory restored
+    /// next to the wrong key would cosign heads that key never saw.
+    /// Absent in directories initialised before 0.3.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pubkey_hex: Option<String>,
 }
 
 fn usage_err(msg: &str) -> ExitCode {
@@ -80,13 +89,72 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 pub fn run(args: &[String]) -> ExitCode {
     let sub = args.first().map(String::as_str);
     let rest = args.get(1..).unwrap_or(&[]);
+    if matches!(sub, Some("--help") | Some("-h") | Some("help"))
+        || rest.iter().any(|a| a == "--help" || a == "-h")
+    {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     match sub {
         Some("init") => cmd_init(rest),
         Some("serve") => cmd_serve(rest),
         Some("add-log") => cmd_add_log(rest),
         Some("info") => cmd_info(rest),
         Some("submit") => cmd_submit(rest),
+        Some("verify-evidence") => cmd_verify_evidence(rest),
         _ => usage_err("witness: expected a subcommand"),
+    }
+}
+
+// ------------------------------------------------------- verify-evidence
+
+/// Independently check a proof written by `serve` under `evidence/`.
+/// Anyone holding the file can run this; no witness state is needed.
+fn cmd_verify_evidence(args: &[String]) -> ExitCode {
+    let Some(path) = args.first().filter(|a| !a.starts_with("--")) else {
+        return usage_err("witness verify-evidence: missing <evidence.json>");
+    };
+    let raw = match fs::read_to_string(path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let doc: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{path}: not JSON: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    // Accept the file as `serve` writes it ({"proof": {...}}) or a bare proof.
+    let proof_value = doc.get("proof").cloned().unwrap_or(doc);
+    let proof: witness_log_network::tlog_witness::EquivocationProof =
+        match serde_json::from_value(proof_value) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{path}: not an equivocation proof: {e}");
+                return ExitCode::from(2);
+            }
+        };
+    let describe = |n: &str| -> String {
+        witness_log_core::c2sp::SignedNote::parse(n)
+            .ok()
+            .and_then(|note| Checkpoint::from_note(&note).ok())
+            .map(|c| format!("size {} root {}", c.tree_size, hex::encode(c.root_hash)))
+            .unwrap_or_else(|| "unparsable note".to_string())
+    };
+    println!("origin:  {}", proof.origin);
+    println!("log key: {}", proof.log_vkey);
+    println!("note A:  {}", describe(&proof.earlier_note));
+    println!("note B:  {}", describe(&proof.conflicting_note));
+    if proof.verify() {
+        println!("PROVEN: both notes are signed by the log's key, name the same origin and size, and commit different roots. This identity showed two histories.");
+        ExitCode::SUCCESS
+    } else {
+        println!("NOT PROVEN: the notes do not both verify under the log key with one origin, one size and two roots. This file is not evidence of equivocation.");
+        ExitCode::from(30)
     }
 }
 
@@ -201,6 +269,7 @@ fn load_service(dir: &Path) -> Result<WitnessService, String> {
     }
     let state = witness_log_network::tlog_witness::WitnessState {
         format_version: witness_log_network::tlog_witness::WitnessState::FORMAT_VERSION,
+        witness_pubkey: None, // bound through witness.json's pubkey_hex instead
         logs: records,
     };
     WitnessService::from_state(&state).map_err(|e| e.to_string())
@@ -253,11 +322,20 @@ fn cmd_init(args: &[String]) -> ExitCode {
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     }
     let key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let operator_org = flag(args, "--org").unwrap_or_else(|| "unspecified".into());
+    if operator_org == "unspecified" {
+        eprintln!(
+            "warning: no --org given. Verifiers score operator diversity by this label; every \
+             witness left 'unspecified' shares one bucket and can never count as independent \
+             of the others. Set --org to the organisation that runs this witness."
+        );
+    }
     let cfg = WitnessConfig {
         key_name: name,
-        operator_org: flag(args, "--org").unwrap_or_else(|| "unspecified".into()),
+        operator_org,
         public_url: flag(args, "--url").unwrap_or_else(|| "http://127.0.0.1:7380".into()),
         compute_provider: flag(args, "--compute"),
+        pubkey_hex: Some(hex::encode(key.verifying_key().to_bytes())),
     };
     let key_hex = zeroize::Zeroizing::new(hex::encode(key.to_bytes()));
     let wrote = atomic_write(&dir.join("witness.key"), key_hex.as_bytes()).and_then(|_| {
@@ -351,11 +429,48 @@ impl Lock {
             .unwrap_or(false)
     }
 }
-impl Drop for Lock {
-    fn drop(&mut self) {
+impl Lock {
+    /// Remove the lock file if it is still ours. Idempotent.
+    fn release(&self) {
         if self.still_ours() {
             let _ = fs::remove_file(&self.0);
         }
+    }
+}
+impl Drop for Lock {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Stop cleanly on SIGTERM/SIGINT: wait for any in-flight decision to
+/// finish (the server mutex), release the lock, exit 0. Without this a
+/// normal `systemctl stop` left `witness.lock` behind and every restart
+/// reported a crash. Signals are blocked in this thread before the
+/// accept loop spawns workers, so they inherit the mask and only the
+/// waiter thread receives them.
+#[cfg(unix)]
+fn stop_cleanly_on_signal(server: Arc<Mutex<Server>>) {
+    // SAFETY: plain libc signal-mask calls on a zeroed, then initialised,
+    // sigset; the spawned thread only ever calls sigwait on that set.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        std::thread::spawn(move || {
+            let mut sig: libc::c_int = 0;
+            if libc::sigwait(&set, &mut sig) == 0 {
+                let s = server.lock().unwrap_or_else(|e| e.into_inner());
+                eprintln!(
+                    "witness stopping on signal {sig}: {} cosigned since start",
+                    s.cosigned
+                );
+                s.lock.release();
+                std::process::exit(0);
+            }
+        });
     }
 }
 
@@ -425,7 +540,9 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
                     // remove the file if it still names the dead pid.
                     let again = fs::read_to_string(&p).unwrap_or_default();
                     if again.trim() == pid {
-                        eprintln!("removing stale lock from crashed witness (pid {pid})");
+                        eprintln!(
+                            "removing stale witness.lock left by pid {pid}, which is no longer running"
+                        );
                         let _ = fs::remove_file(&p);
                     }
                     continue;
@@ -510,6 +627,19 @@ fn cmd_serve(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if let Some(expected) = &cfg.pubkey_hex {
+        let actual = hex::encode(key.verifying_key().to_bytes());
+        if !expected.eq_ignore_ascii_case(&actual) {
+            eprintln!(
+                "{}: witness.key ({actual}) is not the key witness.json was initialised with \
+                 ({expected}). Refusing to serve: logs/ is that key's memory, and another key \
+                 using it would cosign heads it never saw. Restore witness.key, witness.json \
+                 and logs/ from the same backup.",
+                dir.display()
+            );
+            return ExitCode::from(1);
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -575,6 +705,8 @@ fn cmd_serve(args: &[String]) -> ExitCode {
         cosigned: 0,
         refused_forks: 0,
     }));
+    #[cfg(unix)]
+    stop_cleanly_on_signal(server.clone());
     let handler = Arc::new(move |req: &Request| route(&server, req));
     http::serve(listener, max_conns, max_per_ip, handler);
     ExitCode::SUCCESS
@@ -838,7 +970,7 @@ fn cmd_submit(args: &[String]) -> ExitCode {
     }
     let directory: WitnessDirectory = match fs::read_to_string(&dir_path)
         .map_err(|e| e.to_string())
-        .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+        .and_then(|s| crate::parse_directory(&s))
     {
         Ok(d) => d,
         Err(e) => {

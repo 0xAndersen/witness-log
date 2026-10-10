@@ -279,3 +279,67 @@ def test_python_layer_open_step_close_and_inclusion(tmp_path):
     a = witness_log.open(str(tmp_path / "a.jsonl"), seed)
     b = witness_log.open(str(tmp_path / "b.jsonl"), seed)
     assert a.identity_pubkey_hex() == b.identity_pubkey_hex()
+
+
+def test_release_test_findings_resume_forget_stale_lock_threshold(tmp_path):
+    wl = witness_log
+    """Regressions for the 0.3.1 release test: redaction after a restart,
+    automatic stale-lock recovery, and argument validation."""
+    import os
+    import subprocess
+    import sys
+
+    p = str(tmp_path / "agent.jsonl")
+    seed = os.urandom(32)
+    log = wl.JournaledLog.create(p, seed)
+    log.append_intent(b"alice@example.com")
+    log.append_result(b"")  # empty payloads are salted too
+    log.sync()
+    log.close()
+    assert os.path.exists(p + ".salts")
+
+    log, dropped = wl.JournaledLog.resume(p)
+    assert dropped == 0
+    assert log.can_forget(0) and log.can_forget(1)
+    assert log.forget(0) is True, "pre-restart leaf must be forgettable"
+    assert log.can_forget(0) is False
+    assert log.forget(0) is False
+    assert "\"i\":0," not in open(p + ".salts").read()
+    log.close()
+
+    # A process killed while holding the journal leaves a lock naming a
+    # dead PID; resume must recover without force_unlock on Linux.
+    if sys.platform.startswith("linux"):
+        code = (
+            "import witness_log, os, sys; "
+            f"log = witness_log.JournaledLog.resume({p!r})[0]; "
+            "log.append_intent(b'x'); log.sync(); os._exit(0)"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
+        assert os.path.exists(p + ".lock")
+        log, _ = wl.JournaledLog.resume(p)
+        assert log.tree_size() == 4
+        log.close()
+        assert not os.path.exists(p + ".lock")
+
+    # Live lock is never stolen.
+    held = wl.JournaledLog.resume(p)[0]
+    with pytest.raises(OSError):
+        wl.JournaledLog.resume(p)
+    held.close()
+    wl.JournaledLog.force_unlock(p)  # no-op when no lock exists
+
+    log = wl.JournaledLog.resume(p)[0]
+    dossier = log.to_dossier_json()
+    ident = log.identity_pubkey_hex()
+    log.close()
+    for bad in (2.0, -1.0, float("nan")):
+        with pytest.raises(ValueError):
+            wl.verify_dossier_json(dossier, bad, ident)
+    with pytest.raises(ValueError):
+        wl.verify_dossier_json(dossier, 0.5, "nothex")
+    report = json.loads(wl.verify_dossier_json(dossier, 0.5, ident))
+    assert report["identity_pinned"] is True
+    assert report["internally_consistent"] is True
+    assert report["bindings_asserted"] is True
+    assert report["verdict"] == "unanchored"

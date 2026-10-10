@@ -16,8 +16,8 @@ name = "witness-log"
 path = "src/main.rs"
 
 [dependencies]
-witness-log-core = { version = "0.3.1", path = "../witness-log-core" }
-witness-log-network = { version = "0.3.1", path = "../witness-log-network" }
+witness-log-core = { version = "0.3.2", path = "../witness-log-core" }
+witness-log-network = { version = "0.3.2", path = "../witness-log-network" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
@@ -29,3 +29,9 @@ rand = { workspace = true }
 # `witness serve`: state file names, and wiping the key buffer at init.
 sha2 = { workspace = true }
 zeroize = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Restore SIGPIPE's default so `witness-log explain | head` exits quietly
+# instead of panicking with a backtrace, and stop cleanly on SIGTERM so a
+# witness releases its lock on a normal stop.
+libc = "0.2"

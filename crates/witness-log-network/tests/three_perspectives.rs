@@ -351,13 +351,27 @@ mod integrator {
         let (b, _) = JournaledLog::resume(&p).unwrap();
         assert_eq!(b.log().tree_size(), 2);
         drop(b);
-        // And a stale lock from a hard crash is recoverable explicitly.
-        std::fs::write(format!("{p}.lock"), "99999").unwrap();
-        assert!(JournaledLog::resume(&p).is_err(), "stale lock blocks");
+        // A lock naming a live process is never stolen: our own PID stands
+        // in for a live holder.
+        std::fs::write(format!("{p}.lock"), format!("{}\n", std::process::id())).unwrap();
+        assert!(JournaledLog::resume(&p).is_err(), "live lock blocks");
         JournaledLog::force_unlock(&p).unwrap();
         assert!(JournaledLog::resume(&p).is_ok(), "force_unlock recovers");
+        // A lock left by a PID that is no longer running (a hard crash) is
+        // recovered without intervention on Linux (0.3.2); elsewhere it
+        // still needs force_unlock.
+        std::fs::write(format!("{p}.lock"), "4194304\n").unwrap();
+        let after_crash = JournaledLog::resume(&p);
+        if cfg!(target_os = "linux") {
+            assert!(after_crash.is_ok(), "dead-PID lock recovers automatically");
+        } else {
+            assert!(after_crash.is_err(), "stale lock blocks without /proc");
+            JournaledLog::force_unlock(&p).unwrap();
+            assert!(JournaledLog::resume(&p).is_ok(), "force_unlock recovers");
+        }
         std::fs::remove_file(&p).ok();
         std::fs::remove_file(format!("{p}.lock")).ok();
+        std::fs::remove_file(format!("{p}.salts")).ok();
     }
 
     /// B3. Journal file deleted out from under a live log.
@@ -812,7 +826,7 @@ mod regulator {
         // FIXED: the quorum result names them.
         let q = evaluate_quorum(&cp, &receipts, &dir, 0.0);
         assert_eq!(
-            q.operators_represented,
+            q.independent_operators_represented,
             vec!["coop".to_string(), "uni".to_string()]
         );
         let _ = id;
@@ -822,11 +836,11 @@ mod regulator {
 #[test]
 fn zz_three_perspectives_summary() {
     let findings = [
-        ("FIXED", "B2", "Was HIGH: double-resume corrupted the journal. Now an exclusive lock refuses the second open; force_unlock recovers from a hard crash explicitly."),
+        ("FIXED", "B2", "Was HIGH: double-resume corrupted the journal. Now an exclusive lock refuses the second open; a lock left by a dead PID is recovered automatically on Linux, force_unlock elsewhere."),
         ("FIXED", "C1/C2", "inclusion_proof(index) and consistency_proof(earlier_size) now on WitnessLog."),
         ("FIXED", "C9", "WitnessLog::evidence_window(range) -- each leaf proven against the signed checkpoint, nothing outside the window disclosed, self-verifying, JSON round-trip."),
         ("FIXED", "C6", "compare_checkpoints(a, b, proof) -> Extends | Identical | Rollback | Diverged | Unproven | DifferentIdentity."),
-        ("FIXED", "C10", "QuorumResult::operators_represented names the independent operators, sorted."),
+        ("FIXED", "C10", "QuorumResult::independent_operators_represented names the independent operators, sorted."),
         ("WONTFIX", "A8", "A receipt timestamped before its checkpoint is accepted. Rejecting it would treat routine witness/log clock skew as fraud -- the false-positive class already fixed twice."),
         ("FIXED", "A3", "Investigating this found that compare_checkpoints returned a FALSE Rollback depending on argument order when timestamps tied. Same-ms checkpoints are routine, so flagging them would be wrong; the ordering bug was real and is fixed (see tie_check.rs)."),
         ("FIXED", "B8/B10", "Send-not-Sync and caller-managed session_number now documented in the integration contract."),

@@ -305,11 +305,32 @@ fn verify_dossier_json(
     expected_identity_pubkey: Option<String>,
     trusted_directory_json: Option<String>,
 ) -> PyResult<String> {
+    if !(0.0..=1.0).contains(&threshold) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "threshold must be between 0.0 and 1.0, got {threshold}"
+        )));
+    }
+    if let Some(id) = &expected_identity_pubkey {
+        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "expected_identity_pubkey must be a 32-byte Ed25519 public key as 64 hex characters",
+            ));
+        }
+    }
     let dossier: witness_log_network::Dossier =
         serde_json::from_str(dossier_json).map_err(malformed_err)?;
     let trusted_directory: Option<witness_log_network::WitnessDirectory> =
         match &trusted_directory_json {
-            Some(s) => Some(serde_json::from_str(s).map_err(malformed_err)?),
+            // `{"witnesses": [...]}` or a bare array of entries.
+            Some(s) => Some(
+                serde_json::from_str::<witness_log_network::WitnessDirectory>(s)
+                    .or_else(|first| {
+                        serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(s)
+                            .map(|witnesses| witness_log_network::WitnessDirectory { witnesses })
+                            .map_err(|_| first)
+                    })
+                    .map_err(malformed_err)?,
+            ),
             None => None,
         };
     let ctx = witness_log_network::VerifyContext {
@@ -491,7 +512,13 @@ impl PyJournaledLog {
 #[pymethods]
 impl PyJournaledLog {
     /// Create a journaled log for an identity you already hold.
-    /// `identity_seed` is the 32 raw bytes from `WitnessLog.identity_bytes()`.
+    /// `identity_seed` is 32 raw bytes: `os.urandom(32)` the first time,
+    /// then the same bytes forever (or `WitnessLog.identity_bytes()`).
+    ///
+    /// The journal's first line stores this seed, the identity PRIVATE
+    /// key, in plain hex, and `<path>.salts` holds the redaction salts.
+    /// Both files are created 0600; protect and back them up together,
+    /// like any key file.
     #[staticmethod]
     fn create(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
         let identity = parse_identity_seed(identity_seed)?;
@@ -562,10 +589,30 @@ impl PyJournaledLog {
 
     /// Right-to-be-forgotten. Returns True if a leaf was actually erased.
     /// Raises on I/O failure, so a journaling failure during a legally
-    /// consequential operation cannot go unnoticed.
+    /// consequential operation cannot go unnoticed. Works for leaves from
+    /// earlier sessions too: salts live in `<path>.salts` next to the
+    /// journal and the forgotten salt is removed from that file.
     fn forget(&self, index: u64) -> PyResult<bool> {
         self.j()?
             .forget(index)
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
+    /// True if `forget(index)` would erase something: the leaf exists,
+    /// carries a payload, and its salt is still held. Distinguishes "never
+    /// had a payload / already forgotten" from a pending redaction.
+    fn can_forget(&self, index: u64) -> PyResult<bool> {
+        Ok(self.j()?.can_forget(index))
+    }
+
+    /// Remove a stale `<path>.lock` left by a process that died holding
+    /// the journal. On Linux `resume` does this itself when the recorded
+    /// PID is no longer running; elsewhere, or when a live PID was
+    /// reused, call this only if you are certain nothing else has the
+    /// journal open: two writers corrupt it.
+    #[staticmethod]
+    fn force_unlock(path: &str) -> PyResult<()> {
+        witness_log_core::journal::JournaledLog::force_unlock(path)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -796,9 +843,14 @@ fn valid_key_name(n: &str) -> bool {
 fn persist_witness_state(
     path: &str,
     svc: &witness_log_network::tlog_witness::WitnessService,
+    witness_pubkey_hex: Option<&str>,
 ) -> std::io::Result<()> {
     use std::io::Write;
-    let json = serde_json::to_vec_pretty(&svc.export_state())
+    let mut state = svc.export_state();
+    if let Some(k) = witness_pubkey_hex {
+        state = state.bind(k);
+    }
+    let json = serde_json::to_vec_pretty(&state)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let p = std::path::Path::new(path);
     let dir = p
@@ -893,7 +945,8 @@ impl PyWitnessService {
         let cosigned = matches!(out, AddCheckpointOutcome::Cosigned { .. });
         if cosigned {
             if let Some(path) = &self.state_path {
-                if persist_witness_state(path, &svc).is_err() {
+                let me = hex::encode(self.signing_key.verifying_key().to_bytes());
+                if persist_witness_state(path, &svc, Some(&me)).is_err() {
                     match previous {
                         Some(p) if !enrolled => svc.set_known_log(p),
                         _ => {
@@ -971,12 +1024,17 @@ impl PyWitnessService {
             Some(p) => Some(StateLock::acquire(p).map_err(|e| PyIOError::new_err(e.to_string()))?),
             None => None,
         };
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let our_pubkey = hex::encode(signing_key.verifying_key().to_bytes());
         let svc = match &state_path {
             Some(p) if std::path::Path::new(p).exists() => {
                 let s =
                     std::fs::read_to_string(p).map_err(|e| PyIOError::new_err(e.to_string()))?;
                 let st: witness_log_network::tlog_witness::WitnessState =
                     serde_json::from_str(&s).map_err(malformed_err)?;
+                // A state file is this key's memory; another key must not
+                // inherit it (found by the 0.3.1 release test).
+                st.check_bound_to(&our_pubkey).map_err(malformed_err)?;
                 witness_log_network::tlog_witness::WitnessService::from_state(&st)
                     .map_err(malformed_err)?
             }
@@ -985,7 +1043,7 @@ impl PyWitnessService {
         Ok(Self {
             inner: Mutex::new(svc),
             key_name: key_name.to_string(),
-            signing_key: ed25519_dalek::SigningKey::from_bytes(&seed),
+            signing_key,
             state_path,
             open_enrollment,
             max_logs,
@@ -1006,6 +1064,7 @@ impl PyWitnessService {
         persist_witness_state(
             path,
             &witness_log_network::tlog_witness::WitnessService::new(),
+            None,
         )
         .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -1037,7 +1096,8 @@ impl PyWitnessService {
             return Ok(false);
         }
         if let Some(p) = &self.state_path {
-            if let Err(e) = persist_witness_state(p, &svc) {
+            let me = hex::encode(self.signing_key.verifying_key().to_bytes());
+            if let Err(e) = persist_witness_state(p, &svc, Some(&me)) {
                 svc.remove_log(origin);
                 return Err(PyIOError::new_err(e.to_string()));
             }

@@ -50,16 +50,18 @@ diversity. This is being worked on as an ongoing, public effort:
   this one.
 - **Agent-operated witnesses are explicitly in scope**, not just
   human-operated ones — see THREAT_MODEL.md's "Witness independence"
-  section and `crates/witness-log-network/examples/agent_witness.rs` for the
-  reference loop. An agent witness registering under `runtime: agent`
+  section. `witness-log witness serve` (or `witness_log.WitnessService`
+  from Python) is the witness; `examples/agent_witness.rs` in the network
+  crate shows the verify-before-sign loop in isolation. An agent witness registering under `runtime: agent`
   should also disclose a `compute_provider` where possible — recruiting
   witness agents deliberately spread across distinct model/inference
   providers (not just distinct organizations) is its own, separate goal,
   since same-provider agent witnesses share a correlated-failure risk that
   organizational diversity alone doesn't capture.
-- The witness directory format and registration process are documented in
-  `crates/witness-log-network/README.md`. Registration is intentionally
-  lightweight — a name, an operator org, a URL, and a public key.
+- The witness directory format and how to offer a witness are documented in
+  `crates/witness-log-network/README.md`; `deploy/witness/OPERATORS.md` is
+  the runbook. Registration is intentionally lightweight — a name, an
+  operator org, a URL, and a public key, which `witness init` prints.
 - Progress is tracked publicly. A dossier's diversity score is meant to be
   an uncomfortable, honest number for as long as it takes to genuinely fix,
   not something smoothed over in messaging.
@@ -68,8 +70,8 @@ diversity. This is being worked on as an ongoing, public effort:
 
 A brand-new witness network has no independent operators on day one, and
 refusing to launch until some appear is how protocols never launch. So the
-project itself runs a small number of witnesses at launch — agent
-witnesses, following the `agent_witness.rs` reference pattern — to prove
+project itself runs a small number of witnesses at launch — `witness-log
+witness serve` instances registered as project-operated — to prove
 the mechanism works and give real third parties something functioning to
 connect to. This is explicitly temporary scaffolding, not a substitute for
 real independence, and it's bounded by rules enforced in code, not just

@@ -27,8 +27,9 @@ witnesses — then verifies the exact same bytes twice:
      witnesses it wants you to trust. This proves the file doesn't
      contradict itself. It proves nothing about who wrote it.
 
-  B. With an identity you expected and a witness directory YOU trust,
-     both obtained out-of-band:
+  B. With a witness directory YOU trust and the identity you expected,
+     both obtained out-of-band (the directory lifts the ceiling; the
+     identity pin says whose log it is -- a gate passes both):
 
        Verdict: WITNESSED
 
@@ -172,34 +173,43 @@ the payloads, ship it.
 witness-log-core = "0.3"
 witness-log-network = "0.3"   # witnesses, quorum, dossiers, verification
 # or, straight from the repository:
-# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.1" }
+# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.2" }
 ```
 
 ```rust
 use witness_log_core::identity::IdentityKeypair;
-use witness_log_core::log::WitnessLog;
-use ed25519_dalek::SigningKey;
+use witness_log_core::journal::JournaledLog;
+use witness_log_network::{Dossier, VerifyContext};
 
-// Persistent identity — generate once, persist identity.to_bytes() somewhere
-// safe, and pass it to WitnessLog::resume() on every future process start.
+// Persistent identity: generate once, keep identity.to_bytes() safe, and
+// create the journal with it. Every later start is JournaledLog::resume.
 let identity = IdentityKeypair::generate();
-let identity_bytes = identity.to_bytes();
-let mut log = WitnessLog::resume(identity, /* session_number */ 0);
+let mut log = JournaledLog::create("agent.jsonl", identity)?;
 
-log.append_intent(br#"{"tool":"transfer_funds","args":{"amount_usd":250}}"#);
-log.append_result(br#"{"status":"ok","tx_id":"tx_7ac31"}"#);
+log.append_intent(br#"{"tool":"transfer_funds","args":{"amount_usd":250}}"#)?;
+log.append_result(br#"{"status":"ok","tx_id":"tx_7ac31"}"#)?;
+log.sync()?;
 
-// Checkpoint, signed by the identity key so it outlives this process.
-let signing_key = SigningKey::from_bytes(&identity_bytes);
-let sth = log.checkpoint(&signing_key);
+// Checkpoint signed by the identity key, and the dossier anyone can verify.
+let sth = log.log().checkpoint_self();
+let dossier = Dossier::from_log(log.log(), sth);
+let report = dossier.verify(0.66, &VerifyContext::default());
+assert!(report.internally_consistent);
 ```
 
 Right-to-be-forgotten, without breaking tree continuity:
 
 ```rust
-let leaf_index = log.append_memory(b"contact: alice@example.com");
-log.forget(leaf_index); // salt deleted; leaf hash and tree root unaffected
+let leaf_index = log.append_memory(b"contact: alice@example.com")?;
+log.forget(leaf_index)?; // salt erased from <journal>.salts; a 0x03 marker is appended.
+                         // Every earlier leaf hash, and every proof over it, is unchanged.
 ```
+
+The journal is two files: `agent.jsonl` (header with the identity key,
+then one line per leaf) and `agent.jsonl.salts` (the redaction salts).
+Both are created `0600`; back them up together and treat them as key
+material. `witness_log_core::log::WitnessLog` is the in-memory core
+underneath, for callers who bring their own persistence.
 
 ## Beyond the basics
 
@@ -209,7 +219,8 @@ Everything below is built, tested, and specified — see SPEC.md sections in par
 - **Crash-safe persistence, two ways**: `save_snapshot`/`load_snapshot` (atomic whole-file rewrite — fine for logs up to the low thousands of leaves; the O(n)-per-save cost becomes the wall past that) and the append-only **journal** (`witness_log_core::journal::JournaledLog`) — one JSON line per leaf, written once, never rewritten, torn tail writes detected and physically healed on resume, the intended path to millions of leaves. Use the journal for long-lived logs.
 - **Handoff attestations** (§3.1): when agent A passes context to agent B, each commits independently in its own log; `verify_handoff_binding` later proves both committed to the same bytes — no shared state, no coordination protocol.
 - **Authorization events** (§3.2): logging-only record that a delegation/revocation/scope-change happened, with the same cross-log binding. If a grantee claims a wider scope than the granter logged, the binding fails. WitnessLog never mints or enforces authorization — see §1.1 on layering.
-- **Machine-readable verification**: `witness-log verify --json`, and from Python, `witness_log.verify_dossier_json(dossier_json, threshold)` — the same single verification implementation the CLI uses, including quorum and both diversity axes.
+- **Machine-readable verification**: `witness-log verify --json`, and from Python, `witness_log.verify_dossier_json(dossier_json, threshold, identity, directory_json)` — the same single verification implementation the CLI uses, including quorum and both diversity axes. A regulator asking for "Q3 only" gets `WitnessLog::evidence_window(range, &key)`: the signed checkpoint, just those leaves, and an inclusion proof for each.
+- **Running a witness in production**: [`deploy/witness/`](deploy/witness) has the Dockerfile, compose file, systemd unit and `OPERATORS.md` (backup rule, TLS, limits).
 - **Conformance tooling**: `witness-log conform <your-corpus-dir>` field-diffs another implementation's vectors against `/corpus` — this is how a from-scratch reimplementation proves wire-format agreement (CONTRIBUTING.md).
 - **Strict signature verification** (§6, normative): all Ed25519 verification is strict-mode, so conformant verifiers can never disagree about a dossier's validity on degenerate edge-case signatures.
 
@@ -341,9 +352,13 @@ witness-log witness submit agent.jsonl --directory witnesses.json --out dossier.
 witness-log verify dossier.json --identity $AGENT_KEY --directory witnesses.json   # exit 0 = WITNESSED
 ```
 
-`witnesses.json` is just a list of the entries `witness init` (or
-`witness-log witness info <url>`) prints. The resulting dossier verifies
-fully offline — the witnesses can be down. From Python:
+`witnesses.json` is `{"witnesses": [ ... ]}` holding the entries `witness
+init` prints (a bare JSON array of them is accepted too; `witness-log
+witness info <url>` returns the entry under `directory_entry`). See
+[`examples/trusted-directory.json`](examples/trusted-directory.json). The
+resulting dossier verifies fully offline — the witnesses can be down.
+WITNESSED needs cosignatures from at least two distinct `operator_org`
+values in *your* directory; witnesses you run yourself all share one. From Python:
 `log.add_checkpoint_body(old_size)` gives the POST body,
 `log.dossier_from_responses([(witness_pubkey, body), ...])` builds the
 dossier, and `witness_log.WitnessService.new(name, seed, state_path,

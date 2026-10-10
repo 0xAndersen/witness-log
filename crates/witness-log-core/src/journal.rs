@@ -41,13 +41,18 @@ enum JournalRecord {
 /// bounding the worst case. See the pre-launch review, finding 20.
 const MAX_JOURNAL_LINE_BYTES: usize = 16 * 1024 * 1024;
 
+/// Generous bound on everything in an external-anchor leaf line other
+/// than the two caller-supplied strings: field names, hex keys and
+/// hashes, the newline. A full leaf with 64-hex fields is under 1 KiB.
+const ANCHOR_LEAF_FIXED_OVERHEAD: usize = 4096;
+
 /// Read one line (including its trailing `\n` if present) from `reader`,
 /// bailing with an error the moment the accumulated length exceeds
 /// `max_len` rather than continuing to grow an unbounded buffer. Returns
 /// `Ok(None)` on clean EOF with nothing read, `Ok(Some(line))` otherwise
 /// (mirroring `BufRead::read_line`'s contract, but bounded and returning
 /// the line rather than a byte count).
-fn read_bounded_line<R: BufRead>(
+pub(crate) fn read_bounded_line<R: BufRead>(
     reader: &mut R,
     max_len: usize,
 ) -> std::io::Result<Option<String>> {
@@ -153,33 +158,124 @@ fn file_id_of(meta: &std::fs::Metadata) -> Option<FileId> {
 /// a visible decision rather than a silent one.
 struct JournalLock {
     path: std::path::PathBuf,
+    /// What this process wrote into the lock file. `Drop` removes the
+    /// file only while it still says this, so a lock taken over by another
+    /// process after a stale-lock recovery is never deleted from under it.
+    token: String,
 }
 
 impl JournalLock {
     fn acquire(journal_path: &str) -> std::io::Result<Self> {
         let path = std::path::PathBuf::from(format!("{journal_path}.lock"));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => {
-                // Record who holds it, for diagnostics after a crash.
-                let _ = writeln!(f, "{}", std::process::id());
-                Ok(Self { path })
+        let token = format!("{}", std::process::id());
+        match Self::try_create(&path, &token) {
+            Ok(lock) => Ok(lock),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if Self::take_over_if_stale(&path)? {
+                    if let Ok(lock) = Self::try_create(&path, &token) {
+                        // Another recoverer may have raced us through the
+                        // same stale lock. Give it a moment, then confirm
+                        // the file still carries our token.
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        if std::fs::read_to_string(&path)
+                            .map(|s| s.trim() == token)
+                            .unwrap_or(false)
+                        {
+                            return Ok(lock);
+                        }
+                        // Lost the race: `lock` drops without deleting
+                        // the winner's file (token mismatch).
+                    }
+                }
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "journal is already open: lock file {} is held by a live process. \
+                         If you are certain no other process has this journal open, call \
+                         JournaledLog::force_unlock first.",
+                        path.display()
+                    ),
+                ))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "journal is already open: lock file {} exists. If the previous process \
-                     crashed, call JournaledLog::force_unlock first.",
-                    path.display()
-                ),
-            )),
             Err(e) => Err(e),
+        }
+    }
+
+    fn try_create(path: &std::path::Path, token: &str) -> std::io::Result<Self> {
+        let mut f = OpenOptions::new().write(true).create_new(true).open(path)?;
+        // Record who holds it: the PID, for diagnostics and for stale
+        // detection after a crash.
+        let _ = writeln!(f, "{token}");
+        let _ = f.sync_all();
+        Ok(Self {
+            path: path.to_path_buf(),
+            token: token.to_string(),
+        })
+    }
+
+    /// A lock whose recorded PID is no longer running is stale: the
+    /// holder died without dropping it (SIGKILL, OOM, power loss). A
+    /// supervisor restarting that agent must be able to resume without a
+    /// human running `force_unlock`, so the stale file is moved aside and
+    /// `Ok(true)` is returned. Liveness is checked through `/proc` on
+    /// Linux; elsewhere there is no portable check without `libc`, so
+    /// the lock is left alone and the caller gets the explicit error.
+    ///
+    /// The file is renamed, not deleted, and only after re-checking that
+    /// the path still names the inode whose PID was read, so a lock that
+    /// a concurrent recoverer has already replaced is not touched.
+    fn take_over_if_stale(path: &std::path::Path) -> std::io::Result<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            let f = match File::open(path) {
+                Ok(f) => f,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+                Err(e) => return Err(e),
+            };
+            let opened = f.metadata().ok().as_ref().and_then(file_id_of);
+            let mut content = String::new();
+            {
+                use std::io::Read;
+                let _ = (&f).take(64).read_to_string(&mut content);
+            }
+            let Ok(pid) = content.trim().parse::<u32>() else {
+                return Ok(false); // not our format: never steal it
+            };
+            if pid == std::process::id() || std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                return Ok(false);
+            }
+            let now = std::fs::metadata(path).ok().as_ref().and_then(file_id_of);
+            if opened.is_none() || opened != now {
+                return Ok(false);
+            }
+            let aside = path.with_extension(format!(
+                "lock.stale-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::rename(path, &aside)?;
+            let _ = std::fs::remove_file(&aside);
+            Ok(true)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = path;
+            Ok(false)
         }
     }
 }
 
 impl Drop for JournalLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        let still_ours = std::fs::read_to_string(&self.path)
+            .map(|s| s.trim() == self.token)
+            .unwrap_or(false);
+        if still_ours {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -278,10 +374,40 @@ impl LeafJournal {
 
     /// Append one leaf as one line. O(leaf), not O(log) — this is the
     /// entire point versus `save_snapshot`.
+    ///
+    /// A line longer than `replay` will read back is refused here, so the
+    /// journal can never hold a leaf that bricks its own resume. The only
+    /// leaf whose size a caller controls is the external anchor;
+    /// `JournaledLog::append_external_anchor` checks the budget before the
+    /// leaf enters the in-memory tree.
     pub fn append(&mut self, leaf: &Leaf) -> std::io::Result<()> {
         let line = serde_json::to_string(leaf).map_err(std::io::Error::other)?;
+        if line.len().saturating_add(1) > MAX_JOURNAL_LINE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "leaf serialises to {} bytes; the journal line cap is {MAX_JOURNAL_LINE_BYTES}",
+                    line.len()
+                ),
+            ));
+        }
         writeln!(self.file, "{line}")?;
         Ok(())
+    }
+
+    /// Whether an external-anchor leaf with these fields fits in one
+    /// journal line, measured on the JSON-escaped strings with headroom
+    /// for the leaf's fixed-width fields.
+    pub fn anchor_fits(anchor_url: &str, anchor_proof_json: &str) -> bool {
+        let escaped = |s: &str| {
+            serde_json::to_string(s)
+                .map(|j| j.len())
+                .unwrap_or(usize::MAX)
+        };
+        escaped(anchor_url)
+            .saturating_add(escaped(anchor_proof_json))
+            .saturating_add(ANCHOR_LEAF_FIXED_OVERHEAD)
+            <= MAX_JOURNAL_LINE_BYTES
     }
 
     /// Append a key-binding record. Not part of the Merkle tree — this
@@ -332,12 +458,6 @@ impl LeafJournal {
         Ok(())
     }
 
-    /// Replay a journal into a fresh `WitnessLog`, advancing the session
-    /// number — the journal equivalent of `load_snapshot`. A truncated
-    /// final line (crash mid-append) is tolerated and dropped with its
-    /// count reported, because an append-only journal's last line is the
-    /// only line a crash can ever damage; every earlier line was complete
-    /// when written.
     /// Current on-disk journal format. Bump this and add handling in
     /// `replay` — never silently reinterpret an old or future format
     /// under the current header layout.
@@ -507,14 +627,37 @@ impl JournaledLog {
     /// from the agent's own. The bare form is now `create_ephemeral`,
     /// named for what it does.
     pub fn create(path: &str, identity: crate::identity::IdentityKeypair) -> std::io::Result<Self> {
-        let log = WitnessLog::resume(identity, 0);
+        let salts_path = Self::salts_path(path);
+        if std::path::Path::new(&salts_path).exists() {
+            // A sidecar with no journal is left over from a deleted log.
+            // Its salts belong to leaves that no longer exist; attaching
+            // them to a new log would make `recompute` answer for the
+            // wrong payloads. Refuse, like `create` refuses an existing
+            // journal, rather than silently reuse or silently discard.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{salts_path} exists but {path} does not: remove the stale salt sidecar \
+                     before creating a new journal here"
+                ),
+            ));
+        }
+        let mut log = WitnessLog::resume(identity, 0);
         let mut journal = LeafJournal::create(path, &log.identity_bytes(), 0)?;
+        let salts = crate::redaction::FileSaltStore::open(&salts_path)?;
+        log.set_salt_store(Box::new(salts));
         // Record this session's binding before any leaf it signs. On
         // replay this is what proves the session key that authored the
         // following leaves was authorized by the identity -- without it,
         // a restarted log's earlier leaves verify as Diverged.
         journal.append_binding(log.current_binding())?;
         Ok(Self { log, journal })
+    }
+
+    /// The salt sidecar that travels with a journal: `<path>.salts`.
+    /// Back it up together with the journal; see `FileSaltStore`.
+    pub fn salts_path(journal_path: &str) -> String {
+        format!("{journal_path}.salts")
     }
 
     /// Create a journaled log with a NEW, randomly generated identity
@@ -546,9 +689,24 @@ impl JournaledLog {
         LeafJournal::force_unlock(path)
     }
 
+    /// Resume from an existing journal and its salt sidecar. Journals
+    /// written before the sidecar existed resume normally; their earlier
+    /// leaves simply have no salt to forget, exactly as before.
     pub fn resume(path: &str) -> std::io::Result<(Self, ReplayReport)> {
-        let (log, report) = LeafJournal::replay(path)?;
+        let (mut log, report) = LeafJournal::replay(path)?;
         let mut journal = LeafJournal::open_for_append(path, report.good_byte_length)?;
+        let mut salts = crate::redaction::FileSaltStore::open(&Self::salts_path(path))?;
+        // Salts for leaves that were torn away, or for leaves whose
+        // redaction marker is in the journal but whose salt-file rewrite
+        // did not complete, are dropped now so the store matches the tree.
+        let forgotten: Vec<u64> = log
+            .leaves()
+            .iter()
+            .filter(|l| l.leaf_type == crate::leaf::LeafType::Redaction.tag())
+            .filter_map(|l| l.redacted_index)
+            .collect();
+        salts.reconcile(log.tree_size(), forgotten)?;
+        log.set_salt_store(Box::new(salts));
         // Resuming mints a new session key. Record its binding so leaves
         // written after this point are covered too.
         journal.append_binding(log.current_binding())?;
@@ -571,6 +729,12 @@ impl JournaledLog {
         let idx = self.log.append_memory(payload);
         self.journal_leaf_at(idx)?;
         Ok(idx)
+    }
+
+    /// Whether `forget(index)` would erase anything. True for a live,
+    /// payload-carrying leaf whose salt is in the sidecar.
+    pub fn can_forget(&self, index: u64) -> bool {
+        self.log.can_forget(index)
     }
 
     /// See `WitnessLog::append_handoff_sent`. Previously reachable only
@@ -625,6 +789,18 @@ impl JournaledLog {
         anchor_url: &str,
         anchor_proof_json: &str,
     ) -> std::io::Result<u64> {
+        // Checked before the leaf enters the tree: a leaf the journal
+        // cannot hold must not exist in memory either, or the replayed
+        // history would differ from the live one.
+        if !LeafJournal::anchor_fits(anchor_url, anchor_proof_json) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "anchor proof too large for one journal line (cap {MAX_JOURNAL_LINE_BYTES} \
+                     bytes); store the proof elsewhere and anchor its URL"
+                ),
+            ));
+        }
         let idx = self
             .log
             .append_external_anchor(anchor_url, anchor_proof_json);
@@ -637,9 +813,17 @@ impl JournaledLog {
     /// GDPR redaction survive a restart instead of the tombstone leaf and
     /// the redaction itself both silently vanishing from the replayed
     /// history while surviving in the live, unpersisted tree.
+    ///
+    /// The salt is removed from the sidecar file before the tombstone is
+    /// journaled. If that rewrite fails, this returns the error and the
+    /// tombstone is not written; on the next resume the salt is restored
+    /// from the unchanged sidecar and the request can be retried.
     pub fn forget(&mut self, target_index: u64) -> std::io::Result<bool> {
         let size_before = self.log.leaves().len();
         let did_forget = self.log.forget(target_index);
+        if let Some(e) = self.log.take_salt_error() {
+            return Err(e);
+        }
         // `get` rather than indexing: the length comparison makes the
         // index safe today, but a checked lookup keeps the no-panic
         // guarantee structural. If the tombstone leaf somehow isn't
@@ -660,7 +844,14 @@ impl JournaledLog {
     /// that just happened, so the leaf is present; using `get` anyway is
     /// what keeps `clippy::indexing_slicing` enabled crate-wide and the
     /// no-panic guarantee structural rather than argued.
+    ///
+    /// Also surfaces a salt-sidecar write failure from the append that
+    /// just happened: a leaf whose salt did not reach disk could not be
+    /// forgotten after a restart, and the caller must hear about it now.
     fn journal_leaf_at(&mut self, idx: u64) -> std::io::Result<()> {
+        if let Some(e) = self.log.take_salt_error() {
+            return Err(e);
+        }
         let leaf = usize::try_from(idx)
             .ok()
             .and_then(|i| self.log.leaves().get(i))
@@ -671,8 +862,10 @@ impl JournaledLog {
         self.journal.append(&leaf)
     }
 
+    /// Flush and fsync the journal and the salt sidecar.
     pub fn sync(&mut self) -> std::io::Result<()> {
-        self.journal.sync()
+        self.journal.sync()?;
+        self.log.sync_salts()
     }
 
     pub fn log(&self) -> &WitnessLog {
@@ -889,6 +1082,201 @@ mod tests {
             "a line exceeding the byte cap must be rejected, not buffered without bound"
         );
         std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod salt_persistence_tests {
+    use super::*;
+    use crate::identity::IdentityKeypair;
+
+    fn tmp(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "wl-salt-{tag}-{}-{nanos}.jsonl",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn cleanup(p: &str) {
+        let _ = std::fs::remove_file(p);
+        let _ = std::fs::remove_file(JournaledLog::salts_path(p));
+    }
+
+    /// The HIGH finding from the release test: before 0.3.2 `forget` on a
+    /// resumed journal returned false for every pre-restart leaf.
+    #[test]
+    fn forget_works_after_resume_and_the_salt_leaves_the_sidecar() {
+        let p = tmp("resume-forget");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        log.append_intent(b"alice@example.com").unwrap();
+        log.append_result(b"ok").unwrap();
+        log.sync().unwrap();
+        let before = std::fs::read_to_string(JournaledLog::salts_path(&p)).unwrap();
+        assert_eq!(
+            before.lines().count(),
+            2,
+            "one salt record per payload leaf"
+        );
+        drop(log);
+
+        let (mut log, _) = JournaledLog::resume(&p).unwrap();
+        assert!(log.can_forget(0));
+        assert!(
+            log.forget(0).unwrap(),
+            "pre-restart leaf must be forgettable"
+        );
+        assert!(!log.can_forget(0));
+        assert!(!log.forget(0).unwrap(), "second forget is a no-op");
+        let after = std::fs::read_to_string(JournaledLog::salts_path(&p)).unwrap();
+        assert_eq!(
+            after.lines().count(),
+            1,
+            "the forgotten salt is gone from disk"
+        );
+        assert!(!after.contains("\"i\":0,"));
+        assert_eq!(log.log().tree_size(), 3, "tombstone appended");
+        drop(log);
+
+        // And it stays forgotten across another restart.
+        let (log, _) = JournaledLog::resume(&p).unwrap();
+        assert!(!log.can_forget(0));
+        assert!(log.can_forget(1));
+        cleanup(&p);
+    }
+
+    #[test]
+    fn empty_payload_leaves_are_salted_and_forgettable() {
+        let p = tmp("empty");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        let i = log.append_result(b"").unwrap();
+        assert_ne!(
+            log.log().leaves()[0].payload_hash,
+            "0".repeat(64),
+            "an empty user payload must not commit the marker hash"
+        );
+        assert!(log.forget(i).unwrap());
+        cleanup(&p);
+    }
+
+    #[test]
+    fn redaction_markers_carry_the_zero_hash_and_no_salt() {
+        let p = tmp("marker");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        log.append_intent(b"x").unwrap();
+        assert!(log.forget(0).unwrap());
+        let marker = &log.log().leaves()[1];
+        assert_eq!(marker.payload_hash, "0".repeat(64));
+        assert!(!log.can_forget(1));
+        cleanup(&p);
+    }
+
+    #[test]
+    fn journals_without_a_sidecar_still_resume() {
+        let p = tmp("legacy");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        log.append_intent(b"old").unwrap();
+        log.sync().unwrap();
+        drop(log);
+        std::fs::remove_file(JournaledLog::salts_path(&p)).unwrap();
+        let (mut log, _) = JournaledLog::resume(&p).unwrap();
+        assert!(!log.can_forget(0), "no salt survived: nothing to forget");
+        let i = log.append_intent(b"new").unwrap();
+        assert!(log.can_forget(i), "new leaves are persisted again");
+        cleanup(&p);
+    }
+
+    #[test]
+    fn torn_sidecar_tail_is_healed_and_orphan_salts_dropped() {
+        let p = tmp("torn-salts");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        log.append_intent(b"a").unwrap();
+        log.sync().unwrap();
+        drop(log);
+        let sp = JournaledLog::salts_path(&p);
+        {
+            use std::io::Write as _;
+            let mut f = OpenOptions::new().append(true).open(&sp).unwrap();
+            // A salt for a leaf whose journal line never landed, then a torn record.
+            writeln!(f, "{{\"i\":7,\"s\":\"{}\"}}", "ab".repeat(32)).unwrap();
+            write!(f, "{{\"i\":8,\"s\":\"ab").unwrap();
+        }
+        let (log, _) = JournaledLog::resume(&p).unwrap();
+        assert!(log.can_forget(0));
+        assert!(!log.can_forget(7));
+        let content = std::fs::read_to_string(&sp).unwrap();
+        assert_eq!(content.lines().count(), 1);
+        cleanup(&p);
+    }
+
+    #[test]
+    fn create_refuses_a_stale_sidecar() {
+        let p = tmp("stale-sidecar");
+        std::fs::write(JournaledLog::salts_path(&p), "{\"i\":0,\"s\":\"00\"}\n").unwrap();
+        let err = match JournaledLog::create(&p, IdentityKeypair::generate()) {
+            Err(e) => e,
+            Ok(_) => panic!("create must refuse a stale sidecar"),
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        cleanup(&p);
+    }
+
+    #[test]
+    fn oversized_anchor_is_refused_before_it_enters_the_tree() {
+        let p = tmp("bigshot");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        let huge = "x".repeat(MAX_JOURNAL_LINE_BYTES);
+        let err = log
+            .append_external_anchor("https://anchor.example/1", &huge)
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(log.log().tree_size(), 0, "nothing was appended in memory");
+        drop(log);
+        let (log, r) = JournaledLog::resume(&p).unwrap();
+        assert_eq!(r.dropped_trailing_lines, 0);
+        assert_eq!(log.log().tree_size(), 0);
+        cleanup(&p);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn stale_lock_from_a_dead_pid_is_recovered_automatically() {
+        let p = tmp("stale-lock");
+        let mut log = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        log.append_intent(b"before crash").unwrap();
+        log.sync().unwrap();
+        // Simulate SIGKILL: forget the lock without dropping it.
+        std::mem::forget(log);
+        let lock_path = format!("{p}.lock");
+        assert!(std::path::Path::new(&lock_path).exists());
+        // Rewrite the lock with a PID that cannot be running.
+        std::fs::write(&lock_path, "4194304\n").unwrap();
+        let (log, _) = JournaledLog::resume(&p).unwrap();
+        assert_eq!(log.log().tree_size(), 1);
+        let holder = std::fs::read_to_string(&lock_path).unwrap();
+        assert_eq!(holder.trim(), std::process::id().to_string());
+        drop(log);
+        assert!(!std::path::Path::new(&lock_path).exists());
+        cleanup(&p);
+    }
+
+    #[test]
+    fn live_lock_is_never_stolen() {
+        let p = tmp("live-lock");
+        let _held = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        let err = match JournaledLog::resume(&p) {
+            Err(e) => e,
+            Ok(_) => panic!("a live lock must not be stolen"),
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        drop(_held);
+        cleanup(&p);
     }
 }
 

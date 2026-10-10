@@ -1,5 +1,111 @@
 # Changelog
 
+## 0.3.2 — 2026-10-10
+
+Found by four independent integrators (Rust service, Python agent loop,
+witness operator, auditor) using only the public 0.3.1 release, and by
+the 100-scenario swarm in `examples/swarm`. No wire-format change: every
+0.3.1 dossier, journal, corpus vector and cosignature is accepted
+unchanged.
+
+### Fixed — redaction after a restart (high)
+
+`forget()` returned `false` for every leaf written before the last
+process restart on the journal path, because salts lived only in memory.
+`JournaledLog` now persists salts in a `<journal>.salts` sidecar (one
+record per payload leaf, `0600`); `forget` erases the salt from that file
+by rewriting it (temp file, fsync, rename) before the 0x03 marker is
+journaled, and `resume` reconciles the sidecar against the replayed tree.
+Journals from 0.3.1 resume as before; only their pre-0.3.2 leaves have no
+salt to forget. New: `JournaledLog::can_forget`, `WitnessLog::can_forget`,
+`redaction::FileSaltStore`, `SaltStore::{sync, take_error}` (defaulted);
+Python `JournaledLog.can_forget`.
+
+### Fixed — a crashed agent could not resume without a human (high)
+
+A journal lock left by a process that died (`kill -9`, OOM) required
+`force_unlock`, which Python did not expose. On Linux `resume` now
+recovers a lock whose recorded PID is no longer running (never one that
+is live, never one it cannot read), confirms it still holds the lock
+after a settle, and only ever deletes a lock file that still carries its
+own PID. Python gains `JournaledLog.force_unlock(path)` for the other
+platforms.
+
+### Fixed — `evidence_window(0..u64::MAX)` hung the process (high)
+
+The range was iterated element by element. It is clamped to the tree.
+
+### Fixed — a journal could accept a leaf it could never replay
+
+`append_external_anchor` with a proof over the 16 MiB line cap wrote a
+line `replay` refuses, bricking the journal. The budget is checked before
+the leaf enters the tree (`InvalidInput`), and `LeafJournal::append`
+refuses an oversized line as a last resort.
+
+### Fixed — empty payloads were not salted
+
+`append_*(b"")` committed the all-zero hash, revealing which entries were
+empty and leaving them unforgettable; SPEC §8 defines `payload_hash` for
+the empty payload (vector 11). Only the marker types 0x03/0x04 commit the
+zero hash now. SPEC §8 says so.
+
+### Fixed — witness state could be inherited by the wrong key
+
+`WitnessState` now records `witness_pubkey` (`bind`/`check_bound_to`);
+the Python `WitnessService` refuses a state file bound to another key, and
+`witness.json` records the key `init` generated so `serve` refuses a
+swapped `witness.key`. A key restored without its `logs/` cannot be
+detected by software: `deploy/witness/OPERATORS.md` and THREAT_MODEL.md
+state the backup rule.
+
+### Changed — `verify` output and report
+
+- `DossierReport` gains `identity_pinned`, `internally_consistent` and
+  `bindings_asserted`. `QuorumResult::operators_represented` is renamed
+  `independent_operators_represented` (its contents were already the
+  independent set; the old name is accepted on input).
+- Text output now shows the key-binding check (the one failure that was
+  invisible outside `--json`), names the gate that kept a verdict at
+  CONSISTENT-UNWITNESSED (no directory receipts / count below threshold /
+  fewer than two independent operators), distinguishes "identity bound to
+  --identity" from "self-consistent, not pinned", and warns when a
+  WITNESSED or CONSISTENT-UNWITNESSED verdict was reached without
+  `--identity`. The UNANCHORED line no longer claims `--identity` was
+  missing when it was supplied; the DIVERGED line no longer calls every
+  failure tampering.
+- `explain witnessed` / `consistent-unwitnessed` / `unanchored` /
+  `diverged` now state the real rules: two distinct independent operators,
+  `--directory` lifts the ceiling, `--identity` names the party.
+- `--identity` must be 64 hex characters (usage error 2 otherwise);
+  `--threshold` is likewise validated in Python (`ValueError`).
+- `--directory` accepts a bare JSON array of entries as well as
+  `{"witnesses": [...]}` (CLI `verify`, `witness submit`, Python).
+
+### Added
+
+- `witness-log --version`; `verify --help`; `witness <sub> --help`.
+- `witness-log witness verify-evidence <file>`: check an equivocation
+  proof from `evidence/` (exit 0 proven, 30 not).
+- `witness-log c2sp show --raw` (body only, pipeable) and
+  `--sign-with <journal>` (a signed note `c2sp verify` accepts); unknown
+  flags on `c2sp show`/`verify` are errors; `c2sp verify` with only a
+  witness key says the note itself is unverified.
+- `witness init` warns when `--org` is omitted.
+- `witness serve` stops cleanly on SIGTERM/SIGINT (finishes the in-flight
+  decision, releases `witness.lock`, exits 0); the CLI no longer panics
+  with a backtrace when its output pipe closes (`| head`).
+- `deploy/witness/`: Dockerfile, docker-compose with TLS proxy, hardened
+  systemd unit, `OPERATORS.md`.
+- `examples/swarm/`: 100 named scenarios against the released CLI and
+  wheel, with ten live witnesses; writes a JSON and Markdown report.
+- Python type stubs (`_core.pyi`, `py.typed`) checked against the
+  runtime surface by a test.
+- SPEC §5 documents `custody` (unsigned, informational); the JSON Schema
+  accepts all seven custody values. `crates/witness-log-network/README.md`
+  describes the real witness protocol instead of the 0.2 pull model.
+- rustdoc builds with `-D warnings` in CI (misattached and broken doc
+  comments fixed).
+
 ## 0.3.1 — 2026-10-09
 
 Found by running ten live witnesses (8 Rust, 2 Python) through ten

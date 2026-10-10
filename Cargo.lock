@@ -401,10 +401,11 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "witness-log-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ed25519-dalek",
  "hex",
+ "libc",
  "rand",
  "serde",
  "serde_json",
@@ -416,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "witness-log-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "base64ct",
  "ed25519-dalek",
@@ -431,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "witness-log-network"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "base64ct",
  "ed25519-dalek",

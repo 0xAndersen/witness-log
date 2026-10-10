@@ -104,11 +104,11 @@ pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {
     println!();
     if !a_cont || !b_cont {
         let bad = match (a_cont, b_cont) {
-            (false, false) => "Both copies",
-            (false, true) => "Copy A",
-            _ => "Copy B",
+            (false, false) => "Both copies contain",
+            (false, true) => "Copy A contains",
+            _ => "Copy B contains",
         };
-        println!("  {bad} contain leaves that do not reproduce the signed root: the");
+        println!("  {bad} leaves that do not reproduce the signed root: the");
         println!("  leaves were altered after the checkpoint was signed. That is a");
         println!("  tampered file, not a second history the log signed. Any difference");
         println!("  between the copies is explained by the tampering — not by");

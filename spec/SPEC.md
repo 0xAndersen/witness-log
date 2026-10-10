@@ -397,6 +397,16 @@ timestamp — passes it. The presence byte comes before the value so "no
 expiry" and "expiry = 0" are never ambiguous on the wire, the same
 pattern used throughout §3.
 
+A binding also carries an unsigned `custody` field describing how the
+session key's private half is held: one of the strings `self_held`,
+`platform_held`, `hsm`, `kms`, `session_delegated`, `undisclosed` (the
+default), or the object `{"threshold": {"k": "<k>", "n": "<n>"}}`. It is
+**not** part of the signed message above, so it is a self-asserted
+disclosure, not evidence: verifiers MUST surface it next to the signature
+result (a valid signature under a `platform_held` key proves the operator
+authorised the leaves, not the agent alone) and MUST NOT let it change the
+verdict. `undisclosed` is the weakest tier, never a neutral one.
+
 A **RevocationStatement** invalidates an identity key going forward:
 
 ```
@@ -562,6 +572,20 @@ is the only thing deleted on a "right to be forgotten" request. See
 `/corpus/05_redaction_continuity.json` for a worked example showing that
 forgetting a salt does not alter any previously-committed leaf hash.
 
+Every leaf that carries a payload is salted, including a leaf whose
+payload is empty (vector 11, case `empty`); only the marker types 0x03
+Redaction and 0x04 KeyRevocation, which carry no payload, commit the
+all-zero `payload_hash`. A redaction request appends a 0x03 leaf naming
+the forgotten index, so the tree root changes because a leaf was added,
+never because an existing leaf changed.
+
+Where salts live is an implementation matter, with one normative
+requirement: a forgotten salt MUST be erased from every store the
+implementation controls, not merely marked. The reference implementation
+keeps a journal's salts in a `<journal>.salts` sidecar (one record per
+leaf, rewritten without the entry on `forget`) and treats that file as key
+material.
+
 **Explicitly out of scope for this hardening**: leaf-type visibility,
 timestamp correlation, and tree-position metadata are not hidden by this
 scheme. See `THREAT_MODEL.md`.
@@ -647,16 +671,20 @@ Verification produces exactly one of four verdicts:
 | `Witnessed` | Every cryptographic and structural check passes, AND a `trusted_directory` was supplied, AND the valid receipts from witnesses in that directory come from at least **two distinct independent operators** (project-operated witnesses all count as one bucket; witnesses sharing the subject's own operator count as none), AND the receipt count meets the caller's threshold. Diversity is reported as two separate fractions (operator, compute provider) but the gate is the absolute independent-operator count, because a fraction scales with the receipt count and a single colluding operator could satisfy any fraction with enough keys. | Proof against a colluding operator with a captured witness set — see THREAT_MODEL.md's "Witness independence" section. Only as strong as the trusted directory actually is. |
 | `ConsistentUnwitnessed` | Every cryptographic and structural check passes, a `trusted_directory` WAS supplied, but witness coverage is absent, below threshold, or entirely project-operated. | Equivocation resistance. A single-node log can show different histories to different verifiers undetected. |
 | `Unanchored` | Every cryptographic and structural check passes, but no `trusted_directory` was supplied at all (regardless of what the dossier's own `witness_directory` or `witness_receipts` claim). | Anything about authenticity to a party the verifier didn't already trust. This is the ceiling for a fabricated dossier — see §9.1. |
-| `Diverged` | Any cryptographic, identity-binding, structural-validity, or key-binding check FAILS. | — treat as evidence of tampering, fabrication, or (see THREAT_MODEL.md's clock-skew note) an honest artifact whose non-cryptographic metadata is simply inconsistent; the verifier's job is to report which check failed, not to assume intent. |
+| `Diverged` | Any cryptographic, identity-binding, structural-validity, or key-binding check FAILS. | — treat as evidence of tampering, fabrication, a mismatched `expected_identity_pubkey`, or an honest artifact whose non-cryptographic metadata is inconsistent (a leaf timestamp edited after signing fails structural validation the same way); the verifier's job is to report which check failed, not to assume intent. |
 
 `Diverged` always takes precedence over the other three — any failure
 below caps the verdict there regardless of witness coverage.
-`is_internally_consistent()` (checkpoint signature, identity binding,
+`internally_consistent` (checkpoint signature, identity binding,
 structural validity, key-binding validity, Merkle continuity) is
 reported as a separate boolean from the verdict, deliberately: a
 dossier can be internally consistent yet still `Unanchored`, and callers
-that only check `is_internally_consistent()` without looking at the
-verdict are exactly the ones exposed to §9.1's mistake.
+that only check it without looking at the verdict are exactly the ones
+exposed to §9.1's mistake. The report also states `identity_pinned`:
+`Witnessed` is reachable with a trusted directory alone, and then says
+that *a* log was cosigned by independent operators, not *whose*; a gate
+that cares which party it is verifying supplies `expected_identity_pubkey`
+and checks `identity_pinned` is true.
 
 ## 9.3 C2SP interoperability
 

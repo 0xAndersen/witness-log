@@ -240,6 +240,27 @@ impl WitnessLog {
         self.identity.public_hex()
     }
 
+    /// Whether `forget(index)` would do anything: the leaf exists, carries
+    /// a payload, and its salt is still held by this log's salt store.
+    pub fn can_forget(&self, index: u64) -> bool {
+        self.salts.has_salt(index)
+    }
+
+    /// Replace the salt store. Used by `JournaledLog::resume` to attach the
+    /// persisted salts after replay; the store must already hold exactly
+    /// the salts of the live, unredacted leaves.
+    pub(crate) fn set_salt_store(&mut self, salts: Box<dyn SaltStore>) {
+        self.salts = salts;
+    }
+
+    pub(crate) fn sync_salts(&mut self) -> std::io::Result<()> {
+        self.salts.sync()
+    }
+
+    pub(crate) fn take_salt_error(&mut self) -> Option<std::io::Error> {
+        self.salts.take_error()
+    }
+
     /// Raw identity key bytes, for persistence across process restarts by
     /// the embedding application (e.g. language bindings). Treat this like
     /// any other private key material — the caller is responsible for
@@ -429,8 +450,17 @@ impl WitnessLog {
 
     fn append(&mut self, args: AppendArgs<'_>) -> u64 {
         let index = self.tree.size();
-        let payload_hash = if args.payload.is_empty() {
-            // Redaction/revocation markers carry no payload of their own.
+        // Markers (0x03 Redaction, 0x04 KeyRevocation) carry no payload and
+        // commit the all-zero hash. Every other leaf is salted, including
+        // one whose payload happens to be empty: §8 defines payload_hash
+        // for the empty payload (corpus vector 11, case "empty"), and a
+        // constant hash would otherwise reveal which entries were empty
+        // and leave them with nothing to forget.
+        let is_marker = matches!(
+            args.leaf_type,
+            LeafType::Redaction | LeafType::KeyRevocation
+        );
+        let payload_hash = if is_marker {
             [0u8; 32]
         } else {
             self.salts.commit(index, args.payload)
@@ -491,10 +521,6 @@ impl WitnessLog {
         )
     }
 
-    /// Convenience wrapper around `checkpoint` that derives the signing key
-    /// from this log's own stored identity, so callers (e.g. language
-    /// bindings) don't need to separately carry identity key bytes across
-    /// an FFI boundary just to produce a checkpoint.
     /// This log's current head as a C2SP checkpoint, ready to sign and
     /// submit to a third-party witness (see `c2sp` and the
     /// `tlog-witness` protocol).
@@ -550,8 +576,11 @@ impl WitnessLog {
     ) -> EvidenceWindow {
         let checkpoint = self.checkpoint(identity_signing_key);
         let size = self.tree.size();
-        let entries = range
-            .filter(|i| *i < size)
+        // Clamp to the tree before iterating: `0..u64::MAX` must cost one
+        // pass over the leaves, not 2^64 filter calls.
+        let start = range.start.min(size);
+        let end = range.end.min(size);
+        let entries = (start..end)
             .filter_map(|i| {
                 let leaf = self.leaves.get(usize::try_from(i).ok()?)?.clone();
                 let proof = self.tree.inclusion_proof(i, size)?;
@@ -569,6 +598,9 @@ impl WitnessLog {
         }
     }
 
+    /// `checkpoint` signed with this log's own stored identity key, so
+    /// callers (language bindings, the journal) need not carry the key
+    /// bytes separately just to produce a checkpoint.
     pub fn checkpoint_self(&self) -> SignedTreeHead {
         let key = SigningKey::from_bytes(&self.identity.to_bytes());
         self.checkpoint(&key)
@@ -651,13 +683,12 @@ impl WitnessLog {
     /// — filesystem permissions at minimum, encryption at rest if your
     /// threat model calls for it. This method does not encrypt it for you.
     ///
-    /// **Salts are deliberately NOT included** (see `SaltStore`'s doc
-    /// comment) — leaves committed before a snapshot/restore cycle can no
-    /// longer be redacted afterward, unless you're using a persistent
-    /// `SaltStore` of your own and restoring it through a separate,
-    /// appropriately-secured channel. This is a documented v0.1
-    /// limitation, not an oversight: it fails safe (toward "can no longer
-    /// be redacted") rather than failing open.
+    /// **Salts are not included.** Leaves committed before a
+    /// snapshot/restore cycle can no longer be redacted afterward, unless
+    /// you supply a persistent `SaltStore` of your own through
+    /// `resume_with_salt_store`. This fails safe (toward "can no longer be
+    /// redacted"), never open. The journal (`JournaledLog`) persists salts
+    /// in a sidecar and is the path for anything long-lived.
     pub fn save_snapshot(&self, path: &str) -> std::io::Result<()> {
         let snapshot = LogSnapshot {
             format_version: 1,
@@ -861,6 +892,31 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::identity::IdentityKeypair;
+
+    #[test]
+    fn evidence_window_is_clamped_to_the_tree() {
+        let identity = IdentityKeypair::generate();
+        let key = SigningKey::from_bytes(&identity.to_bytes());
+        let mut log = WitnessLog::resume(identity, 0);
+        for i in 0..5u8 {
+            log.append_intent(&[i]);
+        }
+        // Found by the release test: `0..u64::MAX` iterated 2^64 times.
+        let all = log.evidence_window(0..u64::MAX, &key);
+        assert_eq!(all.entries.len(), 5);
+        assert!(all.verify().is_ok());
+        let tail = log.evidence_window(3..u64::MAX, &key);
+        assert_eq!(
+            tail.entries
+                .iter()
+                .map(|e| e.leaf.index)
+                .collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(log.evidence_window(9..12, &key).entries.is_empty());
+        let (hi, lo) = (4u64, 2u64);
+        assert!(log.evidence_window(hi..lo, &key).entries.is_empty());
+    }
 
     #[test]
     fn append_and_verify_continuity_succeeds() {

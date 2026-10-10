@@ -349,11 +349,37 @@ pub enum WitnessError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WitnessState {
     pub format_version: u32,
+    /// Hex public key of the witness this state belongs to. A state file
+    /// restored next to a different key would let that key cosign heads
+    /// it never saw; see [`WitnessState::bind`]. Absent in states written
+    /// before 0.3.2, which load unchecked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_pubkey: Option<String>,
     pub logs: Vec<KnownLogRecord>,
 }
 
 impl WitnessState {
     pub const FORMAT_VERSION: u32 = 1;
+
+    /// Record which witness key this state belongs to.
+    pub fn bind(mut self, witness_pubkey_hex: &str) -> Self {
+        self.witness_pubkey = Some(witness_pubkey_hex.to_ascii_lowercase());
+        self
+    }
+
+    /// `Err` if this state is bound to a key other than `witness_pubkey_hex`.
+    /// Unbound (pre-0.3.2) states pass.
+    pub fn check_bound_to(&self, witness_pubkey_hex: &str) -> Result<(), WitnessError> {
+        match &self.witness_pubkey {
+            Some(k) if !k.eq_ignore_ascii_case(witness_pubkey_hex) => {
+                Err(WitnessError::Malformed(format!(
+                    "witness state belongs to key {k}, not {witness_pubkey_hex}: a state file \
+                     restored next to the wrong key would cosign heads this key never saw"
+                )))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// One log in a [`WitnessState`].
@@ -483,6 +509,7 @@ impl WitnessService {
         logs.sort_by(|a, b| a.origin.cmp(&b.origin));
         WitnessState {
             format_version: WitnessState::FORMAT_VERSION,
+            witness_pubkey: None,
             logs,
         }
     }
@@ -699,11 +726,11 @@ pub fn matches_witness_entry(entry: &crate::WitnessEntry, pubkey_hex: &str) -> b
     normalize_hex(&entry.pubkey) == normalize_hex(pubkey_hex)
 }
 
-/// Convert a `tlog-witness` cosignature into a [`WitnessReceipt`] that
+/// Convert a `tlog-witness` cosignature into a [`crate::WitnessReceipt`] that
 /// [`crate::evaluate_quorum`] counts.
 ///
 /// The receipt carries the cosignature bytes and `c2sp_origin`, and
-/// [`WitnessReceipt::verify`] re-checks it against the C2SP
+/// [`crate::WitnessReceipt::verify`] re-checks it against the C2SP
 /// `cosignature/v1` message offline -- so a dossier built from live
 /// third-party witnesses verifies anywhere, with no access to the
 /// witnesses. Only cosignatures under the log identity's

@@ -53,19 +53,36 @@ Fields:
   as ten independent operators. See `PROJECT_OPERATED_BUCKET`'s doc
   comment and `GOVERNANCE.md`.
 
+## Running a witness
+
+A witness speaks `c2sp.org/tlog-witness`: a log POSTs its signed
+checkpoint plus a consistency proof from the size the witness last saw;
+the witness checks the proof, persists the new head, and only then returns
+a `c2sp.org/tlog-cosignature` v1 cosignature. `tlog_witness::WitnessService`
+is that state machine with no I/O of its own; three servers wrap it:
+
+- `witness-log witness serve <dir>` (the CLI, `crates/witness-log-cli`):
+  one file per log under `logs/`, fsync before cosigning, lock file,
+  request limits, equivocation evidence under `evidence/`. `deploy/witness/`
+  has the Dockerfile, systemd unit and `OPERATORS.md`.
+- `witness_log.WitnessService` (Python): mount in any web framework.
+- `examples/live-network/` runs ten of them against hostile traffic.
+
+With `--open-enrollment` a witness accepts any log whose origin is the
+canonical `witness-log/<identity key hex>`: the origin *is* the key, so
+there is nothing to exchange out-of-band. Cosignatures become
+`WitnessReceipt`s in a dossier (`tlog_witness::cosignature_to_receipt`),
+carrying `c2sp_origin`; only receipts under the canonical origin count.
+
 ## Registration
 
-There is currently no centralized registry — a directory file is
-something a verifier assembles or receives out-of-band, and is meant to
-be curated by a body independent of any single implementation (see
-`GOVERNANCE.md`'s "What stays out of scope for any governing body"
-section). Registering as a witness today means: run a process that
-periodically fetches checkpoints, verifies consistency proofs against
-the last head you observed, and countersigns with `WitnessReceipt::sign`
-— publishing the resulting receipts wherever the log operator cannot
-overwrite them. See `examples/agent_witness.rs` for a minimal reference
-implementation of the witness side, and `WitnessPolicy` for how a
-verifier gates on the results.
+There is no central registry. A directory file is something a verifier
+assembles or receives out-of-band; GOVERNANCE.md describes who should
+curate one and why it is not this project. To offer a witness: run
+`witness-log witness init` with your real `--org`, publish the directory
+entry it prints (and the vkey) somewhere the log operators you serve do
+not control, and keep it reachable. Verifiers who add your entry to their
+directory are the only thing that makes your cosignatures count.
 
 ## Trust boundary
 

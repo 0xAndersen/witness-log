@@ -1,0 +1,44 @@
+# A witness behind a TLS-terminating reverse proxy (Caddy). Replace
+# witness.example with your hostname; Caddy obtains the certificate.
+#
+#   docker compose -f deploy/witness/docker-compose.yml run --rm witness \
+#       witness init /state --name witness.example/w1 --org "Example Org" \
+#       --url https://witness.example --compute hetzner
+#   docker compose -f deploy/witness/docker-compose.yml up -d
+#
+# Back up the `state` volume as one unit (key + logs/), never the key alone.
+
+services:
+  witness:
+    build:
+      context: ../..
+      dockerfile: deploy/witness/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - state:/state
+    expose:
+      - "7380"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    command: >
+      caddy reverse-proxy
+        --from witness.example
+        --to witness:7380
+    depends_on: [witness]
+
+volumes:
+  state:
+  caddy-data:
+  caddy-config:

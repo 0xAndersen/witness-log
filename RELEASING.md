@@ -33,14 +33,14 @@ on the exact commit being released.
    cargo publish -p witness-log-cli
    ```
 4. Release. Either push a tag, or run the `release` workflow manually
-   (Actions → release → Run workflow → tag `v0.3.1`); the workflow then
+   (Actions → release → Run workflow → tag `v0.3.2`); the workflow then
    creates the tag on the chosen commit. It refuses to run if the tag
    does not equal the version in `Cargo.toml`. This builds wheels
    for Linux (x86_64, aarch64, musl), macOS (Intel, Apple Silicon) and
    Windows plus an sdist, publishes them to PyPI, and creates a GitHub
    Release with CLI binaries and `SHA256SUMS`:
    ```sh
-   git tag -a v0.3.1 -m "witness-log 0.3.1" && git push origin v0.3.1
+   git tag -a v0.3.2 -m "witness-log 0.3.2" && git push origin v0.3.2
    ```
 5. Check from a clean machine: `cargo install witness-log-cli && witness-log
    demo`, and `pip install witness-log && python -c "import witness_log"`.

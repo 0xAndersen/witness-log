@@ -105,7 +105,26 @@
         "session_pubkey": { "$ref": "#/$defs/hex32" },
         "session_number": { "$ref": "#/$defs/u64" },
         "timestamp_ms": { "$ref": "#/$defs/u64" },
-        "custody": { "type": "string", "enum": ["undisclosed", "self_held", "platform_held"], "default": "undisclosed" },
+        "custody": {
+          "description": "How the session key is held (SPEC.md §5). Unsigned, self-asserted; shown by verifiers, never a verdict input.",
+          "default": "undisclosed",
+          "oneOf": [
+            { "type": "string", "enum": ["undisclosed", "self_held", "platform_held", "hsm", "kms", "session_delegated"] },
+            {
+              "type": "object",
+              "required": ["threshold"],
+              "additionalProperties": false,
+              "properties": {
+                "threshold": {
+                  "type": "object",
+                  "required": ["k", "n"],
+                  "additionalProperties": false,
+                  "properties": { "k": { "type": "string" }, "n": { "type": "string" } }
+                }
+              }
+            }
+          ]
+        },
         "not_after_ms": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }], "description": "Binding expiry; null = no expiry asserted." },
         "signature": { "$ref": "#/$defs/hex64" }
       }

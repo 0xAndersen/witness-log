@@ -142,6 +142,8 @@ USAGE:
   witness-log --help | -h | help
       This text.
 
+  witness-log --version
+
 EXIT CODES — the verdict IS the exit status, so gating needs no JSON parsing:
    0  WITNESSED               30  DIVERGED
   10  CONSISTENT-UNWITNESSED   2  usage / unreadable input
@@ -178,6 +180,15 @@ fn all_flag_values(args: &[String], flag: &str) -> Vec<String> {
 }
 
 fn main() -> ExitCode {
+    // Rust ignores SIGPIPE at startup, which turns a closed pipe (`| head`)
+    // into a panic with a backtrace on the next print. A CLI should just
+    // stop, like every other Unix tool.
+    #[cfg(unix)]
+    // SAFETY: resetting a signal disposition to its default, before any
+    // thread exists, has no preconditions.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("demo") => {
@@ -200,13 +211,19 @@ fn main() -> ExitCode {
                 demo::run_demo()
             }
         }
-        Some("verify") => match parse_options(&args[2..]) {
-            Ok(opts) => run_verify(&opts),
-            Err(msg) => {
-                eprintln!("{msg}");
-                ExitCode::from(exit::USAGE)
+        Some("verify") => {
+            if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+                println!("{VERIFY_USAGE}");
+                return ExitCode::SUCCESS;
             }
-        },
+            match parse_options(&args[2..]) {
+                Ok(opts) => run_verify(&opts),
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    ExitCode::from(exit::USAGE)
+                }
+            }
+        }
         Some("diff") => {
             let positional: Vec<&String> =
                 args[2..].iter().filter(|a| !a.starts_with("--")).collect();
@@ -245,26 +262,74 @@ fn main() -> ExitCode {
         }
         Some("c2sp") => match args.get(2).map(String::as_str) {
             Some("show") => {
-                let positional: Vec<&String> =
-                    args[3..].iter().filter(|a| !a.starts_with("--")).collect();
-                let origin = flag_value(&args[3..], "--origin");
+                let rest = &args[3..];
+                let origin = flag_value(rest, "--origin");
+                let sign_with = flag_value(rest, "--sign-with");
+                let raw = rest.iter().any(|a| a == "--raw");
+                // Positional = the dossier path: everything that is neither a
+                // flag nor the value of a value-taking flag.
+                let positional: Vec<&String> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| {
+                        !a.starts_with("--")
+                            && !matches!(
+                                i.checked_sub(1)
+                                    .and_then(|p| rest.get(p))
+                                    .map(String::as_str),
+                                Some("--origin") | Some("--sign-with")
+                            )
+                    })
+                    .map(|(_, a)| a)
+                    .collect();
+                if let Some(bad) = rest.iter().find(|a| {
+                    a.starts_with("--")
+                        && !matches!(a.as_str(), "--origin" | "--sign-with" | "--raw")
+                }) {
+                    eprintln!("unrecognized flag for `c2sp show`: {bad}");
+                    eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]");
+                    return ExitCode::from(exit::USAGE);
+                }
                 match (positional.first(), origin) {
-                    (Some(path), Some(origin)) => c2sp_cmd::run_show(path, &origin),
+                    (Some(path), Some(origin)) if positional.len() == 1 => {
+                        c2sp_cmd::run_show(path, &origin, &c2sp_cmd::ShowOptions { raw, sign_with })
+                    }
                     _ => {
-                        eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name>");
-                        eprintln!("  --origin is a stable log identifier, RECOMMENDED to be a");
-                        eprintln!("  schema-less URL such as agents.example.com/agent-42");
+                        eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]");
+                        eprintln!("  --origin     a stable log identifier; use the canonical `witness-log/<identity hex>`");
+                        eprintln!("               (printed by `witness submit`) for anything a witness should cosign");
+                        eprintln!("  --raw        print only the body or signed note, for piping");
+                        eprintln!("  --sign-with  sign the body with the identity key held in this journal");
                         ExitCode::from(exit::USAGE)
                     }
                 }
             }
             Some("verify") => {
-                let positional: Vec<&String> =
-                    args[3..].iter().filter(|a| !a.starts_with("--")).collect();
-                let vkeys = all_flag_values(&args[3..], "--vkey");
+                let rest = &args[3..];
+                if let Some(bad) = rest
+                    .iter()
+                    .find(|a| a.starts_with("--") && a.as_str() != "--vkey")
+                {
+                    eprintln!("unrecognized flag for `c2sp verify`: {bad}");
+                    eprintln!("usage: witness-log c2sp verify <note.txt> --vkey <vkey> [--vkey <vkey>...]");
+                    return ExitCode::from(exit::USAGE);
+                }
+                let vkeys = all_flag_values(rest, "--vkey");
+                let positional: Vec<&String> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| {
+                        !a.starts_with("--")
+                            && i.checked_sub(1)
+                                .and_then(|p| rest.get(p))
+                                .map(String::as_str)
+                                != Some("--vkey")
+                    })
+                    .map(|(_, a)| a)
+                    .collect();
                 match positional.first() {
-                    Some(path) => c2sp_cmd::run_verify(path, &vkeys),
-                    None => {
+                    Some(path) if positional.len() == 1 => c2sp_cmd::run_verify(path, &vkeys),
+                    _ => {
                         eprintln!("usage: witness-log c2sp verify <note.txt> --vkey <vkey> [--vkey <vkey>...]");
                         ExitCode::from(exit::USAGE)
                     }
@@ -285,6 +350,10 @@ fn main() -> ExitCode {
         },
         Some("--help") | Some("-h") | Some("help") => {
             print!("{HELP}");
+            ExitCode::SUCCESS
+        }
+        Some("--version") | Some("-V") | Some("version") => {
+            println!("witness-log {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         None => {
@@ -419,6 +488,31 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0] [--json] [--explain] [--identity <hex>] [--directory <path>]
+  --identity   the identity pubkey you expect (64 hex), obtained out-of-band
+  --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
+  --threshold  receipt-count bar as a fraction of the directory (default 0.66)
+  Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage";
+
+/// 64 hex characters: a 32-byte key.
+pub(crate) fn is_hex32(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A trusted directory file is `{"witnesses": [...]}`; a bare JSON array
+/// of entries (what `witness init` prints, collected) is accepted too.
+pub(crate) fn parse_directory(raw: &str) -> Result<WitnessDirectory, String> {
+    match serde_json::from_str::<WitnessDirectory>(raw) {
+        Ok(d) => Ok(d),
+        Err(as_object) => match serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(raw) {
+            Ok(witnesses) => Ok(WitnessDirectory { witnesses }),
+            Err(_) => Err(format!(
+                "{as_object}\n  expected {{\"witnesses\": [ <entry>, ... ]}} or a bare JSON array of the entries `witness init` prints"
+            )),
+        },
+    }
+}
+
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut path = None;
     let mut threshold = DEFAULT_QUORUM_THRESHOLD;
@@ -455,6 +549,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 let v = args
                     .get(i + 1)
                     .ok_or("--identity requires a hex-encoded public key")?;
+                if !is_hex32(v) {
+                    return Err(format!(
+                        "--identity must be a 32-byte Ed25519 public key as 64 hex characters, got '{v}'"
+                    ));
+                }
                 identity = Some(v.clone());
                 i += 2;
             }
@@ -489,9 +588,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         }
     }
     Ok(Options {
-        path: path.ok_or(
-            "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0] [--json] [--explain] [--identity <hex>] [--directory <path>]",
-        )?,
+        path: path.ok_or(VERIFY_USAGE)?,
         threshold,
         json,
         explain,
@@ -527,7 +624,7 @@ fn run_verify(opts: &Options) -> ExitCode {
                     return ExitCode::from(exit::USAGE);
                 }
             };
-            match serde_json::from_str(&raw) {
+            match parse_directory(&raw) {
                 Ok(d) => Some(d),
                 Err(e) => {
                     eprintln!("could not parse trusted directory {p}: {e}");
@@ -568,19 +665,37 @@ fn run_verify(opts: &Options) -> ExitCode {
     print!("Verdict: {}", report.verdict);
     match report.verdict {
         witness_log_network::Verdict::Witnessed => {
-            print!(" \u{2014} proofs verify, identity is bound, AND independent witness coverage from your trusted directory supports this checkpoint");
+            print!(" \u{2014} proofs verify and at least {} independent operators from your trusted directory cosigned this checkpoint", witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED);
         }
         witness_log_network::Verdict::ConsistentUnwitnessed => {
-            print!(" \u{2014} cryptography and identity are sound, but independent witness coverage is absent or below threshold; do NOT treat as fully verified");
+            print!(
+                " \u{2014} cryptography is sound; {}; do NOT treat as fully verified",
+                unwitnessed_reason(&report, opts.threshold)
+            );
         }
         witness_log_network::Verdict::Unanchored => {
-            print!(" \u{2014} internally consistent only: no --identity or --directory was supplied, so this proves nothing about authenticity to a party you didn't already trust");
+            print!(" \u{2014} internally consistent only: no --directory was supplied, so receipts cannot be scored against anything you trust");
+            if opts.identity.is_none() {
+                print!(" (and no --identity, so nothing ties this file to a party you expected)");
+            }
         }
         witness_log_network::Verdict::Diverged => {
-            print!(" \u{2014} a proof, signature, identity binding, or leaf structure check FAILED; treat this dossier as evidence of tampering or fabrication");
+            print!(" \u{2014} a check marked \u{2717} above FAILED: the file was altered after signing, was fabricated, or is not the log named by --identity");
         }
     }
     println!();
+    if !report.identity_pinned
+        && matches!(
+            report.verdict,
+            witness_log_network::Verdict::Witnessed
+                | witness_log_network::Verdict::ConsistentUnwitnessed
+        )
+    {
+        println!(
+            "\u{26A0} --identity was not supplied: this verdict is about the log's history, not about whose log it is. A gate should pass --identity {}",
+            dossier.checkpoint.signer_pubkey
+        );
+    }
 
     // Progressive disclosure: rather than explaining the concept and
     // leaving the reader to assemble the command themselves, hand them
@@ -621,6 +736,26 @@ fn run_verify(opts: &Options) -> ExitCode {
     exit_code_for(&report.verdict)
 }
 
+/// The gate that actually failed for a CONSISTENT-UNWITNESSED verdict,
+/// so the reason is printed instead of implied by a row of check marks.
+fn unwitnessed_reason(report: &DossierReport, threshold: f64) -> String {
+    let min = witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED;
+    match &report.quorum {
+        None => "no receipt in this dossier is from a witness in your trusted directory".to_string(),
+        Some(q) if !q.meets_count_threshold => format!(
+            "{}/{} directory witnesses cosigned, below the {:.0}% threshold",
+            q.valid_receipts,
+            q.total_directory_witnesses,
+            threshold * 100.0
+        ),
+        Some(q) => format!(
+            "only {} independent operator{} cosigned; WITNESSED needs at least {min} (project-operated witnesses count as one bucket, the log's own operator as none)",
+            q.distinct_independent_operators,
+            if q.distinct_independent_operators == 1 { "" } else { "s" }
+        ),
+    }
+}
+
 fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
     println!("WitnessLog dossier verification");
     println!("  identity: {}", short(&dossier.identity_pubkey));
@@ -636,10 +771,11 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
         println!("    Confirms the checkpoint bytes were signed by WHATEVER key checkpoint.signer_pubkey names. On its own this says nothing about whose identity that is -- see the identity binding check below for that.");
     }
 
-    if report.identity_bound {
-        println!("\u{2713} Identity bound");
-    } else {
-        println!("\u{2717} Identity NOT bound");
+    match (report.identity_bound, report.identity_pinned) {
+        (true, true) => println!("\u{2713} Identity bound to --identity {}", short(&dossier.checkpoint.signer_pubkey)),
+        (true, false) => println!("\u{2713} Identity self-consistent (not pinned: no --identity supplied)"),
+        (false, true) => println!("\u{2717} Identity NOT bound: the checkpoint was signed by {}, not the --identity you expected", short(&dossier.checkpoint.signer_pubkey)),
+        (false, false) => println!("\u{2717} Identity NOT bound: the dossier's identity_pubkey is not the key that signed its checkpoint"),
     }
     if opts.explain {
         if opts.identity.is_some() {
@@ -656,6 +792,33 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
     }
     if opts.explain {
         println!("    Confirms every leaf has a recognized type, well-formed hex fields, all mandatory fields for its type, correct index/position, and that every binding/revocation referenced is well-formed. Timestamps are self-asserted metadata and are NOT checked for order (see THREAT_MODEL.md). Does not confirm the CONTENT is truthful -- only that the structure isn't malformed or internally contradictory.");
+    }
+
+    if !report.bindings_asserted {
+        println!(
+            "\u{2013} Key bindings not asserted (dossier carries no key_bindings or revocations)"
+        );
+    } else if report.bindings_valid {
+        println!(
+            "\u{2713} Key bindings valid ({} binding{}, {} revocation{})",
+            dossier.key_bindings.len(),
+            if dossier.key_bindings.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            dossier.revocations.len(),
+            if dossier.revocations.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+    } else {
+        println!("\u{2717} Key bindings INVALID: a leaf's session key has no valid binding from this identity, falls outside its binding's validity window, or postdates a revocation");
+    }
+    if opts.explain {
+        println!("    Every leaf is signed under a session key; a binding is the identity key's statement that the session key was authorised. Without bindings the dossier is still checked for consistency, but session provenance is simply not asserted.");
     }
 
     if report.merkle_continuity_valid {
@@ -703,19 +866,25 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
             }
 
             let diversity_pct = (result.diversity_fraction * 100.0).round();
-            if result.diversity_fraction < 0.5 {
+            let min = witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED;
+            if result.distinct_independent_operators >= min {
                 println!(
-                    "\u{26A0} Operator diversity: LOW ({} of {} known operators represented, {diversity_pct}%)",
-                    result.distinct_operators_represented, result.distinct_operators_in_directory
+                    "\u{2713} Independent operators: {} cosigned ({}); {} of {} known operators represented ({diversity_pct}%)",
+                    result.distinct_independent_operators,
+                    result.independent_operators_represented.join(", "),
+                    result.distinct_operators_represented,
+                    result.distinct_operators_in_directory
                 );
             } else {
                 println!(
-                    "\u{2713} Operator diversity: {} of {} known operators represented ({diversity_pct}%)",
-                    result.distinct_operators_represented, result.distinct_operators_in_directory
+                    "\u{2717} Independent operators: {} cosigned, WITNESSED needs at least {min}; {} of {} known operators represented ({diversity_pct}%)",
+                    result.distinct_independent_operators,
+                    result.distinct_operators_represented,
+                    result.distinct_operators_in_directory
                 );
             }
             if opts.explain {
-                println!("    A quorum from few independent operators is weak evidence against equivocation — see THREAT_MODEL.md's 'Witness independence' section.");
+                println!("    The gate is the absolute number of distinct independent operators, not a fraction: a single operator cannot contradict itself, so equivocation is detectable only once two parties who share no operator have both committed to the same head. See THREAT_MODEL.md's 'Witness independence' section.");
             }
 
             let compute_pct = (result.compute_diversity_fraction * 100.0).round();

@@ -365,20 +365,33 @@ fn soak_memory_and_time_grow_linearly() {
         );
 
         // Growth must be roughly proportional across samples, not
-        // accelerating.
-        if samples.len() >= 2 {
-            let mut per_leaf_samples = Vec::new();
-            for (n, kb, _) in &samples {
-                if let Some(k) = kb {
-                    per_leaf_samples.push((k.saturating_sub(base) as f64 * 1024.0) / *n as f64);
-                }
-            }
-            if let (Some(a), Some(z)) = (per_leaf_samples.first(), per_leaf_samples.last()) {
-                let growth_ratio = z / a.max(f64::MIN_POSITIVE);
+        // accelerating: the slope over the second half of the run must
+        // not be much steeper than over the first half. RSS is
+        // process-wide and the other tests in this binary run
+        // concurrently, so a single early sample is noise; slopes over
+        // halves are compared instead, and only once the first half has
+        // grown past a noise floor.
+        let points: Vec<(f64, f64)> = samples
+            .iter()
+            .filter_map(|(n, kb, _)| {
+                kb.map(|k| (*n as f64, k.saturating_sub(base) as f64 * 1024.0))
+            })
+            .collect();
+        if points.len() >= 4 {
+            let mid = points.len() / 2;
+            let (n0, m0) = points[0];
+            let (n1, m1) = points[mid];
+            let (n2, m2) = points[points.len() - 1];
+            let first_half = (m1 - m0) / (n1 - n0);
+            let second_half = (m2 - m1) / (n2 - n1);
+            const NOISE_FLOOR_BYTES: f64 = 4.0 * 1024.0 * 1024.0;
+            if m1 - m0 > NOISE_FLOOR_BYTES {
+                let growth_ratio = second_half / first_half.max(f64::MIN_POSITIVE);
                 assert!(
                     growth_ratio < 3.0,
-                    "per-leaf memory grew {growth_ratio:.2}x across the soak \
-                     ({a:.0} B/leaf -> {z:.0} B/leaf) — growth is superlinear"
+                    "per-leaf memory slope grew {growth_ratio:.2}x from the first half to the \
+                     second half of the soak ({first_half:.0} B/leaf -> {second_half:.0} B/leaf) \
+                     — growth is superlinear"
                 );
             }
         }

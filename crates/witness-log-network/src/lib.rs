@@ -476,9 +476,12 @@ pub struct QuorumResult {
     pub distinct_independent_operators: usize,
     /// WHICH independent operators cosigned, normalized, sorted. The
     /// counts above answer "how many"; a regulator asks "who". Excludes
-    /// project-operated and the subject's own operator, matching
-    /// `distinct_independent_operators`.
-    pub operators_represented: Vec<String>,
+    /// project-operated and the subject's own operator, so its length is
+    /// `distinct_independent_operators` (not `distinct_operators_represented`,
+    /// which also counts the project bucket). Named `operators_represented`
+    /// in 0.3.1 JSON; still accepted on input.
+    #[serde(alias = "operators_represented")]
+    pub independent_operators_represented: Vec<String>,
     pub meets_count_threshold: bool,
     /// The newest `witnessed_at_ms` among counted (deduplicated,
     /// trusted-directory) receipts. `None` when no receipts counted.
@@ -602,7 +605,7 @@ pub fn evaluate_quorum(
             / distinct_providers_in_directory as f64,
         project_operated_receipts,
         distinct_independent_operators: independent_operators.len(),
-        operators_represented: {
+        independent_operators_represented: {
             let mut v: Vec<String> = independent_operators.iter().cloned().collect();
             v.sort();
             v
@@ -711,8 +714,15 @@ impl std::fmt::Display for Verdict {
 /// findings 01 and 02.
 ///
 /// `Default` (both fields `None`) is the fully-unpinned case: the
-/// resulting verdict is capped at `Unanchored`. Supplying either field is
-/// what "anchoring" a verification run means in this library.
+/// resulting verdict is capped at `Unanchored`. The two fields answer
+/// different questions. `trusted_directory` is what anchors a run: without
+/// it no verdict above `Unanchored` is reachable, whatever receipts the
+/// dossier carries. `expected_identity_pubkey` authenticates: it ties the
+/// verdict to a specific party. A run with a directory but no identity
+/// pin can reach `Witnessed` and proves that *some* log was cosigned by
+/// independent operators, not *whose*; `DossierReport::identity_pinned`
+/// records which kind of run produced a report, and any gate should pass
+/// both.
 #[derive(Debug, Clone, Default)]
 pub struct VerifyContext<'a> {
     /// The identity this run is actually trying to confirm, obtained
@@ -753,16 +763,28 @@ pub struct DossierReport {
     /// verified `KeyBindingStatement` for this identity, no leaf falls
     /// outside its binding's `not_after_ms` window, and no leaf postdates
     /// a verified revocation for this identity. Vacuously true when
-    /// `leaves` is empty. See `Dossier::key_bindings` for the current
-    /// scope limitation (single-session binding history only).
+    /// `leaves` is empty, and true when the dossier carries no bindings
+    /// or revocations at all ("not asserted"); `bindings_asserted` tells
+    /// the two apart.
     pub bindings_valid: bool,
+    /// Whether the dossier carried any key bindings or revocations to
+    /// check. False means `bindings_valid` is vacuous.
+    pub bindings_asserted: bool,
     pub leaf_count: u64,
     pub claimed_tree_size: u64,
     pub merkle_continuity_valid: bool,
     /// True when a `trusted_directory` was supplied to `verify` at all —
     /// independent of whether any receipts actually cleared quorum.
-    /// `Unanchored` is exactly the case where this is false.
+    /// `Unanchored` is exactly the case where this is false. (This is
+    /// about the verifier's inputs, not about 0x07 ExternalAnchor leaves.)
     pub externally_anchored: bool,
+    /// True when `VerifyContext::expected_identity_pubkey` was supplied.
+    /// Without it, `identity_bound` means only that the dossier is
+    /// self-consistent about its own identity.
+    pub identity_pinned: bool,
+    /// `is_internally_consistent()`, serialised so `--json` consumers see
+    /// it next to the verdict (SPEC.md §9.2).
+    pub internally_consistent: bool,
     pub quorum: Option<QuorumResult>,
     /// Four-valued verdict. See `Verdict` for what each value means and
     /// doesn't mean. Callers MUST use this field, not try to reconstruct
@@ -920,6 +942,7 @@ impl Dossier {
             &self.key_bindings,
             &self.revocations,
         );
+        let bindings_asserted = !self.key_bindings.is_empty() || !self.revocations.is_empty();
 
         let mut tree = MerkleTree::new();
         for l in &self.leaves {
@@ -1002,15 +1025,23 @@ impl Dossier {
             }
         };
 
+        let internally_consistent = checkpoint_signature_valid
+            && identity_bound
+            && leaves_structurally_valid
+            && bindings_valid
+            && merkle_continuity_valid;
         DossierReport {
             checkpoint_signature_valid,
             identity_bound,
             leaves_structurally_valid,
             bindings_valid,
+            bindings_asserted,
             leaf_count: tree.size(),
             claimed_tree_size: self.checkpoint.tree_size,
             merkle_continuity_valid,
             externally_anchored,
+            identity_pinned: ctx.expected_identity_pubkey.is_some(),
+            internally_consistent,
             quorum,
             verdict,
         }
@@ -1458,7 +1489,7 @@ mod policy_tests {
                 // Mock: independent operators = valid receipts minus the
                 // project-operated ones, which is the common real shape.
                 distinct_independent_operators: valid.saturating_sub(proj),
-                operators_represented: (0..valid.saturating_sub(proj))
+                independent_operators_represented: (0..valid.saturating_sub(proj))
                     .map(|i| format!("op-{i}"))
                     .collect(),
                 meets_count_threshold: true,
@@ -1470,10 +1501,13 @@ mod policy_tests {
             identity_bound: true,
             leaves_structurally_valid: true,
             bindings_valid: true,
+            bindings_asserted: false,
             leaf_count: 10,
             claimed_tree_size: 10,
             merkle_continuity_valid: true,
             externally_anchored: valid > 0,
+            identity_pinned: true,
+            internally_consistent: true,
             quorum,
             verdict,
         }

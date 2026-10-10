@@ -15,7 +15,7 @@
 //!
 //! What this does NOT protect against, on its own: traffic analysis via
 //! leaf-type visibility, timestamp correlation, or tree-position metadata.
-//! State this explicitly to callers — see `RedactionEngine::forget`'s docs.
+//! See THREAT_MODEL.md and `WitnessLog::forget`.
 
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -27,21 +27,24 @@ use std::collections::HashMap;
 /// callers who also log payload length alongside the hash.)
 const BUCKET_SIZE: usize = 256;
 
-/// Where salts live, decoupled from where leaves live. The default
-/// (`SaltManager`) is in-memory only — it does NOT survive a process
-/// restart, which is a deliberate, documented v0.1 limitation (see
-/// `WitnessLog::save_snapshot`'s doc comment): losing salts on restart means
-/// pre-restart leaves can no longer be redacted by *this* process, but
-/// nothing about tree integrity depends on salts persisting, so this fails
-/// safe rather than fails open.
+/// Where salts live, decoupled from where leaves live.
 ///
-/// The trait exists so that an operator who needs cross-restart redaction
-/// capability, or who has retention-policy or access-control requirements
-/// on salts that differ from their requirements on leaves (e.g. salts must
-/// be encrypted at rest, or purged on a different schedule than leaves),
-/// can supply their own store without forking `witness-log-core`. There is
-/// deliberately only one implementation shipped today — this abstraction
-/// earns its keep the moment a second one exists, not before.
+/// Two implementations ship:
+///
+/// * [`SaltManager`] — in memory. Used by `WitnessLog::new`/`resume` and by
+///   the snapshot path. Salts do not survive the process, so leaves
+///   committed before a restart can no longer be redacted by the next
+///   process. Nothing about tree integrity depends on salts persisting, so
+///   this fails safe (toward "can no longer be redacted"), never open.
+/// * [`FileSaltStore`] — a `<journal>.salts` sidecar, used automatically by
+///   `JournaledLog`. Salts survive restarts, so `forget` works on any
+///   leaf in the journal's history; a forgotten salt is physically
+///   removed from the file.
+///
+/// The trait exists so an operator with retention or access-control
+/// requirements on salts that differ from those on leaves (encrypted at
+/// rest, an HSM, a different purge schedule) can supply their own store
+/// through `WitnessLog::resume_with_salt_store` without forking the crate.
 ///
 /// `: Send` is required so `Box<dyn SaltStore>` can live inside `WitnessLog`
 /// unconditionally, including behind language bindings (PyO3 `pyclass`
@@ -59,6 +62,262 @@ pub trait SaltStore: Send {
     /// payload against the tree before redacting it. `None` if the salt is
     /// gone (already forgotten) or never existed.
     fn recompute(&self, leaf_index: u64, payload: &[u8]) -> Option<[u8; 32]>;
+    /// Persistent stores: make everything committed so far durable. The
+    /// in-memory store has nothing to do.
+    fn sync(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    /// Persistent stores: the first I/O error since the last call, if any.
+    /// `commit` and `forget` have no error channel of their own, so a
+    /// store that failed to persist reports it here and `JournaledLog`
+    /// turns it into the error its caller sees.
+    fn take_error(&mut self) -> Option<std::io::Error> {
+        None
+    }
+}
+
+/// Salts persisted as one JSON line each in a sidecar file, 0600 on Unix.
+///
+/// Appends are O(1): one line per committed leaf. `forget` removes the
+/// salt from memory and rewrites the file without it (temp file, fsync,
+/// atomic rename), so the salt is gone from the live file, not merely
+/// marked. The rewrite is O(salts); redaction requests are rare enough
+/// that this is the right trade against an append-only tombstone format,
+/// which could never erase anything.
+///
+/// Treat the sidecar like the journal header: it is what makes committed
+/// payload hashes checkable against guessed payloads, and it must be
+/// backed up together with the journal or redaction after a restore is
+/// impossible. On an ordinary filesystem the blocks of a rewritten file
+/// can linger until reused; put the sidecar on encrypted storage if a
+/// forgotten salt must be unrecoverable at the block level.
+pub struct FileSaltStore {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+    salts: HashMap<u64, [u8; 32]>,
+    error: Option<std::io::Error>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SaltRecord {
+    i: u64,
+    s: String,
+}
+
+/// A salt record is ~90 bytes. Anything near this cap is not a record.
+const MAX_SALT_LINE_BYTES: usize = 4096;
+
+impl FileSaltStore {
+    /// Open `path`, creating it if absent. Existing records are loaded; a
+    /// torn final line (crash mid-write) is dropped and truncated away. An
+    /// unparsable line followed by more content is corruption, not a torn
+    /// tail, and is an error: delete the sidecar to proceed without the
+    /// ability to redact earlier leaves.
+    pub fn open(path: &str) -> std::io::Result<Self> {
+        use std::io::{BufReader, Seek, SeekFrom};
+        let mut open_opts = std::fs::OpenOptions::new();
+        open_opts
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            open_opts.mode(0o600);
+        }
+        let mut file = open_opts.open(path)?;
+        let mut salts = HashMap::new();
+        let mut good_len: u64 = 0;
+        let mut torn = false;
+        {
+            let mut reader = BufReader::new(&file);
+            while let Some(line) =
+                crate::journal::read_bounded_line(&mut reader, MAX_SALT_LINE_BYTES)?
+            {
+                if torn {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "{path}: unparsable salt record followed by further content; \
+                             the file is corrupted beyond a torn tail. Remove it to resume \
+                             without the ability to redact earlier leaves."
+                        ),
+                    ));
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    good_len = good_len.saturating_add(line.len() as u64);
+                    continue;
+                }
+                match serde_json::from_str::<SaltRecord>(trimmed) {
+                    Ok(rec) => {
+                        let salt = hex::decode(&rec.s)
+                            .ok()
+                            .and_then(|v| <[u8; 32]>::try_from(v).ok());
+                        match salt {
+                            Some(salt) => {
+                                salts.insert(rec.i, salt);
+                                good_len = good_len.saturating_add(line.len() as u64);
+                            }
+                            None => torn = true,
+                        }
+                    }
+                    Err(_) => torn = true,
+                }
+            }
+        }
+        if file.metadata()?.len() != good_len {
+            file.set_len(good_len)?;
+        }
+        file.seek(SeekFrom::End(0))?;
+        Ok(Self {
+            path: std::path::PathBuf::from(path),
+            file,
+            salts,
+            error: None,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.salts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.salts.is_empty()
+    }
+
+    /// Bring the store in line with a replayed log: drop salts for
+    /// indices at or beyond `tree_size` (their leaf line was torn away)
+    /// and for every index in `forgotten` (a redaction whose compaction
+    /// did not complete). Rewrites the file only if something changed.
+    pub fn reconcile(
+        &mut self,
+        tree_size: u64,
+        forgotten: impl IntoIterator<Item = u64>,
+    ) -> std::io::Result<()> {
+        let before = self.salts.len();
+        self.salts.retain(|i, _| *i < tree_size);
+        for i in forgotten {
+            self.salts.remove(&i);
+        }
+        if self.salts.len() != before {
+            self.compact()?;
+        }
+        Ok(())
+    }
+
+    fn record_line(index: u64, salt: &[u8; 32]) -> std::io::Result<String> {
+        serde_json::to_string(&SaltRecord {
+            i: index,
+            s: hex::encode(salt),
+        })
+        .map_err(std::io::Error::other)
+    }
+
+    /// Rewrite the whole file from memory: temp sibling (0600), fsync,
+    /// rename over the original, fsync the directory, then continue
+    /// appending to the new file.
+    fn compact(&mut self) -> std::io::Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let file_name = self
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("salts");
+        let rand_suffix: u64 = {
+            use rand::RngCore;
+            rand::rngs::OsRng.next_u64()
+        };
+        let tmp = dir.join(format!(
+            ".{file_name}.tmp-{}-{rand_suffix:016x}",
+            std::process::id()
+        ));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let written = (|| -> std::io::Result<std::fs::File> {
+            let mut f = opts.open(&tmp)?;
+            let mut indices: Vec<&u64> = self.salts.keys().collect();
+            indices.sort_unstable();
+            for i in indices {
+                if let Some(salt) = self.salts.get(i) {
+                    writeln!(f, "{}", Self::record_line(*i, salt)?)?;
+                }
+            }
+            f.sync_all()?;
+            Ok(f)
+        })();
+        let mut f = match written {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        };
+        std::fs::rename(&tmp, &self.path)?;
+        #[cfg(unix)]
+        {
+            if let Ok(d) = std::fs::File::open(&dir) {
+                let _ = d.sync_all();
+            }
+        }
+        f.seek(SeekFrom::End(0))?;
+        self.file = f;
+        Ok(())
+    }
+
+    fn note(&mut self, r: std::io::Result<()>) {
+        if let Err(e) = r {
+            if self.error.is_none() {
+                self.error = Some(e);
+            }
+        }
+    }
+}
+
+impl SaltStore for FileSaltStore {
+    fn commit(&mut self, leaf_index: u64, payload: &[u8]) -> [u8; 32] {
+        use std::io::Write;
+        let salt = rand_salt();
+        self.salts.insert(leaf_index, salt);
+        let r = Self::record_line(leaf_index, &salt).and_then(|line| writeln!(self.file, "{line}"));
+        self.note(r);
+        payload_hash(payload, &salt, leaf_index)
+    }
+    fn forget(&mut self, leaf_index: u64) -> bool {
+        if self.salts.remove(&leaf_index).is_none() {
+            return false;
+        }
+        let r = self.compact();
+        self.note(r);
+        true
+    }
+    fn has_salt(&self, leaf_index: u64) -> bool {
+        self.salts.contains_key(&leaf_index)
+    }
+    fn recompute(&self, leaf_index: u64, payload: &[u8]) -> Option<[u8; 32]> {
+        let salt = self.salts.get(&leaf_index)?;
+        Some(payload_hash(payload, salt, leaf_index))
+    }
+    fn sync(&mut self) -> std::io::Result<()> {
+        use std::io::Write;
+        self.file.flush()?;
+        self.file.sync_all()
+    }
+    fn take_error(&mut self) -> Option<std::io::Error> {
+        self.error.take()
+    }
 }
 
 pub struct SaltManager {
@@ -203,6 +462,74 @@ mod tests {
         );
         assert!(sm.forget(0));
         assert_eq!(sm.recompute(0, &huge_payload), None);
+    }
+
+    fn tmp(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("wl-saltfile-{tag}-{}-{nanos}", std::process::id()))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn file_store_round_trips_and_forget_rewrites_the_file() {
+        let p = tmp("rt");
+        let (h0, h1);
+        {
+            let mut s = FileSaltStore::open(&p).unwrap();
+            h0 = s.commit(0, b"zero");
+            h1 = s.commit(1, b"one");
+            s.sync().unwrap();
+            assert!(s.take_error().is_none());
+        }
+        let mut s = FileSaltStore::open(&p).unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.recompute(0, b"zero"), Some(h0));
+        assert_eq!(s.recompute(1, b"one"), Some(h1));
+        assert!(s.forget(0));
+        assert!(s.take_error().is_none());
+        let on_disk = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(on_disk.lines().count(), 1);
+        assert!(on_disk.contains("\"i\":1,"));
+        // Appends keep working on the rewritten file.
+        let h2 = s.commit(2, b"two");
+        drop(s);
+        let s = FileSaltStore::open(&p).unwrap();
+        assert_eq!(s.recompute(0, b"zero"), None);
+        assert_eq!(s.recompute(2, b"two"), Some(h2));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_store_is_private_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = tmp("perm");
+        let mut s = FileSaltStore::open(&p).unwrap();
+        s.commit(0, b"x");
+        assert!(s.forget(0));
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "sidecar must stay 0600 across a rewrite, got {mode:o}"
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn file_store_rejects_corruption_in_the_middle() {
+        let p = tmp("corrupt");
+        std::fs::write(
+            &p,
+            format!("not a record\n{{\"i\":1,\"s\":\"{}\"}}\n", "ab".repeat(32)),
+        )
+        .unwrap();
+        assert!(FileSaltStore::open(&p).is_err());
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
