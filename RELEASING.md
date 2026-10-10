@@ -32,7 +32,10 @@ on the exact commit being released.
    cargo publish -p witness-log-network
    cargo publish -p witness-log-cli
    ```
-4. Tag and push the tag. This triggers `release.yml`, which builds wheels
+4. Release. Either push a tag, or run the `release` workflow manually
+   (Actions → release → Run workflow → tag `v0.3.1`); the workflow then
+   creates the tag on the chosen commit. It refuses to run if the tag
+   does not equal the version in `Cargo.toml`. This builds wheels
    for Linux (x86_64, aarch64, musl), macOS (Intel, Apple Silicon) and
    Windows plus an sdist, publishes them to PyPI, and creates a GitHub
    Release with CLI binaries and `SHA256SUMS`:
