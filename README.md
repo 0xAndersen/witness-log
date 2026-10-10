@@ -369,7 +369,10 @@ open_enrollment=True)` is a witness you can mount in any web framework
 [`examples/live-network`](examples/live-network) runs ten live witnesses
 (8 Rust, 2 Python) through ten scenarios — forks, crashes, hostile HTTP,
 50 concurrent agents, Byzantine witnesses, offline audit — in about a
-minute.
+minute. [`examples/swarm`](examples/swarm) runs 100 named scenarios
+against the *released* CLI and wheel (`--release v0.3.2` downloads them)
+with twelve witnesses and 25 agents; both run in CI on every push and
+their reports are committed under `examples/swarm/reports/`.
 
 ## Repository layout
 
@@ -384,8 +387,9 @@ witness-log/
 ├── corpus/               # frozen conformance test vectors (deterministic)
 ├── fuzz/                 # cargo-fuzz targets (Merkle proofs, dossiers, journals, CLI render, witness requests)
 ├── .github/workflows/    # CI (build/test/clippy/fmt/MSRV per-OS) and scheduled fuzzing
-├── examples/             # sample dossier, verify_demo.py, live-network/ 10-witness pressure test
+├── examples/             # sample dossier, verify_demo.py, live-network/ (10 witnesses), swarm/ (100 scenarios)
 ├── integrations/mcp/     # MCP server: the audit trail as tools for any MCP-capable agent
+├── deploy/witness/       # run a witness in production: Dockerfile, compose, systemd, OPERATORS.md
 ├── THREAT_MODEL.md       # what this proves, what it doesn't
 ├── GOVERNANCE.md         # federation model, witness recruitment, transition plan
 ├── SECURITY.md           # vulnerability disclosure process
@@ -394,10 +398,10 @@ witness-log/
 
 ## Conformance
 
-`/corpus/*.json` (10 vectors) contains deterministic test vectors — leaf
+`/corpus/*.json` (11 vectors) contains deterministic test vectors — leaf
 encoding, Merkle roots, inclusion proofs, checkpoint signatures,
 redaction continuity, consistency proofs, handoff attestations,
-authorization events, external anchors, and C2SP checkpoints — generated from a fixed seed
+authorization events, external anchors, C2SP checkpoints, and the §8 payload hash — generated from a fixed seed
 with no randomness, so any reimplementation can reproduce them exactly.
 This is the actual interoperability gate: a wire-compatible
 implementation is one that reproduces every value in `/corpus/`

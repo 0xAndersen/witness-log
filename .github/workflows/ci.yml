@@ -134,6 +134,19 @@ jobs:
         run: |
           pip install "mcp>=2" anyio
           pytest -q integrations/mcp -p anyio
+      - name: Build the CLI for the live scenarios
+        run: cargo build --release -p witness-log-cli
+      - name: Live witness network (10 scenarios, 10 witnesses)
+        run: python examples/live-network/scenarios.py
+      - name: Swarm (100 scenarios, 12 witnesses, 25 agents)
+        run: python examples/swarm/run.py --out swarm-report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: swarm-report-py${{ matrix.python }}
+          path: |
+            swarm-report/REPORT.md
+            swarm-report/results.json
 
   cargo-deny:
     name: Supply chain audit (advisories + licenses)
