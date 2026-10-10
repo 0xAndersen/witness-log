@@ -1,0 +1,25 @@
+[package]
+name = "witness-log-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cryptographic audit-trail core: RFC 6962-style Merkle log, Ed25519 identity, salted-tombstone redaction."
+readme = "../../README.md"
+keywords = ["transparency-log", "audit", "merkle", "ai-agents", "c2sp"]
+categories = ["cryptography"]
+
+[dependencies]
+sha2 = { workspace = true }
+zeroize = { workspace = true }
+base64ct = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

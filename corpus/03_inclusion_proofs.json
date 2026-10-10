@@ -1,0 +1,75 @@
+{
+  "description": "Inclusion proofs for every leaf index in a 7-leaf tree built from fixed_leaf(0..7). proof_hex is ordered innermost-sibling-first (see merkle.rs `path()` docs). root_hex is the tree's root; verifying any (leaf_hash, leaf_index, tree_size, proof) against root_hex MUST succeed.",
+  "root_hex": "31d68b294b4b1f98ddc2167845e870a5a7e894f4613ecef721a32d97a5f58161",
+  "vectors": [
+    {
+      "leaf_hash_hex": "dcc6ffbc3fdc02837d0e2a1f684d4747d75fc581bc935f1746b2541f848f34b6",
+      "leaf_index": 0,
+      "proof_hex": [
+        "ae28ee842bb2ebeb4bb606c97bc86eb206523fe76ed5580c7ea3f740dcce97d3",
+        "169cf84360d22a4e34db251a1e77e2ab38afd3b9de680476b0b92db006303d48",
+        "a170f9711d2c9537e2cf125267bb584dfc9c3d03d03ea6fd03edc404188070ed"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "ae28ee842bb2ebeb4bb606c97bc86eb206523fe76ed5580c7ea3f740dcce97d3",
+      "leaf_index": 1,
+      "proof_hex": [
+        "dcc6ffbc3fdc02837d0e2a1f684d4747d75fc581bc935f1746b2541f848f34b6",
+        "169cf84360d22a4e34db251a1e77e2ab38afd3b9de680476b0b92db006303d48",
+        "a170f9711d2c9537e2cf125267bb584dfc9c3d03d03ea6fd03edc404188070ed"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "554c1613acfb3311b52fa3bbeb64e09c6e14638896b519d7f26adb8c3a97b7d1",
+      "leaf_index": 2,
+      "proof_hex": [
+        "9361f11592891da6e4d6e05f5b62e5ce18a65acb5a5fce75e046cfb085ead0e4",
+        "074372ea097eb7f68d7386b60716f2162cd7b1c26d80ac573abee5b853928115",
+        "a170f9711d2c9537e2cf125267bb584dfc9c3d03d03ea6fd03edc404188070ed"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "9361f11592891da6e4d6e05f5b62e5ce18a65acb5a5fce75e046cfb085ead0e4",
+      "leaf_index": 3,
+      "proof_hex": [
+        "554c1613acfb3311b52fa3bbeb64e09c6e14638896b519d7f26adb8c3a97b7d1",
+        "074372ea097eb7f68d7386b60716f2162cd7b1c26d80ac573abee5b853928115",
+        "a170f9711d2c9537e2cf125267bb584dfc9c3d03d03ea6fd03edc404188070ed"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "5cf467d2991d166c4d9429fbf5eac19ddf1b25f1488d09c82d71c9b2607b73bc",
+      "leaf_index": 4,
+      "proof_hex": [
+        "b39903ea406fad52a78f60a3839ed0939fee6be47b9c348ec3eb7cea94853e44",
+        "ae10269687d2d5af7ac77161da46a2bfbc84d5e9c286a916f56001b70c82f736",
+        "54cc500088c4246db96b2c1a83893a71efce000e7b3d4de981d04392b0ddb21e"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "b39903ea406fad52a78f60a3839ed0939fee6be47b9c348ec3eb7cea94853e44",
+      "leaf_index": 5,
+      "proof_hex": [
+        "5cf467d2991d166c4d9429fbf5eac19ddf1b25f1488d09c82d71c9b2607b73bc",
+        "ae10269687d2d5af7ac77161da46a2bfbc84d5e9c286a916f56001b70c82f736",
+        "54cc500088c4246db96b2c1a83893a71efce000e7b3d4de981d04392b0ddb21e"
+      ],
+      "tree_size": 7
+    },
+    {
+      "leaf_hash_hex": "ae10269687d2d5af7ac77161da46a2bfbc84d5e9c286a916f56001b70c82f736",
+      "leaf_index": 6,
+      "proof_hex": [
+        "3dcfdc60b265e5b5caacc3a2dab1609239322f3b779735a08643e04d07fcb3b3",
+        "54cc500088c4246db96b2c1a83893a71efce000e7b3d4de981d04392b0ddb21e"
+      ],
+      "tree_size": 7
+    }
+  ]
+}

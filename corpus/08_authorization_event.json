@@ -1,0 +1,52 @@
+{
+  "binding_result": "ok",
+  "description": "0x06 AuthorizationEvent leaf encoding, and the cross-log binding check (verify_authorization_binding). Logging-only: WitnessLog records that a delegation/authorization event happened and lets two independently-salted logs agree on the scope via an unsalted authorization_scope_hash, exactly mirroring HandoffAttestation's pattern -- it never mints, evaluates, or enforces the authorization. authorization_* fields are appended to canonical_bytes ONLY for leaf_type 0x06; vectors 01-07 are unaffected by this leaf type's addition (verified by diffing the full corpus before/after in the implementation's commit history).",
+  "granted_leaf": {
+    "canonical_bytes_hex": "0600000000000000000000018bcfe5b6200000004037396235353632653866653635346639343037386231313265386139386261373930316638353361653639356265643765306533393130626164303439363634000000403033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303300000100010000004064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464010000004038383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838",
+    "leaf": {
+      "anchor_proof_hash": null,
+      "anchor_proof_json": null,
+      "anchor_url": null,
+      "authorization_event_kind": "GrantedByMe",
+      "authorization_scope_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "counterparty_pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "handoff_direction": null,
+      "handoff_state_hash": null,
+      "index": 0,
+      "leaf_type": 6,
+      "payload_hash": "0303030303030303030303030303030303030303030303030303030303030303",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "timestamp_ms": 1700000020000
+    },
+    "leaf_hash_hex": "6170b56cc0112c598b4224e11e107e6653120efedaf8b2215a75bddffa529ca9"
+  },
+  "grantee_identity_pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "granter_identity_pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "mismatched_case": {
+    "description": "Same granted_leaf, but received_grant_leaf's authorization_scope_hash altered -- verify_authorization_binding MUST return an error.",
+    "expected_result": "error"
+  },
+  "received_grant_leaf": {
+    "canonical_bytes_hex": "0600000000000000000000018bcfe5ba0800000025646966666572656e742d73657373696f6e2d7075626b65792d7468616e2d6772616e746572000000403034303430343034303430343034303430343034303430343034303430343034303430343034303430343034303430343034303430343034303430343034303400000101010000004063636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363010000004038383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838",
+    "leaf": {
+      "anchor_proof_hash": null,
+      "anchor_proof_json": null,
+      "anchor_url": null,
+      "authorization_event_kind": "GrantedToMe",
+      "authorization_scope_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "counterparty_pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "handoff_direction": null,
+      "handoff_state_hash": null,
+      "index": 0,
+      "leaf_type": 6,
+      "payload_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "different-session-pubkey-than-granter",
+      "timestamp_ms": 1700000021000
+    },
+    "leaf_hash_hex": "90274446c079d5f19f88c5cc75ab7cb9aec8521e3ae375d3d9b0e6f82bd10ed3"
+  }
+}

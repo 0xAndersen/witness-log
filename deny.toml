@@ -1,0 +1,51 @@
+# cargo-deny configuration. Run locally with `cargo deny check`
+# (requires `cargo install cargo-deny`); runs in CI on every push/PR.
+# See https://embarkstudios.github.io/cargo-deny/ for the full schema.
+
+[advisories]
+# Deny known security vulnerabilities (RUSTSEC advisories) in any
+# dependency, direct or transitive. Unmaintained crates warn rather than
+# fail — this is a young project with a small dependency tree; a warning
+# is enough signal to go look without blocking CI on something that may
+# not be actionable yet.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# This workspace is AGPL-3.0-only (see LICENSE, GOVERNANCE.md for why).
+# Dependencies need not share that license — using a permissively-licensed
+# dependency in an AGPL project is normal and fine — but we do want every
+# dependency's license to be something we've actually looked at and are
+# comfortable with, not an unreviewed surprise.
+allow = [
+    # This project's own crates.
+    "AGPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    # unicode-ident (via serde_derive/proc-macro2) is
+    # "(MIT OR Apache-2.0) AND Unicode-3.0".
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Not enforcing single-version-per-crate yet: this is a young workspace
+# and a handful of duplicate transitive versions (common with crypto
+# crates pulling in different generic-array/rand_core generations) are
+# expected and not worth failing CI over at this stage. Revisit once the
+# dependency tree is more settled.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

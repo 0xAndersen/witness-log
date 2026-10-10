@@ -1,0 +1,11 @@
+{
+  "description": "Consistency proof (RFC 6962 §2.1.2) that the 9-leaf tree built from fixed_leaf(0..9) is an append-only extension of the 4-leaf tree built from fixed_leaf(0..4). proof_hex entries are consumed front-to-back by the verifier; old_root MUST be substituted (not looked up) at exactly one point in the recursive reconstruction — see merkle.rs verify_subproof doc comment. A conformant implementation MUST accept this proof and MUST reject it if any single proof element, old_root, or new_root is altered.",
+  "new_root_hex": "d0b4ae183df3c89b70aa2288939d8cd5187af0e1be00f252c6f91df9512943e4",
+  "new_tree_size": 9,
+  "old_root_hex": "54cc500088c4246db96b2c1a83893a71efce000e7b3d4de981d04392b0ddb21e",
+  "old_tree_size": 4,
+  "proof_hex": [
+    "977140f01b2fed3c82e1c06cb17992b501436a4e79e75ee7169a947938cc123d",
+    "fd7da63a4fa4e4f6b704199447c9f291de46d0bcbf5b972a7258f06a6c0f402d"
+  ]
+}

@@ -1,0 +1,133 @@
+# Release: runs only when a version tag (v*) is pushed.
+#
+# Builds portable Python wheels (manylinux/musllinux, macOS, Windows; one
+# abi3 wheel per platform covers CPython 3.9+), an sdist, and CLI binaries;
+# publishes the Python package to PyPI via Trusted Publishing (no API token
+# stored in the repo), and attaches everything to a GitHub Release.
+#
+# One-time setup on pypi.org before the first tag: Publishing -> add a
+# "pending publisher" for project `witness-log`, owner `0xAndersen`,
+# repository `witness-log`, workflow `release.yml`, environment `pypi`.
+# crates.io publishing stays manual (see RELEASING.md): it needs a human to
+# run `cargo publish` in dependency order.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: wheel ${{ matrix.os }} ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { os: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { os: macos-latest, target: x86_64, manylinux: "" }
+          - { os: macos-latest, target: aarch64, manylinux: "" }
+          - { os: windows-latest, target: x64, manylinux: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --manifest-path crates/witness-log-python/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path crates/witness-log-python/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  cli:
+    name: cli ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, exe: witness-log }
+          - { os: macos-latest, target: aarch64-apple-darwin, exe: witness-log }
+          - { os: macos-latest, target: x86_64-apple-darwin, exe: witness-log }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, exe: witness-log.exe }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked -p witness-log-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          cp target/${{ matrix.target }}/release/${{ matrix.exe }} out/
+          cp LICENSE README.md out/
+          tar czf witness-log-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C out .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: witness-log-*.tar.gz
+
+  publish-pypi:
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # Trusted Publishing; no token in the repo
+    steps:
+      # Python artifacts only, by name: the CLI archives are .tar.gz too and
+      # must never reach PyPI.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+          pattern: wheel-*
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - run: ls -la dist && test "$(ls dist | grep -vcE '\.whl$|^witness_log-.*\.tar\.gz$')" = 0
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  github-release:
+    needs: [wheels, sdist, cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true

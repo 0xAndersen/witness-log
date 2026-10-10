@@ -1,0 +1,55 @@
+[package]
+name = "witness-log-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "2"
+witness-log-core = { path = "../crates/witness-log-core" }
+witness-log-network = { path = "../crates/witness-log-network" }
+
+[[bin]]
+name = "fuzz_dossier_verify"
+path = "fuzz_targets/fuzz_dossier_verify.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_checkpoint_verify"
+path = "fuzz_targets/fuzz_checkpoint_verify.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_journal_replay"
+path = "fuzz_targets/fuzz_journal_replay.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_merkle_proofs"
+path = "fuzz_targets/fuzz_merkle_proofs.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_cli_render"
+path = "fuzz_targets/fuzz_cli_render.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_witness_request"
+path = "fuzz_targets/fuzz_witness_request.rs"
+test = false
+doc = false
+
+[workspace]
+members = ["."]

@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Default to read-only. Individual jobs that need more (none currently do)
+# should declare it explicitly at the job level, not rely on a broad
+# workflow-level grant. See the pre-launch review, finding 24.
+permissions:
+  contents: read
+
+# NOTE ON ACTION PINNING: the actions below are pinned to major-version
+# tags (e.g. @v4), not commit SHAs. All are first-party GitHub actions
+# (actions/*) or, for cargo-deny, a widely-used third-party action from a
+# well-known publisher (EmbarkStudios) -- lower marginal supply-chain risk
+# than an arbitrary third-party action, but tag-pinning is still weaker
+# than SHA-pinning, since a compromised or re-pushed tag would be trusted
+# silently. To SHA-pin: run, for each action,
+#   git ls-remote --tags https://github.com/<owner>/<repo> <tag>
+# and replace `@<tag>` with `@<full-40-char-sha> # <tag>`. Left as
+# tag-pins here rather than guessed/unverified SHAs, which would risk
+# silently breaking CI with an incorrect pin. See the pre-launch review,
+# finding 24.
+
+jobs:
+  build-and-test:
+    name: Build & test (Rust workspace)
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (debug)
+        run: cargo build --workspace --verbose
+      - name: Test (debug)
+        run: cargo test --workspace --verbose
+      - name: Test (release)
+        # debug_assert!-gated invariants (e.g. largest_power_of_two_lt_u64's
+        # precondition check) are never exercised under --release, which is
+        # the profile users actually ship. A bug that only a debug_assert
+        # would catch could otherwise reach production undetected by CI.
+        # See the pre-launch review, finding 24.
+        run: cargo test --workspace --release --verbose
+
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$version" ]; then
+            echo "::error::rust-version not set in [workspace.package] -- add one so MSRV is enforced, not aspirational"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Build at declared MSRV
+        run: cargo build --workspace --verbose
+
+  lints:
+    name: Clippy + rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: rustfmt (check only)
+        run: cargo fmt --all -- --check
+
+  conformance:
+    name: Conformance corpus drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Regenerate corpus
+        run: cargo run -p witness-log-core --example generate_corpus
+      - name: Fail if corpus drifted from committed vectors
+        run: |
+          git diff --exit-code corpus/ || \
+          (echo "::error::Corpus vectors changed but were not committed. If this is an intentional wire-format change, update spec/SPEC.md and commit the regenerated corpus. See CONTRIBUTING.md." && exit 1)
+
+  python-bindings:
+    name: Python bindings (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest and newest supported. The wheel is abi3 (stable ABI), so
+        # one build must work on both -- testing only one version is how a
+        # PyO3 "interpreter too new" failure ships unnoticed.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install maturin and pytest
+        run: pip install maturin pytest
+      - name: Build wheel
+        working-directory: crates/witness-log-python
+        run: maturin build --release
+      - name: Install wheel
+        working-directory: crates/witness-log-python
+        run: pip install target/wheels/*.whl
+      - name: Run pytest suite
+        # Real coverage (exception hierarchy, dossier verification,
+        # snapshot round-trip, file permissions) rather than one inline
+        # smoke-test string -- see the pre-launch review, finding 19.
+        working-directory: crates/witness-log-python
+        run: pytest tests/ -v
+
+  cargo-deny:
+    name: Supply chain audit (advisories + licenses)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      # The Python crate is its own workspace; audit it too, or its
+      # dependency tree (PyO3 and friends) is never checked.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          manifest-path: crates/witness-log-python/Cargo.toml
+          arguments: --all-features --config deny.toml

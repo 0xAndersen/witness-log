@@ -1,0 +1,24 @@
+[package]
+name = "witness-log-network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Witness protocol: peer countersigning of checkpoints and quorum/diversity scoring for WitnessLog logs."
+readme = "README.md"
+keywords = ["transparency-log", "witness", "c2sp", "ai-agents", "audit"]
+categories = ["cryptography"]
+
+[dependencies]
+witness-log-core = { version = "0.3.1", path = "../witness-log-core" }
+ed25519-dalek = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+base64ct = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

@@ -1,0 +1,32 @@
+[package]
+name = "witness-log-python"
+version = "0.3.1"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/0xAndersen/witness-log"
+authors = ["WitnessLog Contributors"]
+description = "Python bindings for witness-log-core, via PyO3."
+
+[lib]
+name = "witness_log"
+crate-type = ["cdylib"]
+
+[dependencies]
+witness-log-core = { version = "0.3.1", path = "../witness-log-core" }
+witness-log-network = { version = "0.3.1", path = "../witness-log-network" }
+ed25519-dalek = "2.1.1"
+serde_json = "1"
+hex = "0.4"
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
+
+[workspace]
+
+# Release binary hygiene: strip symbols and enable fat LTO for the
+# distributed wheel. Deliberately NOT panic="abort" -- PyO3 converts Rust
+# panics to Python exceptions via unwinding; abort would kill the host
+# process instead of raising, which is the wrong failure mode for a
+# library embedded inside someone's agent.
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

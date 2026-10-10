@@ -1,0 +1,190 @@
+{
+  "identity_pubkey": "f7809c16e7543ff69bd7038b25ff1c049285b55b98c7f7b7062d945b0506b3be",
+  "leaves": [
+    {
+      "index": 0,
+      "leaf_type": 1,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "68dc42f930453ce43a50437703c8a71df28a62347e157f2a61dd1304d318d640",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 1,
+      "leaf_type": 2,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "363e6ef18821f9344c6fd9728fe8485ca862fb038efc097a17c26cce035b07ab",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 2,
+      "leaf_type": 0,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "b252ce2277d75260a8f2fc360983b419d7fc7f017edd19b3961bc7eb105385ee",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 3,
+      "leaf_type": 1,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "e18fdd9c76bff56e9aa6a090340f69e3ecd93cefec2ed3e22a0a2139bed05a10",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 4,
+      "leaf_type": 2,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "0d833f720ce753aacc747230af0201fa2a072a5c5995a572ac17c21b9f090a4d",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 5,
+      "leaf_type": 3,
+      "timestamp_ms": 1787988972305,
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "payload_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "redacted_index": 2,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    }
+  ],
+  "checkpoint": {
+    "tree_size": 6,
+    "root_hash": "dd4711b12474c87d5c99d791a113f396fee735571da9e99f1fc17980565d2e4f",
+    "timestamp_ms": 1787988972306,
+    "sig_alg": "ed25519",
+    "signer_pubkey": "f7809c16e7543ff69bd7038b25ff1c049285b55b98c7f7b7062d945b0506b3be",
+    "signature": "1442ecf9751f9f47610834d2efef9d8541914f617452da827c418f7cd51ae900d10a417430981eb35b471171f93bc0fbd405fa5b5cb74be18f5c7efed61dd90e"
+  },
+  "witness_receipts": [
+    {
+      "witness_pubkey": "720857418cb19a36a0aab5c784de933c0f25d8b304faaa459b69d2f5b8faa7f4",
+      "tree_size": 6,
+      "root_hash": "dd4711b12474c87d5c99d791a113f396fee735571da9e99f1fc17980565d2e4f",
+      "witnessed_at_ms": 1787988972306,
+      "signature": "b75e360ba3b888faf61b62f109786458a3f5380792ed787daf4922776e9a88d1ccdcc7c7a294cb7dd1cce33550ece24e8c42e3da319da5f9d90fdce345de6005"
+    },
+    {
+      "witness_pubkey": "3afcdd283d6b7394808159545e9116fe5b9e5f775440c485c8890e9e1530acf6",
+      "tree_size": 6,
+      "root_hash": "dd4711b12474c87d5c99d791a113f396fee735571da9e99f1fc17980565d2e4f",
+      "witnessed_at_ms": 1787988972306,
+      "signature": "ce6f506caa82db490b8e3a3f490d41bd896338c06dc9607635a9dafc5db9fecdb8a060e468620f337c3390a46ff8045483b105393bc40c2474ec64a38a0f690e"
+    },
+    {
+      "witness_pubkey": "78c73617dc25ebb3cce57b68c69b681df5699ef763f452b50bf977e8ee425c0a",
+      "tree_size": 6,
+      "root_hash": "dd4711b12474c87d5c99d791a113f396fee735571da9e99f1fc17980565d2e4f",
+      "witnessed_at_ms": 1787988972307,
+      "signature": "239ff3cd0bbf173ca2a366e79252f1a1d5a9eaabe57465c9d00c609e7fc22b99ca4f34ba946bee334dfa273431a3e47e92d12a9641f3359c2ffea6b37851cf08"
+    }
+  ],
+  "witness_directory": {
+    "witnesses": [
+      {
+        "name": "example-university-security-lab",
+        "operator_org": "example-university",
+        "url": "https://witness.example-university.edu",
+        "pubkey": "720857418cb19a36a0aab5c784de933c0f25d8b304faaa459b69d2f5b8faa7f4",
+        "runtime": "human",
+        "compute_provider": null,
+        "is_project_operated": false
+      },
+      {
+        "name": "example-infra-co-agent-witness",
+        "operator_org": "example-infra-co",
+        "url": "https://witness.example-infra.co",
+        "pubkey": "3afcdd283d6b7394808159545e9116fe5b9e5f775440c485c8890e9e1530acf6",
+        "runtime": "agent",
+        "compute_provider": "example-inference-provider-a",
+        "is_project_operated": false
+      },
+      {
+        "name": "example-nonresponsive-witness",
+        "operator_org": "example-third-org",
+        "url": "https://witness.example-third.org",
+        "pubkey": "0bf8b99d224ddbc24a938a7d42d6a01dfcee1a01c4d9033f620f25c62565882b",
+        "runtime": "agent",
+        "compute_provider": "example-inference-provider-b",
+        "is_project_operated": false
+      },
+      {
+        "name": "witness-log-project-bootstrap-witness-01",
+        "operator_org": "witness-log-project",
+        "url": "https://witness-01.witness-log.dev",
+        "pubkey": "78c73617dc25ebb3cce57b68c69b681df5699ef763f452b50bf977e8ee425c0a",
+        "runtime": "agent",
+        "compute_provider": "witness-log-project-infra",
+        "is_project_operated": true
+      }
+    ]
+  },
+  "key_bindings": [
+    {
+      "identity_pubkey": "f7809c16e7543ff69bd7038b25ff1c049285b55b98c7f7b7062d945b0506b3be",
+      "session_pubkey": "b273e51b0169f5e76fd7888f92cbaef49fa4a62156b24b29ff8c4578d6195f5e",
+      "session_number": 0,
+      "timestamp_ms": 1787988972305,
+      "custody": "undisclosed",
+      "not_after_ms": null,
+      "signature": "fc1dc2129d23666e64c16910541167aa346585a77c7e1e7ac6e2a3ba657b8ec143410856b9743796d4bfe9c1b5916577ca7f1ea8c3f9a01abd25d733ffadcd0c"
+    }
+  ],
+  "revocations": []
+}

@@ -1,0 +1,50 @@
+name: Fuzz (scheduled)
+
+on:
+  schedule:
+    - cron: "17 4 * * *" # daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - fuzz_dossier_verify
+          - fuzz_checkpoint_verify
+          - fuzz_journal_replay
+          - fuzz_merkle_proofs
+          - fuzz_cli_render
+          - fuzz_witness_request
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Restore fuzz corpus cache
+        # Coverage-guided fuzzing restarted from zero every run without
+        # this -- a corpus that took days to build interesting inputs
+        # into was thrown away nightly. See the pre-launch review,
+        # finding 24.
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        # Raised from 300s: this is the nightly scheduled job, not a PR
+        # check -- it isn't blocking anyone's merge, so it can afford to
+        # run substantially longer per target for meaningfully better
+        # coverage-guided exploration. See the pre-launch review, finding 24.
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=1800
+      - name: Upload any crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/

@@ -1,0 +1,15 @@
+{
+  "cosignature": {
+    "cosigned_note": "corpus.witnesslog.example/vector-10\n6\nampqampqampqampqampqampqampqampqampqampqamo=\n\n— corpus.witnesslog.example/vector-10 via4DK4QhDRqIR7CEdy1r/F7WiWqXc9p0LYMu1i4iQxxFxAdUMnyJ4p0RyyuKkoligKYyUPcVNGrtjrQFNc9CkV/DgY=\n— corpus-witness.example/w1 eynkvgAAAABlU/EewSneGG184r5CYC6F5uPFBpRtRawB8HNo74ZTbOnRpMYM1dcJTMGlgrdCng6Dz5sIJMPPl2hSmUdkwhDU3dn+Cw==\n",
+    "signed_message": "cosignature/v1\ntime 1700000030\ncorpus.witnesslog.example/vector-10\n6\nampqampqampqampqampqampqampqampqampqampqamo=\n",
+    "timestamp": 1700000030,
+    "witness_vkey": "corpus-witness.example/w1+7b29e4be+BO1qR6OdqGm1RGFV5Astk/Hj8BZ74mcyuuej752OOj/T"
+  },
+  "description": "C2SP transparency-log interoperability (SPEC.md §9.3). A WitnessLog checkpoint expressed as a c2sp.org/tlog-checkpoint signed note, plus a c2sp.org/tlog-cosignature v1 witness cosignature over it. An implementation claiming C2SP conformance MUST reproduce note_text and both verifier keys byte-for-byte, and MUST verify both signatures. Note that the checkpoint body carries NO timestamp: in C2SP, time is asserted only by cosigners, never by the log itself.",
+  "log_vkey": "corpus.witnesslog.example/vector-10+be26b80c+AXm1Vi6P5lT5QHixEuipi6eQH4U65pW+1+DjkQutBJZk",
+  "note_text": "corpus.witnesslog.example/vector-10\n6\nampqampqampqampqampqampqampqampqampqampqamo=\n",
+  "origin": "corpus.witnesslog.example/vector-10",
+  "root_hash_hex": "6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a",
+  "signed_note": "corpus.witnesslog.example/vector-10\n6\nampqampqampqampqampqampqampqampqampqampqamo=\n\n— corpus.witnesslog.example/vector-10 via4DK4QhDRqIR7CEdy1r/F7WiWqXc9p0LYMu1i4iQxxFxAdUMnyJ4p0RyyuKkoligKYyUPcVNGrtjrQFNc9CkV/DgY=\n",
+  "tree_size": 6
+}

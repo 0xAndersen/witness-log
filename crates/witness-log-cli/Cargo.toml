@@ -1,0 +1,31 @@
+[package]
+name = "witness-log-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "witness-log: offline verification CLI for witnessed audit logs and witness quorums."
+readme = "../../README.md"
+keywords = ["transparency-log", "audit", "merkle", "ai-agents", "c2sp"]
+categories = ["cryptography", "command-line-utilities"]
+
+[[bin]]
+name = "witness-log"
+path = "src/main.rs"
+
+[dependencies]
+witness-log-core = { version = "0.3.1", path = "../witness-log-core" }
+witness-log-network = { version = "0.3.1", path = "../witness-log-network" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+# Used only by `witness-log demo` / `demo --tamper`, which generate
+# throwaway in-memory keypairs to build a self-contained worked example.
+# No key material generated here is ever written to disk.
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+# `witness serve`: state file names, and wiping the key buffer at init.
+sha2 = { workspace = true }
+zeroize = { workspace = true }

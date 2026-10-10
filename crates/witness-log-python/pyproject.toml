@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "witness-log"
+description = "Cryptographic audit-trail log for autonomous agents — witnessed, not trusted."
+requires-python = ">=3.9"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/0xAndersen/witness-log"
+Specification = "https://github.com/0xAndersen/witness-log/blob/main/spec/SPEC.md"
+
+[tool.maturin]
+module-name = "witness_log"
+features = ["pyo3/extension-module"]

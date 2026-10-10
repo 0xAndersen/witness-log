@@ -1,0 +1,37 @@
+{
+  "description": "RFC6962 Merkle root for tree sizes 1 through 8, built from fixed_leaf(0..n). Domain-separated hashing: leaf=SHA256(0x00||data), node=SHA256(0x01||left||right).",
+  "vectors": [
+    {
+      "root_hex": "dcc6ffbc3fdc02837d0e2a1f684d4747d75fc581bc935f1746b2541f848f34b6",
+      "tree_size": 1
+    },
+    {
+      "root_hex": "074372ea097eb7f68d7386b60716f2162cd7b1c26d80ac573abee5b853928115",
+      "tree_size": 2
+    },
+    {
+      "root_hex": "1c5af8f15a4d8362a4c460f76c5049aae01f5f58d4b51ce733037947045a53c3",
+      "tree_size": 3
+    },
+    {
+      "root_hex": "54cc500088c4246db96b2c1a83893a71efce000e7b3d4de981d04392b0ddb21e",
+      "tree_size": 4
+    },
+    {
+      "root_hex": "e5651cda336a86c4a827e60452d3c0c83e92f6751305ec03a70884b6681e1a50",
+      "tree_size": 5
+    },
+    {
+      "root_hex": "a3d037fb4baab3577f4282ed3351a9f4517e1259b2ccab7405451d8d81c29607",
+      "tree_size": 6
+    },
+    {
+      "root_hex": "31d68b294b4b1f98ddc2167845e870a5a7e894f4613ecef721a32d97a5f58161",
+      "tree_size": 7
+    },
+    {
+      "root_hex": "892081707f3a8921c6dd08c03fc224d99a424e10151f4dba39c11dc87822b3e1",
+      "tree_size": 8
+    }
+  ]
+}

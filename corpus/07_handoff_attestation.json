@@ -1,0 +1,52 @@
+{
+  "binding_result": "ok",
+  "description": "0x05 HandoffAttestation leaf encoding, and the cross-log binding check (verify_handoff_binding). handoff_* fields are appended to canonical_bytes ONLY for leaf_type 0x05 -- see vector set 1, where fixed_leaf's leaves (types 0x00-0x04) are unaffected by this leaf type's addition. sent_leaf and received_leaf are two INDEPENDENTLY constructed leaves (different session_pubkey, different salted payload_hash) that nonetheless bind because their handoff_state_hash (unsalted) and mutual counterparty_pubkey references match. mismatched_case shows what a failed binding looks like when the state hash differs.",
+  "mismatched_case": {
+    "description": "Same sent_leaf, but received_leaf's handoff_state_hash altered -- verify_handoff_binding MUST return an error.",
+    "expected_result": "error"
+  },
+  "received_leaf": {
+    "canonical_bytes_hex": "0500000000000000000000018bcfe592f800000024646966666572656e742d73657373696f6e2d7075626b65792d7468616e2d73656e646572000000403032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303200000101010000004061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161010000004037373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737",
+    "leaf": {
+      "anchor_proof_hash": null,
+      "anchor_proof_json": null,
+      "anchor_url": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "counterparty_pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "handoff_direction": "Received",
+      "handoff_state_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "index": 0,
+      "leaf_type": 5,
+      "payload_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "different-session-pubkey-than-sender",
+      "timestamp_ms": 1700000011000
+    },
+    "leaf_hash_hex": "49bf20f7d762dca84ee954f082dff067ff61d0f5f0fcf605c5fe177dbe63b7e0"
+  },
+  "receiver_identity_pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "sender_identity_pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sent_leaf": {
+    "canonical_bytes_hex": "0500000000000000000000018bcfe58f100000004037396235353632653866653635346639343037386231313265386139386261373930316638353361653639356265643765306533393130626164303439363634000000403031303130313031303130313031303130313031303130313031303130313031303130313031303130313031303130313031303130313031303130313031303100000100010000004062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262010000004037373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737373737",
+    "leaf": {
+      "anchor_proof_hash": null,
+      "anchor_proof_json": null,
+      "anchor_url": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "counterparty_pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "handoff_direction": "Sent",
+      "handoff_state_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "index": 0,
+      "leaf_type": 5,
+      "payload_hash": "0101010101010101010101010101010101010101010101010101010101010101",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "timestamp_ms": 1700000010000
+    },
+    "leaf_hash_hex": "51f3f52739116a9f382a35911a8fb7cbae2b0dd52271c8b65dbf1fd4d3722d16"
+  }
+}

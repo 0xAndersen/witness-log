@@ -1,0 +1,46 @@
+{
+  "anchor_leaf": {
+    "canonical_bytes_hex": "0700000000000000000000018bcfe5dd30000000403739623535363265386665363534663934303738623131326538613938626137393031663835336165363935626564376530653339313062616430343936363400000040303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530350000010000003e68747470733a2f2f72656b6f722e73696773746f72652e6465762f6170692f76312f6c6f672f656e74726965732f6578616d706c652d656e7472792d6964010000004063343034643439313366656331353531393534373034613763633438656362393132343064616131323738323833316536666536316439353261396236646333",
+    "leaf": {
+      "anchor_proof_hash": "c404d4913fec1551954704a7cc48ecb91240daa12782831e6fe61d952a9b6dc3",
+      "anchor_proof_json": "{\"logIndex\":12345,\"logID\":\"c0d23d6a...\",\"integratedTime\":1700000030,\"body\":\"eyJhcGlWZXJzaW9uIjoi...\"}",
+      "anchor_url": "https://rekor.sigstore.dev/api/v1/log/entries/example-entry-id",
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "counterparty_pubkey": null,
+      "handoff_direction": null,
+      "handoff_state_hash": null,
+      "index": 0,
+      "leaf_type": 7,
+      "payload_hash": "0505050505050505050505050505050505050505050505050505050505050505",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "timestamp_ms": 1700000030000
+    },
+    "leaf_hash_hex": "ce13647b9fc3825c5952a70fc2a13c25840da80973ab7b71aa8ba32447ba2319"
+  },
+  "description": "0x07 ExternalAnchor leaf encoding. anchor_proof_hash = SHA256(anchor_proof_json) is what's actually committed into canonical_bytes, not the raw JSON (which can be arbitrarily large) and not anchor_url alone (an earlier revision committed only the URL, leaving the proof content itself freely swappable -- see SPEC.md §3.3 and the pre-launch review, finding 17). The swapped-proof case demonstrates the commitment: same anchor_url, different anchor_proof_json/anchor_proof_hash, different leaf hash. Vectors 01-08 are unaffected by this leaf type's fields (verified by diffing the full corpus before/after in the implementation's commit history).",
+  "swapped_proof_case": {
+    "canonical_bytes_hex": "0700000000000000000000018bcfe5dd30000000403739623535363265386665363534663934303738623131326538613938626137393031663835336165363935626564376530653339313062616430343936363400000040303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530353035303530350000010000003e68747470733a2f2f72656b6f722e73696773746f72652e6465762f6170692f76312f6c6f672f656e74726965732f6578616d706c652d656e7472792d6964010000004038326436366436393530363061373935653761396637363139336439343938393462326538383538356631363731303163623334353537306565643262353732",
+    "description": "Same anchor_url as anchor_leaf, but a completely different anchor_proof_json (and correspondingly different anchor_proof_hash). A verifier recomputing SHA256(anchor_proof_json) and comparing against the committed anchor_proof_hash detects this swap; the leaf hash itself also differs from anchor_leaf's.",
+    "leaf": {
+      "anchor_proof_hash": "82d66d695060a795e7a9f76193d949894b2e88585f167101cb345570eed2b572",
+      "anchor_proof_json": "{\"logIndex\":99999,\"logID\":\"DIFFERENT...\",\"integratedTime\":1700000099,\"body\":\"swapped\"}",
+      "anchor_url": "https://rekor.sigstore.dev/api/v1/log/entries/example-entry-id",
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "counterparty_pubkey": null,
+      "handoff_direction": null,
+      "handoff_state_hash": null,
+      "index": 0,
+      "leaf_type": 7,
+      "payload_hash": "0505050505050505050505050505050505050505050505050505050505050505",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "session_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "timestamp_ms": 1700000030000
+    },
+    "leaf_hash_hex": "b9a4dea49d984b630e52cfe2ff01e2d2a49ef0d6362148e8814632c28e8d363c"
+  }
+}

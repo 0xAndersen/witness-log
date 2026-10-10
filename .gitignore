@@ -1,0 +1,34 @@
+# Build artifacts
+/target
+**/target
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.so
+*.whl
+target/wheels/
+.DS_Store
+
+# Fuzz corpus and crash artifacts. A crash artifact the fuzz workflow
+# uploads and someone accidentally commits is a public zero-day against
+# this project's own verifier -- see the pre-launch review, finding 28.
+fuzz/artifacts/
+fuzz/corpus/
+
+# Private key material. save_snapshot()/LeafJournal both write the raw
+# Ed25519 identity seed in plaintext to whatever path the caller gives
+# them -- these are exactly the files the README instructs users to
+# persist, and exactly the files that must never end up in version
+# control. See the pre-launch review, finding 28.
+*.key
+*.pem
+*.seed
+*-snapshot.json
+snapshot*.json
+*.jsonl
+!corpus/*.json
