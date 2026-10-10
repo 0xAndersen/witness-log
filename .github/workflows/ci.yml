@@ -131,6 +131,9 @@ jobs:
         working-directory: crates/witness-log-python
         run: pip install jsonschema && pytest tests/ -v
       - name: MCP server end to end (official client over stdio)
+        # The MCP SDK requires Python >= 3.10; the bindings themselves
+        # support 3.9, which the other steps cover.
+        if: matrix.python != '3.9'
         run: |
           pip install "mcp>=2" anyio
           pytest -q integrations/mcp -p anyio

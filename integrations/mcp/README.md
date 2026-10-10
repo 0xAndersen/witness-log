@@ -16,6 +16,9 @@ One file, no framework: `witness_mcp_server.py` on top of
 
 ## Run
 
+Python 3.10 or newer (the MCP SDK's requirement; the `witness-log`
+package itself supports 3.9).
+
 ```sh
 pip install "mcp>=2" witness-log
 python integrations/mcp/witness_mcp_server.py           # stdio
