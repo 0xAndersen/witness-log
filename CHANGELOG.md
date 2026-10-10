@@ -143,6 +143,15 @@ Also:
   README Python example used `WitnessService(...)` instead of `.new`.
   `--help` named `evidence.jsonl`; evidence lives in `evidence/`.
 
+### Fixed — journal resume failed on Windows (first CI run)
+
+`LeafJournal::open_for_append` reopened the journal append-only and then
+called `set_len` to heal a torn tail; on Windows an append-only handle
+cannot truncate, so every `JournaledLog::resume` failed with "Access is
+denied" (7 tests, all the same cause). The journal is now opened for
+write and positioned at the end; the lock already guarantees a single
+writer. CI no longer cancels the other platforms when one fails.
+
 ### Packaging and release (publish-readiness pass)
 
 - Every crate and the Python wheel/sdist now ship the AGPL `LICENSE` text

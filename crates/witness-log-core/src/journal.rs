@@ -16,7 +16,7 @@ use crate::identity::{IdentityKeypair, KeyBindingStatement};
 use crate::leaf::{AuthorizationEventKind, Leaf};
 use crate::log::WitnessLog;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 
 /// One record in the journal. `untagged` deliberately: a leaf line keeps
 /// exactly the shape it always had, so journals written before binding
@@ -246,8 +246,16 @@ impl LeafJournal {
     /// finding 07.
     pub fn open_for_append(path: &str, truncate_to: u64) -> std::io::Result<Self> {
         let lock = JournalLock::acquire(path)?;
-        let file = OpenOptions::new().append(true).open(path)?;
-        file.set_len(truncate_to)?;
+        // Opened for write, not append: on Windows an append-only handle
+        // has no permission to truncate, so healing a torn tail with
+        // `set_len` failed with "Access is denied" on EVERY resume (the
+        // first CI run on Windows). The lock guarantees a single writer,
+        // so seeking to the end gives the same append behaviour.
+        let mut file = OpenOptions::new().write(true).open(path)?;
+        if file.metadata()?.len() != truncate_to {
+            file.set_len(truncate_to)?;
+        }
+        file.seek(SeekFrom::End(0))?;
         let file_id = file.metadata().ok().as_ref().and_then(file_id_of);
         Ok(Self {
             file,

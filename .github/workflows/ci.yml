@@ -29,6 +29,9 @@ jobs:
   build-and-test:
     name: Build & test (Rust workspace)
     strategy:
+      # One platform failing must not cancel the others: the point of the
+      # matrix is to see every platform's result on every run.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
