@@ -1,4 +1,4 @@
-# WitnessLog Wire Format Specification — v0.2 (draft)
+# WitnessLog Wire Format Specification — v0.3 (draft)
 
 Status: draft, pre-1.0. Breaking changes are possible until 1.0 is tagged.
 Once tagged 1.0, changes to §2–§9 require a new major version and MUST NOT
@@ -10,6 +10,53 @@ implementation of it, not the other way around: if code and spec disagree,
 that's a bug in the code (or the spec needs an errata), and either should be
 filed as an issue. See `/corpus/` for the test vectors any implementation is
 expected to reproduce exactly.
+
+## 0. Scope
+
+WitnessLog is a wire format and a verification procedure for the
+execution record of an autonomous agent. It exists for one reason: a
+record that the party who produced it can quietly change is not an audit
+trail, whatever its retention policy says. A log in a database — the
+agent operator's, a platform's, a vendor's — is mutable by whoever holds
+the credentials, and "immutable" there means "no delete button", which
+is a policy, not a property. When agents transact with other agents
+across organisational boundaries, when a dispute turns on what an agent
+actually did, or when a regulator asks, the question is not "do you have
+logs" but "why should anyone believe them".
+
+This specification makes the record a cryptographic object:
+
+- **Append-only, with proof.** Entries are leaves of an RFC 6962 Merkle
+  tree. Any entry can be proven present (inclusion), and any two
+  snapshots can be proven to be the same history extended (consistency).
+  Rewriting, reordering or removing an entry changes the root.
+- **Non-repudiable.** Every checkpoint is signed by the log's long-lived
+  Ed25519 identity key; every leaf by a session key that identity bound.
+  A record a verifier accepts was signed by that identity, and only that
+  identity could have produced it.
+- **Witnessed.** Independent third parties cosign checkpoints and refuse
+  to cosign a history that does not extend what they already signed. A
+  log cannot show one history to one party and another to a second
+  without contradicting a cosignature someone holds. This is the property
+  that distinguishes an audit trail from a signed diary.
+- **Verifiable offline, by anyone.** The record (§9) carries everything a
+  verifier needs; verification needs no access to the agent, its operator
+  or the witnesses.
+- **Erasable without breaking.** Payloads enter the tree only as salted
+  hashes (§8); forgetting a salt erases an entry's content for GDPR while
+  every proof around it stays valid.
+
+What this specification is not: it is not a runtime, an authorization
+system, a consensus protocol or a ledger (§1.1); it does not make the
+*content* of an entry true, only unalterable after the fact
+(THREAT_MODEL.md); and it does not require a blockchain, a token or a
+trusted service.
+
+The reference implementation (Rust library, CLI, witness server, Python
+bindings) is one implementation. The conformance corpus (`/corpus/`) is
+what defines agreement between implementations; a second implementation
+that reproduces every vector is conformant whatever language it is
+written in.
 
 ## 1. Design basis
 
@@ -543,6 +590,14 @@ a trust input on their own — see §9.1.
 `witness-log verify <dossier.json>` (see `witness-log-cli`) is the
 reference verifier for this format.
 
+**JSON Schema.** `spec/dossier.schema.json` (JSON Schema 2020-12) states
+the exact shape of a dossier and of every object in it: field names,
+hex lengths, enumerations, which fields are optional. The reference
+implementation's test suite validates every dossier it produces, and
+every leaf in `/corpus/`, against it, so the schema cannot drift from
+the code. A document that validates is well-formed, not verified:
+signatures, Merkle continuity, bindings and quorum are §9.1–§9.2.
+
 ### 9.1 The trust boundary: what a verifier must supply itself
 
 A dossier's `identity_pubkey`, `witness_directory`, `key_bindings`, and
@@ -741,6 +796,23 @@ operator/compute-provider diversity scoring remain WitnessLog's own and
 have no C2SP equivalent. This is an interoperability boundary, not a
 replacement for the native format.
 
+## 9.4 Write receipts and silence proofs
+
+A log MAY issue a **write receipt** when it accepts an event: a signed
+statement binding the log identity to one `payload_hash` at one
+`tree_size`:
+
+```
+message = "witness-log-write-receipt-v1" || lp(sig_alg) || lp(signer_pubkey) || lp(payload_hash as UTF-8 hex) || tree_size (8B BE) || issued_at_ms (8B BE)
+```
+
+The holder of a receipt can later prove censorship-by-omission: if
+witnessed checkpoints of this log advance past `tree_size` and the
+event never appears, the receipt plus those checkpoints are evidence a
+third party can check with the log's key alone. A plain checkpoint is
+not a write receipt: it commits to no event, so it proves nothing about
+one (an earlier draft of the reference implementation made that mistake).
+
 ## 10. Open questions for v1.0
 
 - Binary/CBOR dossier encoding for size and parsing-ambiguity reasons.
@@ -751,6 +823,26 @@ replacement for the native format.
   transitively via the checkpoint over the whole tree — a leaf can't be
   individually verified without also trusting the tree it's claimed to be
   part of, which is a fine trade-off pre-1.0 but worth revisiting).
+
+## Adoption
+
+This specification is published to be implemented. Anyone may implement
+the wire format and verification procedure described here, in any
+language, for any purpose, without using, linking or deriving from the
+reference implementation; a conformant implementation is one that
+reproduces every vector in `/corpus/` byte for byte, which is checkable
+mechanically (`witness-log conform <dir>`). Interoperability with the
+wider transparency-log ecosystem is by design (§9.3): WitnessLog
+checkpoints are C2SP signed notes, and any `c2sp.org/tlog-witness`
+witness can cosign them.
+
+The reference implementation is licensed AGPL-3.0-only (see `LICENSE`):
+derivatives of the *code*, including ones offered as a network service,
+must stay open. That license governs the code, not the format: an
+independent implementation of this specification is not a derivative
+work of the reference implementation. Specification changes go through
+the public process in `GOVERNANCE.md`, and conformance, not origin, is
+what makes an implementation a WitnessLog implementation.
 
 ## Conformance
 

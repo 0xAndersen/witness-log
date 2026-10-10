@@ -20,5 +20,6 @@ Homepage = "https://github.com/0xAndersen/witness-log"
 Specification = "https://github.com/0xAndersen/witness-log/blob/main/spec/SPEC.md"
 
 [tool.maturin]
-module-name = "witness_log"
+module-name = "witness_log._core"
+python-source = "python"
 features = ["pyo3/extension-module"]

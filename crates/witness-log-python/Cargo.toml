@@ -8,7 +8,7 @@ authors = ["WitnessLog Contributors"]
 description = "Python bindings for witness-log-core, via PyO3."
 
 [lib]
-name = "witness_log"
+name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]

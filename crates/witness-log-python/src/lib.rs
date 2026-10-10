@@ -219,6 +219,17 @@ impl PyWitnessLog {
         dossier_from_responses(&lock(&self.inner), responses)
     }
 
+    /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
+    /// current tree. Verify offline with `witness_log.verify_inclusion`.
+    fn inclusion_proof(&self, index: u64) -> Option<(u64, String, Vec<String>)> {
+        inclusion_proof_of(&lock(&self.inner), index)
+    }
+
+    /// RFC 6962 leaf hash of the leaf at `index`, hex.
+    fn leaf_hash_hex(&self, index: u64) -> Option<String> {
+        leaf_hash_of(&lock(&self.inner), index)
+    }
+
     /// Assemble a full dossier (leaves + checkpoint) as a JSON string,
     /// matching SPEC.md §9 minus witness fields — attach those separately
     /// if/when this log has been witnessed.
@@ -386,6 +397,51 @@ fn dossier_from_responses(
     ))
 }
 
+/// `(tree_size, root_hex, proof_hexes)` for the leaf at `index` in the
+/// CURRENT tree, or `None` if the index does not exist.
+fn inclusion_proof_of(log: &CoreLog, index: u64) -> Option<(u64, String, Vec<String>)> {
+    let proof = log.inclusion_proof(index)?;
+    Some((
+        log.tree_size(),
+        log.root_hex(),
+        proof.iter().map(hex::encode).collect(),
+    ))
+}
+
+/// RFC 6962 leaf hash (`SHA256(0x00 || canonical_bytes)`) of the leaf at
+/// `index`, hex, or `None` if it does not exist.
+fn leaf_hash_of(log: &CoreLog, index: u64) -> Option<String> {
+    let leaf = log.leaves().get(usize::try_from(index).ok()?)?;
+    Some(hex::encode(witness_log_core::merkle::leaf_hash(
+        &leaf.canonical_bytes(),
+    )))
+}
+
+/// Verify an inclusion proof offline. All hashes hex. False on any
+/// malformed input rather than raising, so a verifier loop never stops
+/// on a hostile dossier.
+#[pyfunction]
+fn verify_inclusion(
+    leaf_hash_hex: &str,
+    leaf_index: u64,
+    tree_size: u64,
+    proof_hexes: Vec<String>,
+    root_hex: &str,
+) -> bool {
+    let to32 = |h: &str| -> Option<[u8; 32]> { hex::decode(h.trim()).ok()?.try_into().ok() };
+    let (Some(leaf), Some(root)) = (to32(leaf_hash_hex), to32(root_hex)) else {
+        return false;
+    };
+    let mut proof = Vec::with_capacity(proof_hexes.len());
+    for h in &proof_hexes {
+        match to32(h) {
+            Some(x) => proof.push(x),
+            None => return false,
+        }
+    }
+    witness_log_core::merkle::verify_inclusion(&leaf, leaf_index, tree_size, &proof, &root)
+}
+
 fn verify_error_to_py(e: VerifyError) -> PyErr {
     match e {
         VerifyError::BadSignature(_) => SignatureError::new_err(e.to_string()),
@@ -401,7 +457,35 @@ fn verify_error_to_py(e: VerifyError) -> PyErr {
 /// automatically.
 #[pyclass(name = "JournaledLog")]
 struct PyJournaledLog {
-    inner: Mutex<witness_log_core::journal::JournaledLog>,
+    /// `None` after `close()`: the journal and its lock are released.
+    inner: Mutex<Option<witness_log_core::journal::JournaledLog>>,
+}
+
+/// A borrowed, open journal. Constructed only after the `None` check, so
+/// the deref cannot fail; the `expect` message is the invariant.
+struct OpenJournal<'a>(MutexGuard<'a, Option<witness_log_core::journal::JournaledLog>>);
+impl std::ops::Deref for OpenJournal<'_> {
+    type Target = witness_log_core::journal::JournaledLog;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("checked open before constructing")
+    }
+}
+impl std::ops::DerefMut for OpenJournal<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("checked open before constructing")
+    }
+}
+
+impl PyJournaledLog {
+    fn j(&self) -> PyResult<OpenJournal<'_>> {
+        let g = lock(&self.inner);
+        if g.is_none() {
+            return Err(PyIOError::new_err(
+                "this JournaledLog is closed; open it again with witness_log.open(path)",
+            ));
+        }
+        Ok(OpenJournal(g))
+    }
 }
 
 #[pymethods]
@@ -413,7 +497,7 @@ impl PyJournaledLog {
         let identity = parse_identity_seed(identity_seed)?;
         witness_log_core::journal::JournaledLog::create(path, identity)
             .map(|inner| Self {
-                inner: Mutex::new(inner),
+                inner: Mutex::new(Some(inner)),
             })
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -424,7 +508,7 @@ impl PyJournaledLog {
     fn create_ephemeral(path: &str) -> PyResult<Self> {
         witness_log_core::journal::JournaledLog::create_ephemeral(path)
             .map(|inner| Self {
-                inner: Mutex::new(inner),
+                inner: Mutex::new(Some(inner)),
             })
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -438,7 +522,7 @@ impl PyJournaledLog {
             .map(|(inner, report)| {
                 (
                     Self {
-                        inner: Mutex::new(inner),
+                        inner: Mutex::new(Some(inner)),
                     },
                     report.dropped_trailing_lines,
                 )
@@ -447,22 +531,22 @@ impl PyJournaledLog {
     }
 
     fn append_intent(&self, payload: &[u8]) -> PyResult<u64> {
-        lock(&self.inner)
+        self.j()?
             .append_intent(payload)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
     fn append_result(&self, payload: &[u8]) -> PyResult<u64> {
-        lock(&self.inner)
+        self.j()?
             .append_result(payload)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
     fn append_memory(&self, payload: &[u8]) -> PyResult<u64> {
-        lock(&self.inner)
+        self.j()?
             .append_memory(payload)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
     fn append_handoff_sent(&self, state: &[u8], counterparty_pubkey_hex: &str) -> PyResult<u64> {
-        lock(&self.inner)
+        self.j()?
             .append_handoff_sent(state, counterparty_pubkey_hex)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -471,7 +555,7 @@ impl PyJournaledLog {
         state: &[u8],
         counterparty_pubkey_hex: &str,
     ) -> PyResult<u64> {
-        lock(&self.inner)
+        self.j()?
             .append_handoff_received(state, counterparty_pubkey_hex)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -480,50 +564,52 @@ impl PyJournaledLog {
     /// Raises on I/O failure, so a journaling failure during a legally
     /// consequential operation cannot go unnoticed.
     fn forget(&self, index: u64) -> PyResult<bool> {
-        lock(&self.inner)
+        self.j()?
             .forget(index)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
     /// fsync. Blocks; call from a thread if you are async.
     fn sync(&self) -> PyResult<()> {
-        lock(&self.inner)
+        self.j()?
             .sync()
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
-    fn tree_size(&self) -> u64 {
-        lock(&self.inner).log().tree_size()
+    fn tree_size(&self) -> PyResult<u64> {
+        Ok(self.j()?.log().tree_size())
     }
-    fn root_hex(&self) -> String {
-        lock(&self.inner).log().root_hex()
+    fn root_hex(&self) -> PyResult<String> {
+        Ok(self.j()?.log().root_hex())
     }
-    fn identity_pubkey_hex(&self) -> String {
-        lock(&self.inner).log().identity_pubkey_hex()
+    fn identity_pubkey_hex(&self) -> PyResult<String> {
+        Ok(self.j()?.log().identity_pubkey_hex())
     }
-    fn identity_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &lock(&self.inner).log().identity_bytes())
+    fn identity_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        Ok(PyBytes::new(py, &self.j()?.log().identity_bytes()))
     }
 
     /// Sign a checkpoint over the current head. Returns JSON.
     fn checkpoint(&self) -> PyResult<String> {
-        serde_json::to_string(&lock(&self.inner).log().checkpoint_self()).map_err(malformed_err)
+        serde_json::to_string(&self.j()?.log().checkpoint_self()).map_err(malformed_err)
     }
 
     /// Export a dossier of this log's own history, with key bindings
     /// populated correctly across restarts. Returns JSON.
     fn to_dossier_json(&self) -> PyResult<String> {
-        let sth = lock(&self.inner).log().checkpoint_self();
-        let dossier = witness_log_network::Dossier::from_log(lock(&self.inner).log(), sth);
+        let sth = self.j()?.log().checkpoint_self();
+        let dossier = witness_log_network::Dossier::from_log(self.j()?.log(), sth);
         serde_json::to_string_pretty(&dossier).map_err(malformed_err)
     }
 
     /// This log's canonical C2SP origin, `witness-log/<identity key hex>`.
     /// Witnesses with open enrollment accept it with no key exchange, and
     /// only cosignatures under it count toward a verdict.
-    fn canonical_origin(&self) -> String {
-        let key = ed25519_dalek::SigningKey::from_bytes(&lock(&self.inner).log().identity_bytes());
-        witness_log_core::c2sp::canonical_origin(&key.verifying_key())
+    fn canonical_origin(&self) -> PyResult<String> {
+        let key = ed25519_dalek::SigningKey::from_bytes(&self.j()?.log().identity_bytes());
+        Ok(witness_log_core::c2sp::canonical_origin(
+            &key.verifying_key(),
+        ))
     }
 
     /// POST body for `<witness>/add-checkpoint`. `old_size` is the size
@@ -531,7 +617,7 @@ impl PyJournaledLog {
     /// reply's body tells you the right value).
     #[pyo3(signature = (old_size=0))]
     fn add_checkpoint_body(&self, old_size: u64) -> PyResult<String> {
-        add_checkpoint_body(&lock(&self.inner).log(), old_size)
+        add_checkpoint_body(&self.j()?.log(), old_size)
     }
 
     /// Dossier JSON for the current head from witness 200 responses:
@@ -542,11 +628,28 @@ impl PyJournaledLog {
         &self,
         responses: Vec<(String, String)>,
     ) -> PyResult<(String, usize)> {
-        dossier_from_responses(&lock(&self.inner).log(), responses)
+        dossier_from_responses(&self.j()?.log(), responses)
+    }
+
+    /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
+    /// current tree. Verify offline with `witness_log.verify_inclusion`.
+    fn inclusion_proof(&self, index: u64) -> PyResult<Option<(u64, String, Vec<String>)>> {
+        Ok(inclusion_proof_of(self.j()?.log(), index))
+    }
+
+    /// RFC 6962 leaf hash of the leaf at `index`, hex.
+    fn leaf_hash_hex(&self, index: u64) -> PyResult<Option<String>> {
+        Ok(leaf_hash_of(self.j()?.log(), index))
+    }
+
+    /// JSON array of every leaf, in SPEC.md canonical serde form (same
+    /// as a dossier's `leaves`).
+    fn leaves_json(&self) -> PyResult<String> {
+        serde_json::to_string(self.j()?.log().leaves()).map_err(malformed_err)
     }
 
     fn c2sp_checkpoint_text(&self, origin: &str) -> PyResult<String> {
-        lock(&self.inner)
+        self.j()?
             .log()
             .c2sp_checkpoint(origin)
             .note_text()
@@ -554,8 +657,8 @@ impl PyJournaledLog {
     }
 
     fn sign_c2sp_checkpoint(&self, origin: &str) -> PyResult<String> {
-        let key = ed25519_dalek::SigningKey::from_bytes(&lock(&self.inner).log().identity_bytes());
-        lock(&self.inner)
+        let key = ed25519_dalek::SigningKey::from_bytes(&self.j()?.log().identity_bytes());
+        self.j()?
             .log()
             .c2sp_checkpoint(origin)
             .sign(&key)
@@ -563,23 +666,44 @@ impl PyJournaledLog {
             .map_err(|e| MalformedError::new_err(e.to_string()))
     }
 
-    fn c2sp_vkey(&self, origin: &str) -> String {
-        let key = ed25519_dalek::SigningKey::from_bytes(&lock(&self.inner).log().identity_bytes());
-        witness_log_core::c2sp::bridge::log_vkey(origin, &key.verifying_key()).encode()
+    fn c2sp_vkey(&self, origin: &str) -> PyResult<String> {
+        let key = ed25519_dalek::SigningKey::from_bytes(&self.j()?.log().identity_bytes());
+        Ok(witness_log_core::c2sp::bridge::log_vkey(origin, &key.verifying_key()).encode())
+    }
+    /// Sync and release the journal and its lock. After this every other
+    /// method raises; reopen with `witness_log.open(path)`. Needed when
+    /// something else (a decorated function's closure, a REPL variable)
+    /// still references this object, since the lock is held until the
+    /// object is dropped.
+    fn close(&self) -> PyResult<()> {
+        let mut g = lock(&self.inner);
+        if let Some(j) = g.as_mut() {
+            j.sync().map_err(|e| PyIOError::new_err(e.to_string()))?;
+        }
+        *g = None;
+        Ok(())
+    }
+
+    /// True once `close()` has been called.
+    fn is_closed(&self) -> bool {
+        lock(&self.inner).is_none()
+    }
+
+    fn __enter__(slf: pyo3::PyRef<'_, Self>) -> pyo3::PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        _t: Option<Bound<'_, pyo3::PyAny>>,
+        _v: Option<Bound<'_, pyo3::PyAny>>,
+        _tb: Option<Bound<'_, pyo3::PyAny>>,
+    ) -> PyResult<bool> {
+        self.close()?;
+        Ok(false)
     }
 }
 
-/// A `tlog-witness` witness. Holds one record per log it witnesses and
-/// cosigns only verified, consistent advances. Wire
-/// `handle_add_checkpoint_http` into any HTTP server: it takes the POST
-/// body and returns `(status, content_type, body)` exactly as
-/// c2sp.org/tlog-witness requires.
-///
-/// Pass `state_path` for anything real. Then every cosigned head is
-/// written durably (temp file, fsync, rename) BEFORE the cosignature is
-/// returned, and if that write fails no cosignature is returned at all.
-/// Without `state_path` the witness forgets everything on restart and
-/// can be walked onto a fork -- fine for tests, wrong for production.
 #[pyclass(name = "WitnessService")]
 struct PyWitnessService {
     inner: Mutex<witness_log_network::tlog_witness::WitnessService>,
@@ -1013,12 +1137,13 @@ fn witness_entry_project_operated(
 }
 
 #[pymodule]
-fn witness_log(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     m.add_class::<PyWitnessLog>()?;
     m.add_class::<PyJournaledLog>()?;
     m.add_class::<PyWitnessService>()?;
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_diverse_witnesses, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(witness_entry_independent, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(witness_entry_project_operated, m)?)?;

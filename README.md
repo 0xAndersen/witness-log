@@ -67,6 +67,46 @@ still fails:
 The forgery had flawless cryptography. It failed on a question
 cryptography doesn't answer by itself: whose log is this?
 
+## Three lines in an agent loop
+
+```python
+import witness_log
+log = witness_log.open("agent.jsonl")        # create, or resume the same identity
+
+@witness_log.step(log)                       # every call: a signed intent + result leaf
+def call_tool(name: str, **args) -> dict: ...
+```
+
+That is the whole integration for any Python agent loop — LangChain,
+LlamaIndex, OpenAI/Anthropic tool calling, or a hand-rolled one. Each call
+appends an *intent* leaf before it runs and a *result* leaf after (errors
+included), both signed, with payloads hashed under per-leaf salts so any
+single entry can later be erased for GDPR (`log.forget(i)`) without
+breaking a proof. `log.to_dossier_json()` is the record you hand to anyone;
+`witness-log verify` checks it with no access to you.
+
+Measured cost, this machine, Python 3.13: about **80 µs per decorated
+call** on an in-memory log and **115 µs** journaled (two Ed25519-signed
+leaves each; the disk write is batched, one `sync()` of 40,000 leaves
+takes 28 ms). The Rust core is the same code the CLI and the witness
+server run; nothing is re-implemented in Python.
+
+For agents that speak MCP, [`integrations/mcp`](integrations/mcp) is the
+same capability as seven tools: an agent provisions its own chain on
+boot, records every step, proves any step, erases on request, and gets
+its head cosigned by independent witnesses. Tested end to end with the
+official MCP client.
+
+Want to see a tampered record get caught? `python examples/verify_demo.py`
+records three steps, edits entry #2 in storage the way a compromised
+database would, and watches the verifier refuse it.
+
+**For security and compliance teams:** this is the audit layer that
+does not ask you to trust the operator. Every claim is a signature or a
+hash you can recompute, the record verifies offline with nothing from
+the agent's side, and `THREAT_MODEL.md` says exactly what is and is not
+proven. "Witnessed" is only ever as strong as the witnesses *you* chose.
+
 ## Why this exists
 
 Most "AI agent audit trail" tooling today assumes the operator is honest —
@@ -329,7 +369,8 @@ witness-log/
 ├── corpus/               # frozen conformance test vectors (deterministic)
 ├── fuzz/                 # cargo-fuzz targets (Merkle proofs, dossiers, journals, CLI render, witness requests)
 ├── .github/workflows/    # CI (build/test/clippy/fmt/MSRV per-OS) and scheduled fuzzing
-├── examples/             # sample dossier + trusted directory; live-network/ 10-witness pressure test
+├── examples/             # sample dossier, verify_demo.py, live-network/ 10-witness pressure test
+├── integrations/mcp/     # MCP server: the audit trail as tools for any MCP-capable agent
 ├── THREAT_MODEL.md       # what this proves, what it doesn't
 ├── GOVERNANCE.md         # federation model, witness recruitment, transition plan
 ├── SECURITY.md           # vulnerability disclosure process

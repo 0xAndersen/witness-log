@@ -125,7 +125,11 @@ jobs:
         # snapshot round-trip, file permissions) rather than one inline
         # smoke-test string -- see the pre-launch review, finding 19.
         working-directory: crates/witness-log-python
-        run: pytest tests/ -v
+        run: pip install jsonschema && pytest tests/ -v
+      - name: MCP server end to end (official client over stdio)
+        run: |
+          pip install "mcp>=2" anyio
+          pytest -q integrations/mcp -p anyio
 
   cargo-deny:
     name: Supply chain audit (advisories + licenses)

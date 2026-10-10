@@ -222,3 +222,60 @@ def test_python_agent_and_witnesses_reach_witnessed_and_refuse_forks(tmp_path):
     # A 409 tells a client with no memory where the witness is.
     st, ctype, body = w0.handle_add_checkpoint_http(agent.add_checkpoint_body(0))
     assert st == 409 and ctype == "text/x.tlog.size" and body == "7\n"
+
+
+def test_python_layer_open_step_close_and_inclusion(tmp_path):
+    """The conveniences on top of the core: open() creates then resumes
+    the same identity, @step records intent + result (and errors), close()
+    releases the journal lock even while closures still reference the
+    log, and inclusion proofs verify offline."""
+    import asyncio
+    p = str(tmp_path / "agent.jsonl")
+    log = witness_log.open(p)
+
+    @witness_log.step(log)
+    def add(a, b):
+        return a + b
+
+    @witness_log.step(log, name="explode")
+    def explode():
+        raise RuntimeError("boom")
+
+    @witness_log.step(log)
+    async def later(x):
+        return x * 2
+
+    assert add(2, 3) == 5
+    with pytest.raises(RuntimeError):
+        explode()
+    assert asyncio.run(later(4)) == 8
+    assert log.tree_size() == 6
+    leaves = json.loads(log.leaves_json())
+    assert [l["leaf_type"] for l in leaves] == [1, 2, 1, 2, 1, 2]
+
+    ts, root, proof = log.inclusion_proof(3)
+    lh = log.leaf_hash_hex(3)
+    assert witness_log.verify_inclusion(lh, 3, ts, proof, root)
+    assert not witness_log.verify_inclusion(lh, 4, ts, proof, root)
+    assert not witness_log.verify_inclusion("nothex", 3, ts, proof, root)
+    assert log.inclusion_proof(99) is None
+
+    ident = log.identity_pubkey_hex()
+    log.close()
+    assert log.is_closed()
+    with pytest.raises(OSError):
+        log.tree_size()
+    # Closures above still hold `log`; the lock must be free anyway.
+    again = witness_log.open(p)
+    assert again.tree_size() == 6 and again.identity_pubkey_hex() == ident
+    again.close()
+
+    with witness_log.open(str(tmp_path / "ctx.jsonl")) as c:
+        c.append_intent(b"x")
+    assert c.is_closed()
+
+    # Explicit identity survives across paths.
+    seed = os.urandom(32)
+    a = witness_log.open(str(tmp_path / "a.jsonl"), seed)
+    b = witness_log.open(str(tmp_path / "b.jsonl"), seed)
+    assert a.identity_pubkey_hex() == b.identity_pubkey_hex()

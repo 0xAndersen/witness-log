@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xAndersen/witness-log/blob/main/spec/dossier.schema.json",
+  "title": "WitnessLog dossier",
+  "description": "The offline-verifiable record of one agent log: every leaf, the signed checkpoint, key bindings, revocations and witness receipts (SPEC.md §9). This schema states the SHAPE of the document. It is not the trust boundary: a document that validates is not verified. Verification (signatures, Merkle continuity, bindings, quorum) is SPEC.md §9.1–§9.2 and is what `witness-log verify` runs.",
+  "type": "object",
+  "required": ["identity_pubkey", "leaves", "checkpoint"],
+  "additionalProperties": false,
+  "properties": {
+    "identity_pubkey": { "$ref": "#/$defs/hex32" },
+    "leaves": { "type": "array", "items": { "$ref": "#/$defs/leaf" } },
+    "checkpoint": { "$ref": "#/$defs/signed_tree_head" },
+    "witness_receipts": { "type": "array", "items": { "$ref": "#/$defs/witness_receipt" }, "default": [] },
+    "witness_directory": { "$ref": "#/$defs/witness_directory" },
+    "key_bindings": { "type": "array", "items": { "$ref": "#/$defs/key_binding" }, "default": [] },
+    "revocations": { "type": "array", "items": { "$ref": "#/$defs/revocation" }, "default": [] }
+  },
+  "$defs": {
+    "hex32": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$", "description": "32 bytes, hex" },
+    "hex64": { "type": "string", "pattern": "^[0-9a-fA-F]{128}$", "description": "64-byte Ed25519 signature, hex" },
+    "u64": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
+    "leaf": {
+      "type": "object",
+      "description": "One log entry (SPEC.md §2–§3). Fields after payload_hash are present for every leaf and null unless the leaf type uses them; canonical_bytes() (the signed/hashed form) includes only the fields its type defines.",
+      "required": ["index", "leaf_type", "timestamp_ms", "session_pubkey", "payload_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "index": { "$ref": "#/$defs/u64", "description": "Position in the tree; leaves are contiguous from 0." },
+        "leaf_type": {
+          "type": "integer",
+          "enum": [0, 1, 2, 3, 4, 5, 6, 7],
+          "description": "0x00 PassiveMemory, 0x01 ActiveIntent, 0x02 ActiveResult, 0x03 Redaction, 0x04 KeyRevocation, 0x05 HandoffAttestation, 0x06 AuthorizationEvent, 0x07 ExternalAnchor"
+        },
+        "timestamp_ms": { "$ref": "#/$defs/u64", "description": "Self-asserted by the log; carries no evidentiary weight on its own (THREAT_MODEL.md)." },
+        "session_pubkey": { "$ref": "#/$defs/hex32", "description": "The session key this leaf was recorded under; must trace to a key binding by the identity key." },
+        "payload_hash": { "$ref": "#/$defs/hex32", "description": "SHA256(bucket_pad(payload) || salt || index) per §8; the all-zero hash for leaf types that carry no payload." },
+        "redacted_index": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }], "description": "0x03 only: the index whose salt was forgotten." },
+        "revoked_identity": { "oneOf": [{ "$ref": "#/$defs/hex32" }, { "type": "null" }], "description": "0x04 only." },
+        "handoff_direction": { "oneOf": [{ "type": "string", "enum": ["Sent", "Received"] }, { "type": "null" }], "description": "0x05 only." },
+        "counterparty_pubkey": { "oneOf": [{ "$ref": "#/$defs/hex32" }, { "type": "null" }], "description": "0x05 and 0x06: the other log's identity key." },
+        "handoff_state_hash": { "oneOf": [{ "$ref": "#/$defs/hex32" }, { "type": "null" }], "description": "0x05 only: unsalted SHA-256 of the handed-off state, identical in both logs (§3.1)." },
+        "authorization_event_kind": { "oneOf": [{ "type": "string", "enum": ["GrantedByMe", "GrantedToMe", "RevokedByMe", "RevokedToMe", "ScopeChangedByMe", "ScopeChangedToMe"] }, { "type": "null" }], "description": "0x06 only (§3.2)." },
+        "authorization_scope_hash": { "oneOf": [{ "$ref": "#/$defs/hex32" }, { "type": "null" }], "description": "0x06 only: unsalted SHA-256 of the scope document." },
+        "anchor_url": { "oneOf": [{ "type": "string" }, { "type": "null" }], "description": "0x07 only (§3.3)." },
+        "anchor_proof_json": { "oneOf": [{ "type": "string" }, { "type": "null" }], "description": "0x07 only: the anchor proof, verbatim; committed through anchor_proof_hash." },
+        "anchor_proof_hash": { "oneOf": [{ "$ref": "#/$defs/hex32" }, { "type": "null" }], "description": "0x07 only: SHA256(anchor_proof_json)." }
+      }
+    },
+    "signed_tree_head": {
+      "type": "object",
+      "description": "Checkpoint (SPEC.md §6). Signed message: \"witness-log-sth-v2\" || lp(sig_alg) || lp(signer_pubkey) || tree_size (8B BE) || root (32B) || timestamp_ms (8B BE).",
+      "required": ["tree_size", "root_hash", "timestamp_ms", "sig_alg", "signer_pubkey", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "tree_size": { "$ref": "#/$defs/u64" },
+        "root_hash": { "$ref": "#/$defs/hex32" },
+        "timestamp_ms": { "$ref": "#/$defs/u64" },
+        "sig_alg": { "type": "string", "const": "ed25519" },
+        "signer_pubkey": { "$ref": "#/$defs/hex32", "description": "The log's identity key." },
+        "signature": { "$ref": "#/$defs/hex64" }
+      }
+    },
+    "witness_receipt": {
+      "type": "object",
+      "description": "A witness's countersignature over a checkpoint (SPEC.md §7). Native receipts sign \"witness-log-witness-receipt-v2\" || …; receipts with c2sp_origin are c2sp.org/tlog-cosignature v1 cosignatures and verify against \"cosignature/v1\\ntime <s>\\n<origin>\\n<size>\\n<base64 root>\\n\" (§9.3).",
+      "required": ["witness_pubkey", "tree_size", "root_hash", "witnessed_at_ms", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "witness_pubkey": { "$ref": "#/$defs/hex32" },
+        "tree_size": { "$ref": "#/$defs/u64" },
+        "root_hash": { "$ref": "#/$defs/hex32" },
+        "witnessed_at_ms": { "$ref": "#/$defs/u64" },
+        "signature": { "$ref": "#/$defs/hex64" },
+        "c2sp_origin": { "type": "string", "pattern": "^witness-log/[0-9a-f]{64}$", "description": "Present for C2SP cosignatures; must equal the identity's canonical origin or the receipt does not count." }
+      }
+    },
+    "witness_directory": {
+      "type": "object",
+      "description": "Display-only when it travels inside a dossier (§9.1): a verifier scores receipts against a directory it obtained itself.",
+      "required": ["witnesses"],
+      "additionalProperties": false,
+      "properties": { "witnesses": { "type": "array", "items": { "$ref": "#/$defs/witness_entry" } } }
+    },
+    "witness_entry": {
+      "type": "object",
+      "required": ["name", "operator_org", "url", "pubkey", "runtime", "is_project_operated"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "operator_org": { "type": "string", "description": "Operator identity for diversity scoring; normalised (trim, lowercase, collapse whitespace) before comparison." },
+        "url": { "type": "string" },
+        "pubkey": { "$ref": "#/$defs/hex32" },
+        "runtime": { "type": "string", "enum": ["human", "agent"] },
+        "compute_provider": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "is_project_operated": { "type": "boolean", "description": "All project-operated witnesses collapse to one diversity bucket." }
+      }
+    },
+    "key_binding": {
+      "type": "object",
+      "description": "The identity key's statement that a session key may sign leaves (SPEC.md §5).",
+      "required": ["identity_pubkey", "session_pubkey", "session_number", "timestamp_ms", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "identity_pubkey": { "$ref": "#/$defs/hex32" },
+        "session_pubkey": { "$ref": "#/$defs/hex32" },
+        "session_number": { "$ref": "#/$defs/u64" },
+        "timestamp_ms": { "$ref": "#/$defs/u64" },
+        "custody": { "type": "string", "enum": ["undisclosed", "self_held", "platform_held"], "default": "undisclosed" },
+        "not_after_ms": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }], "description": "Binding expiry; null = no expiry asserted." },
+        "signature": { "$ref": "#/$defs/hex64" }
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "required": ["identity_pubkey", "as_of_ms", "reason", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "identity_pubkey": { "$ref": "#/$defs/hex32" },
+        "as_of_ms": { "$ref": "#/$defs/u64" },
+        "reason": { "type": "string" },
+        "signature": { "$ref": "#/$defs/hex64" }
+      }
+    }
+  }
+}

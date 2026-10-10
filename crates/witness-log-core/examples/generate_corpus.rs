@@ -281,7 +281,9 @@ fn main() {
         index: 0,
         leaf_type: LeafType::HandoffAttestation.tag(),
         timestamp_ms: 1_700_000_011_000,
-        session_pubkey: "different-session-pubkey-than-sender".to_string(),
+        // A distinct, VALID session key (hex): a leaf must be well-formed on its
+        // own, and the schema test checks every corpus leaf against SPEC §3.
+        session_pubkey: hex::encode([0xB2u8; 32]),
         payload_hash: hex::encode([0x02u8; 32]), // different salt -> different payload_hash, by design
         redacted_index: None,
         revoked_identity: None,
@@ -370,7 +372,7 @@ fn main() {
         index: 0,
         leaf_type: LeafType::AuthorizationEvent.tag(),
         timestamp_ms: 1_700_000_021_000,
-        session_pubkey: "different-session-pubkey-than-granter".to_string(),
+        session_pubkey: hex::encode([0xB3u8; 32]),
         payload_hash: hex::encode([0x04u8; 32]),
         redacted_index: None,
         revoked_identity: None,
