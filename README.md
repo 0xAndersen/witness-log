@@ -8,6 +8,8 @@
 [![Spec](https://img.shields.io/badge/spec-SPEC.md%20v0.3-informational)](spec/SPEC.md)
 [![Swarm](https://img.shields.io/badge/swarm-3%2C000%20agents%20%C2%B7%200%20failures-success)](examples/swarm/reports/outside-3000.md)
 
+**Docs:** [wiki](docs/wiki/Home.md) — quickstarts (Python, Rust, CLI), MCP, framework guides (LangChain, OpenAI Agents, CrewAI, AutoGen, Google ADK, LlamaIndex, Claude Code), verification, running a witness, compliance.
+
 Every push runs 268 Rust tests, the Python and MCP suites, ten live
 witnesses through ten scenarios, 100 scenarios against the released
 artifacts, and a 200-agent swarm; the 1,000- and 3,000-agent runs are in
