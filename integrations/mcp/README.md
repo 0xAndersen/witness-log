@@ -1,8 +1,8 @@
 # witness-log MCP server
 
 Gives any MCP-capable agent its own tamper-evident audit trail as tools.
-One file, no framework: `witness_mcp_server.py` on top of the
-`witness-log` wheel (from the Releases page until PyPI publication lands).
+One file, no framework: `witness_mcp_server.py` on top of
+`pip install witness-log`.
 
 | Tool | What it does |
 |---|---|

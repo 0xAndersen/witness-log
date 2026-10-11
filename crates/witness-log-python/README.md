@@ -8,14 +8,13 @@ this for anything real. Ships type stubs (`py.typed`).
 ## Install
 
 ```bash
-pip install ./witness_log-0.3.5-*.whl     # wheel from the Releases page; PyPI publication pending
+pip install witness-log
 ```
 
-Until the package is on PyPI, download the wheel for your platform from the
-[GitHub release](https://github.com/0xAndersen/witness-log/releases)
-(abi3 wheels: Linux x86_64/aarch64, macOS x86_64/arm64, Windows x86_64,
-Python ≥ 3.9) and `pip install witness_log-*.whl`; `SHA256SUMS` is next to
-them. To build from source: `pip install maturin && maturin build --release`
+abi3 wheels for Linux x86_64/aarch64 (glibc and musl), macOS x86_64/arm64
+and Windows x86_64, Python ≥ 3.9; the same files with `SHA256SUMS` are on
+the [GitHub release](https://github.com/0xAndersen/witness-log/releases).
+To build from source: `pip install maturin && maturin build --release`
 in this directory.
 
 ## Quickstart: an agent loop

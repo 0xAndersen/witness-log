@@ -29,15 +29,14 @@ privacy request without breaking a single proof.
 # CLI: prebuilt binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows,
 # with SHA256SUMS, on the Releases page; or build from source:
 cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.5 witness-log-cli
-# Python: the wheel for your platform from the same release page (CPython 3.9+, abi3):
-pip install https://github.com/0xAndersen/witness-log/releases/download/v0.3.5/<wheel-for-your-platform>.whl
+pip install witness-log            # Python (CPython 3.9+; Linux, macOS, Windows wheels)
 
 witness-log demo                   # the GIF above, live, in your terminal: no files, no network
 witness-log demo --tamper          # a forgery with flawless cryptography, caught
 ```
 
-PyPI (`pip install witness-log`) and crates.io (`cargo install witness-log-cli`) publication is
-pending; until it lands those commands do not work and this README will not claim they do.
+crates.io publication (`cargo install witness-log-cli`) is pending; until it lands use the prebuilt
+binaries or the `--git` install above.
 
 **Docs:** the [wiki](https://github.com/0xAndersen/witness-log/wiki) (source in [`docs/wiki/`](docs/wiki/Home.md)):
 educational [Python](docs/wiki/Quickstart-Python.md) / [Rust](docs/wiki/Quickstart-Rust.md) / [CLI](docs/wiki/Quickstart-CLI.md)
