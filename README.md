@@ -2,6 +2,17 @@
 
 **Witnessed, not trusted: a verifiable audit trail for autonomous agents.**
 
+[![CI](https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml/badge.svg)](https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/0xAndersen/witness-log?label=release)](https://github.com/0xAndersen/witness-log/releases/latest)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Spec](https://img.shields.io/badge/spec-SPEC.md%20v0.3-informational)](spec/SPEC.md)
+[![Swarm](https://img.shields.io/badge/swarm-3%2C000%20agents%20%C2%B7%200%20failures-success)](examples/swarm/reports/outside-3000.md)
+
+Every push runs 268 Rust tests, the Python and MCP suites, ten live
+witnesses through ten scenarios, 100 scenarios against the released
+artifacts, and a 200-agent swarm; the 1,000- and 3,000-agent runs are in
+[`examples/swarm/reports/`](examples/swarm/reports/).
+
 ```
 cargo install --git https://github.com/0xAndersen/witness-log witness-log-cli
 witness-log demo
