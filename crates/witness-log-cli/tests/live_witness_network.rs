@@ -180,6 +180,31 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
     ]);
     assert_eq!(code, 0, "cosigned dossier must be WITNESSED: {err}");
 
+    // Bare relative paths (`submit agent.jsonl --out dossier.json` from the
+    // journal's own directory): `Path::parent()` is `Some("")` here and
+    // the directory fsync used to fail with ENOENT after the file was
+    // already written, turning a successful submit into exit 1.
+    let out = Command::new(BIN)
+        .current_dir(&root)
+        .args([
+            "witness",
+            "submit",
+            "honest.jsonl",
+            "--directory",
+            "directory.json",
+            "--out",
+            "relative.json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "submit with bare relative paths: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(root.join("relative.json").is_file());
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("could not save"));
+
     // An honest agent whose journal was restored from an old backup and
     // then appended to must be stopped by the client BEFORE it publishes
     // a contradicting history (which witnesses would record as

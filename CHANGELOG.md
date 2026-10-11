@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `witness submit --out dossier.json` run from the journal's own directory
+  wrote the dossier and the `.witnesses.json` cache, then reported
+  "No such file or directory" and exited 1: `Path::parent()` of a bare
+  filename is `Some("")`, and fsyncing "" fails. Found by running the new
+  payments tutorial as written. Regression test in `live_witness_network`.
+
+### Docs
+
+- Quickstarts (Python, Rust, CLI) rewritten as educational walkthroughs.
+- New wiki pages: Architecture, How a leaf becomes a proof, Witness protocol
+  walkthrough, Redaction explained, Keys and identity, Comparison, Glossary,
+  Troubleshooting, and two end-to-end tutorials (payments agent, multi-agent
+  handoff).
+- README restructured around a 15-second demo GIF and stage-by-stage
+  graphics (`docs/assets/`), with a "what makes it different" section.
+
 ## 0.3.3 — 2026-10-11
 
 Found by `examples/swarm/outside.py`: 1,000 concurrent agents in 18

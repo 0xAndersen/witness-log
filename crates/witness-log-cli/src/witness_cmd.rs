@@ -176,7 +176,14 @@ fn valid_key_name(n: &str) -> bool {
 /// Write `data` to `path` atomically and durably: temp file, fsync,
 /// rename, fsync the directory. Mode 0600 on Unix.
 fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+    // `Path::new("dossier.json").parent()` is `Some("")`, not `None`;
+    // opening "" to fsync it fails with ENOENT after the rename already
+    // succeeded, which made `submit --out dossier.json` in the current
+    // directory report failure for a file it had written.
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("f"),

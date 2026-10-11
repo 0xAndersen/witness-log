@@ -1,87 +1,73 @@
-# WitnessLog
+<p align="center">
+  <img src="brand/logo-mark.svg" width="96" alt="witness-log">
+</p>
 
-**Witnessed, not trusted: a verifiable audit trail for autonomous agents.**
+<h1 align="center">witness-log</h1>
 
-[![CI](https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml/badge.svg)](https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/0xAndersen/witness-log?label=release)](https://github.com/0xAndersen/witness-log/releases/latest)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Spec](https://img.shields.io/badge/spec-SPEC.md%20v0.3-informational)](spec/SPEC.md)
-[![Swarm](https://img.shields.io/badge/swarm-3%2C000%20agents%20%C2%B7%200%20failures-success)](examples/swarm/reports/outside-3000.md)
+<p align="center"><b>Witnessed, not trusted: a verifiable audit trail for autonomous agents.</b></p>
 
-**Docs:** [wiki](docs/wiki/Home.md) — quickstarts (Python, Rust, CLI), MCP, framework guides (LangChain, OpenAI Agents, CrewAI, AutoGen, Google ADK, LlamaIndex, Claude Code), verification, running a witness, compliance.
+<p align="center">
+<a href="https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml"><img src="https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/0xAndersen/witness-log/releases/latest"><img src="https://img.shields.io/github/v/release/0xAndersen/witness-log?label=release" alt="Release"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
+<a href="spec/SPEC.md"><img src="https://img.shields.io/badge/spec-SPEC.md%20v0.3-informational" alt="Spec"></a>
+<a href="examples/swarm/reports/outside-3000.md"><img src="https://img.shields.io/badge/swarm-3%2C000%20agents%20%C2%B7%200%20failures-success" alt="Swarm"></a>
+</p>
 
-Every push runs 268 Rust tests, the Python and MCP suites, ten live
-witnesses through ten scenarios, 100 scenarios against the released
-artifacts, and a 200-agent swarm; the 1,000- and 3,000-agent runs are in
-[`examples/swarm/reports/`](examples/swarm/reports/).
+<p align="center">
+  <img src="docs/assets/demo.gif" width="880" alt="witness-log demo: an agent log is created, one entry is erased, a checkpoint is signed and witnessed, then verified twice; a forgery with flawless cryptography is caught as DIVERGED">
+</p>
 
-```
-cargo install --git https://github.com/0xAndersen/witness-log witness-log-cli
-witness-log demo
-```
-
-Also available as prebuilt binaries on the
-[Releases](https://github.com/0xAndersen/witness-log/releases) page, as
-`cargo install witness-log-cli` from crates.io, and for Python as
-`pip install witness-log` (CPython 3.9+; Linux, macOS and Windows wheels).
-Registry publication follows each tagged release; `--git` always works.
-
-Zero arguments. Writes nothing to disk, makes no network calls. It builds
-an agent log, redacts a leaf for GDPR, signs a checkpoint, gathers four
-witnesses — then verifies the exact same bytes twice:
+Every tool call an agent makes becomes a leaf in an RFC 6962 Merkle log
+signed by the agent's own key. Independent witnesses, run by other
+organisations, cosign the head and refuse to ever cosign a contradicting
+one. Anyone can verify the whole record offline with one command and get
+one of four verdicts as an exit code. Any single entry can be erased for a
+privacy request without breaking a single proof.
 
 ```
-  A. With nothing supplied from outside the dossier:
-
-       Verdict: UNANCHORED
-
-     Every signature checked out. The Merkle root rebuilt correctly.
-     But every input came from the file itself — including the list of
-     witnesses it wants you to trust. This proves the file doesn't
-     contradict itself. It proves nothing about who wrote it.
-
-  B. With a witness directory YOU trust and the identity you expected,
-     both obtained out-of-band (the directory lifts the ceiling; the
-     identity pin says whose log it is -- a gate passes both):
-
-       Verdict: WITNESSED
-
-       4/4 witness signatures valid
-       operator diversity          100%  (4 of 4 distinct operator buckets)
-       compute-provider diversity  100%  (4 of 4 distinct providers)
+pip install witness-log            # Python (CPython 3.9+; Linux, macOS, Windows wheels)
+cargo install witness-log-cli      # the CLI; prebuilt binaries on the Releases page
+witness-log demo                   # the GIF above, live, in your terminal: no files, no network
+witness-log demo --tamper          # a forgery with flawless cryptography, caught
 ```
 
-Same bytes. Different question asked. **That gap is the whole idea** — a
-log can be perfectly self-consistent and still tell you nothing, until you
-anchor verification to something its author doesn't control.
+**Docs:** the [wiki](https://github.com/0xAndersen/witness-log/wiki) (source in [`docs/wiki/`](docs/wiki/Home.md)):
+educational [Python](docs/wiki/Quickstart-Python.md) / [Rust](docs/wiki/Quickstart-Rust.md) / [CLI](docs/wiki/Quickstart-CLI.md)
+quickstarts, [MCP](docs/wiki/MCP-Integration.md), [framework guides](docs/wiki/Framework-Guides.md)
+(LangChain, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex, Claude Code), two end-to-end
+[tutorials](docs/wiki/Tutorial-Audit-a-Payments-Agent.md), the [architecture](docs/wiki/Architecture.md),
+[how a leaf becomes a proof](docs/wiki/How-a-Leaf-Becomes-a-Proof.md), the
+[witness protocol on the wire](docs/wiki/Witness-Protocol-Walkthrough.md), [compliance](docs/wiki/Compliance.md),
+[threat model](docs/wiki/Threat-Model.md), [troubleshooting](docs/wiki/Troubleshooting.md) and a [glossary](docs/wiki/Glossary.md).
 
-Then watch a convincing forgery get caught:
+---
 
-```
-cargo run -p witness-log-cli --bin witness-log -- demo --tamper
-```
+## How it works
 
-It builds the attack properly — attacker's own keypair, an invented
-$10,000,000 transfer, the victim's real public key on the label, three
-self-generated "independent auditors," and its own witness directory
-shipped alongside. Every signature in the resulting file is valid. It
-still fails:
+<p align="center"><img src="docs/assets/stage-0-overview.png" width="880" alt="Record, commit, witness, verify"></p>
 
-```
-    ✓ Checkpoint signature valid
-    ✓ Leaf structure valid
-    ✓ Merkle continuity verified
-    ✗ Identity bound
-        dossier claims:  caf16304…35001f81
-        actually signed by: dcb4fa22…aaee61fe
+An audit trail has to answer two different questions: *what happened?* and
+*can you prove it to someone who does not trust you?* Most tooling answers
+the first with a log in a database the operator controls, which makes the
+second unanswerable. witness-log is built so that the second question has
+an answer that survives the operator, the vendor, and the agent itself.
 
-    Verdict: DIVERGED
-```
+### 1 · Record: intent before, result after
 
-The forgery had flawless cryptography. It failed on a question
-cryptography doesn't answer by itself: whose log is this?
+<p align="center"><img src="docs/assets/stage-1-record.png" width="880" alt="Stage 1: record"></p>
 
-## Three lines in an agent loop
+Each tool call produces two leaves: an **intent** leaf written before the
+tool runs (name, arguments, time) and a **result** leaf after (return value
+or exception). A log that only records outcomes cannot distinguish "decided
+and failed" from "never decided"; two leaves make both provable.
+
+The tree never stores the content. It stores
+`payload_hash = SHA256(bucket_pad(payload) || salt || index)` with a
+32-byte random salt kept in a sidecar outside the tree. The salt makes a
+hash of `"yes"` unguessable, the bucket padding hides exact lengths, and
+the index binds content to position. Your payloads stay in your own store;
+only commitments ever leave the machine.
 
 ```python
 import witness_log
@@ -91,365 +77,251 @@ log = witness_log.open("agent.jsonl")        # create, or resume the same identi
 def call_tool(name: str, **args) -> dict: ...
 ```
 
-That is the whole integration for any Python agent loop — LangChain,
-LlamaIndex, OpenAI/Anthropic tool calling, or a hand-rolled one. Each call
-appends an *intent* leaf before it runs and a *result* leaf after (errors
-included), both signed, with payloads hashed under per-leaf salts so any
-single entry can later be erased for GDPR (`log.forget(i)`) without
-breaking a proof. `log.to_dossier_json()` is the record you hand to anyone;
-`witness-log verify` checks it with no access to you.
+That is the whole integration for a Python loop. Measured: about **80 µs**
+per decorated call in memory, **115 µs** journaled. The journal (`agent.jsonl`
+plus `agent.jsonl.salts`) is append-only, fsyncs on demand, heals a torn
+last line after a crash, and refuses a second writer.
 
-Measured cost, this machine, Python 3.13: about **80 µs per decorated
-call** on an in-memory log and **115 µs** journaled (two Ed25519-signed
-leaves each; the disk write is batched, one `sync()` of 40,000 leaves
-takes 28 ms). The Rust core is the same code the CLI and the witness
-server run; nothing is re-implemented in Python.
+### 2 · Commit: one signed root for the whole history
 
-For agents that speak MCP, [`integrations/mcp`](integrations/mcp) is the
-same capability as seven tools: an agent provisions its own chain on
-boot, records every step, proves any step, erases on request, and gets
-its head cosigned by independent witnesses. Tested end to end with the
-official MCP client.
+<p align="center"><img src="docs/assets/stage-2-commit.png" width="880" alt="Stage 2: commit"></p>
 
-Want to see a tampered record get caught? `python examples/verify_demo.py`
-records three steps, edits entry #2 in storage the way a compromised
-database would, and watches the verifier refuse it.
+Leaf hashes form an RFC 6962 Merkle tree; the 32-byte root commits to every
+leaf and their order. The agent's **identity key** (long-lived, the agent's
+name) signs a checkpoint over `(tree_size, root, time)`. Each process run
+uses a fresh **session key** that the identity vouches for with a signed
+binding, so a restart is a provable continuation rather than a new log,
+and a checkpoint stays verifiable after the process that made it is gone.
 
-**For security and compliance teams:** this is the audit layer that
-does not ask you to trust the operator. Every claim is a signature or a
-hash you can recompute, the record verifies offline with nothing from
-the agent's side, and `THREAT_MODEL.md` says exactly what is and is not
-proven. "Witnessed" is only ever as strong as the witnesses *you* chose.
+Inclusion proofs show one leaf is in a root in `log₂N` hashes; consistency
+proofs show a newer root extends an older one without rewriting anything.
+Algorithm identifier and signer key are *inside* every signed message, not
+beside it, which closes algorithm-downgrade and receipt-reattribution
+attacks.
 
-## Why this exists
+### 3 · Witness: other organisations remember your head
 
-Most "AI agent audit trail" tooling today assumes the operator is honest —
-the log lives in your VPC, your SIEM, your Kubernetes namespace, and
-"immutable" means "no delete button," not "a third party can prove nobody
-rewrote it." WitnessLog is built for the case where that assumption doesn't
-hold: agents transacting with other agents across organizational
-boundaries, disputes where "whose log do we trust" is the actual question,
-and regulatory evidence that needs to survive scrutiny from someone who
-doesn't trust you by default.
+<p align="center"><img src="docs/assets/stage-3-witness.png" width="880" alt="Stage 3: witness"></p>
 
-It borrows its core design from Certificate Transparency (RFC 6962) rather
-than blockchain consensus — an append-only Merkle log, signed checkpoints,
-and independent third-party witnessing — because the problem (detecting
-equivocation, verifying offline) doesn't require global consensus, a
-token, or gas. See `spec/SPEC.md` for the full rationale.
+A witness is a key plus one fact per log: *the last head I cosigned*. The
+agent POSTs its checkpoint with a consistency proof from that head over the
+public [`c2sp.org/tlog-witness`](https://c2sp.org/tlog-witness) protocol,
+the same one Certificate Transparency witnesses speak. The witness
+verifies the proof (reconstructing **both** roots, per RFC 9162
+§2.1.4.2), **persists its new memory to disk before replying**, and
+cosigns. If a log ever presents two signed roots for one size, the witness
+refuses (`422`) and writes a self-contained evidence file anyone can check
+with the log's public key. Equivocation stops being an allegation and
+becomes a file.
 
-**Read `THREAT_MODEL.md` before trusting this with anything real.** It
-states exactly what's proven and what isn't — including the current
-biggest gap (witness diversity is still thin; see `GOVERNANCE.md` for the
-recruitment effort). This project would rather be honest about that than
-oversell it.
+### 4 · Verify: trust comes from the verifier, not the file
 
-## Commands
+<p align="center"><img src="docs/assets/stage-4-verify.png" width="880" alt="Stage 4: verify"></p>
 
-| Command | What it does |
-|---|---|
-| `witness-log demo [--tamper]` | The walkthrough above. No arguments, no files, no network. |
-| `witness-log verify <dossier.json>` | Verify a dossier fully offline. Add `--identity` and `--directory` to anchor the run; `--explain` for what each check does and doesn't prove; `--json` for a machine-readable report. |
-| `witness-log diff <a.json> <b.json>` | **The equivocation check.** Compare two copies of one log. A log that showed one history to you and a different one to someone else is exactly what witnessing exists to catch — this is how you catch it with two copies in hand. |
-| `witness-log explain [verdict]` | What each verdict means, what it does NOT mean, and how to reach the next level. `--json` so an agent can ask programmatically. |
-| `witness-log c2sp show <dossier.json> --origin <name>` | Render this log's checkpoint as a [C2SP](https://c2sp.org/tlog-checkpoint) checkpoint body — the artifact an existing Certificate-Transparency-ecosystem witness cosigns. |
-| `witness-log c2sp verify <note.txt> --vkey <vkey>` | Verify a C2SP signed note and any witness cosignatures. Repeatable `--vkey`. |
-| `witness-log witness init / serve / submit / info` | Run a [`tlog-witness`](https://c2sp.org/tlog-witness) witness, or get a journal cosigned by the witnesses in a directory (see *Run a witness, get witnessed*). |
-| `witness-log conform <dir>` | Check another implementation's vectors against the reference corpus. |
-
-**Exit codes are the verdict**, so gating needs no JSON parsing:
+A **dossier** is one JSON file: identity, leaves, checkpoint, bindings,
+receipts. The verifier adds two inputs of its own, obtained out of band:
+the identity it *expects* and the witness directory it *trusts*. Receipts
+are scored only against that directory, never the dossier's own list, and
+`WITNESSED` requires cosignatures from at least two distinct
+`operator_org` values. That is why a fabricated dossier with flawless
+cryptography and three invented "independent auditors" tops out at
+`UNANCHORED`: it cannot sign as a key it does not hold, and it cannot put
+its witnesses into *your* directory.
 
 ```sh
-# proceeds only on WITNESSED (0); any weaker verdict is non-zero
-witness-log verify d.json --identity "$ID" --directory "$DIR" || handle_failure
+witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json --min-witnesses 3 || exit 1
 ```
 
-`0` WITNESSED · `10` CONSISTENT-UNWITNESSED · `20` UNANCHORED · `30` DIVERGED · `2` usage error
+`0` WITNESSED · `10` CONSISTENT-UNWITNESSED · `20` UNANCHORED · `30` DIVERGED · `2` usage. The exit code is
+the verdict; no network, no account, verifiable in ten years.
 
-## Using it as a library
+### 5 · Erase: right to be forgotten, every proof intact
 
-**Start here — one command, a complete working integration:**
+<p align="center"><img src="docs/assets/stage-5-erase.png" width="880" alt="Stage 5: erase"></p>
 
-```bash
-cargo run -p witness-log-core --example quickstart
+`log.forget(i)` deletes leaf *i*'s salt from the sidecar and appends a
+`0x03` Redaction leaf naming the index. The leaf's hash, every inclusion
+and consistency proof, and every witness cosignature ever issued remain
+valid; the content is computationally unrecoverable (32 random bytes to
+brute-force, even for a one-word payload); and the erasure itself is on
+the record. Hash chains and blockchains cannot do this. GDPR Article 17 can
+now be honoured without choosing between the regulator and the auditor.
+
+---
+
+## What makes it different
+
+<p align="center"><img src="docs/assets/architecture.png" width="880" alt="Architecture: five layers, one trust boundary"></p>
+
+These are the specific design decisions, each with its reason, that make
+witness-log the right shape for an agent audit trail rather than one more
+"immutable log". The full discussion is in the wiki's
+[Architecture](docs/wiki/Architecture.md) and [Comparison](docs/wiki/Comparison.md) pages.
+
+- **Intent/result semantics are in the data model**, not an integration convention. Eight leaf types (§2), including handoff attestations and authorization events for work that crosses agent boundaries, each with cross-log bindings an auditor can match after the fact.
+- **Salted erasure that preserves proofs** (§8): `SHA256(bucket_pad(payload) || salt || index)`, salt outside the tree, tombstone on erase. The property privacy law needs and tamper-evident logs usually cannot offer.
+- **Two-tier keys with signed bindings and disclosed custody** (§5): a permanent identity, disposable sessions, and a `custody` field (`self_held`, `kms`, `hsm`, `platform_held`, …) surfaced beside every verdict so a verifier knows whose signature they are looking at.
+- **Independence is scored, not assumed** (§7): distinct `operator_org` values, deduplicated by key, with compute-provider diversity reported as a separate axis and project-run witnesses collapsed into one bucket so the project cannot vouch for itself. Many systems count signatures; this one counts organisations.
+- **Persist-before-cosign and portable equivocation evidence**: a witness that crashes mid-request can never contradict itself; a log that forks leaves a file.
+- **Correct consistency verification**: both roots reconstructed, per RFC 9162. The weaker variant accepts forks at non-power-of-two sizes; we had that bug at ≤0.3.0, found it in a live run, fixed it, and pinned it with an exhaustive test and a corpus vector. The spec now makes the strict algorithm normative.
+- **Canonical encoding that cannot collide**: every variable-length field length-prefixed, every optional field with a presence byte, domain-separated leaf and node hashes (§3–§4). Two different leaves never share one hash.
+- **Write receipts** (§9.4): a signed "I accepted this hash at size N" that, with later witnessed checkpoints, proves censorship-by-omission, something a plain checkpoint cannot.
+- **C2SP interoperability** (§9.3): checkpoints as `tlog-checkpoint` notes with `cosignature/v1`, verified against the specs' own published vectors. The witnesses already running for the Go checksum database and Sigstore could cosign a witness-log unchanged. The hardest problem in transparency is social; speaking the existing protocol inherits an installed base.
+- **The verifier never touches the network, and the dossier never supplies trust inputs.** Those two missing arrows are the design.
+- **Only the transparency layer.** Attestation, identity and authorization belong to other layers (RATS, WIMSE, OAuth/UCAN); witness-log logs *that* a delegation happened without becoming an authorization system, which is why it composes with whatever an integration already has.
+- **A conformance corpus** (`corpus/`, 11 deterministic vectors) and `witness-log conform` so a second implementation proves byte-for-byte agreement instead of looking similar.
+
+**Read [`THREAT_MODEL.md`](THREAT_MODEL.md) before trusting this with anything real.** It states exactly what is proven and what is not, including the biggest current gap: independent witness operators are still being recruited (`GOVERNANCE.md`). "Witnessed" is only ever as strong as the witnesses *you* chose.
+
+---
+
+## Using it
+
+### Python
+
+```python
+import witness_log
+log = witness_log.open("agent.jsonl")
+
+@witness_log.step(log)
+def transfer_funds(amount_usd: int) -> dict:
+    return {"status": "ok", "tx_id": "tx_7ac31"}
+
+transfer_funds(250)
+log.forget(log.append_memory(b"contact: alice@example.com"))     # erase one entry; proofs intact
+dossier = log.to_dossier_json()                                  # hand this to anyone
+print(witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex()))
 ```
 
-`crates/witness-log-core/examples/quickstart.rs` is the whole integration
-in one runnable file: identity, logging intents and results, GDPR
-redaction, surviving a restart, checkpointing, and exporting a dossier.
-Nothing in it is pseudocode and nothing is elided. Copy the file, change
-the payloads, ship it.
+[Quickstart: Python](docs/wiki/Quickstart-Python.md) explains every line. For agents that speak MCP,
+[`integrations/mcp`](integrations/mcp) exposes the same capability as seven tools (provision a chain on boot,
+record every step, prove any step, erase on request, get witnessed) for Claude Code, Claude Desktop, Cursor or any MCP host, with no code.
 
+### Rust
 
 ```toml
 [dependencies]
-witness-log-core = "0.3"
-witness-log-network = "0.3"   # witnesses, quorum, dossiers, verification
-# or, straight from the repository:
-# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.3" }
+witness-log-core = "0.3"        # log, Merkle tree, identity, redaction, journal, C2SP encoding
+witness-log-network = "0.3"     # witnesses, quorum, dossiers, verification
 ```
 
 ```rust
-use witness_log_core::identity::IdentityKeypair;
-use witness_log_core::journal::JournaledLog;
+use witness_log_core::{identity::IdentityKeypair, journal::JournaledLog};
 use witness_log_network::{Dossier, VerifyContext};
 
-// Persistent identity: generate once, keep identity.to_bytes() safe, and
-// create the journal with it. Every later start is JournaledLog::resume.
-let identity = IdentityKeypair::generate();
-let mut log = JournaledLog::create("agent.jsonl", identity)?;
-
+let mut log = JournaledLog::create("agent.jsonl", IdentityKeypair::generate())?;   // later runs: JournaledLog::resume
 log.append_intent(br#"{"tool":"transfer_funds","args":{"amount_usd":250}}"#)?;
 log.append_result(br#"{"status":"ok","tx_id":"tx_7ac31"}"#)?;
 log.sync()?;
 
-// Checkpoint signed by the identity key, and the dossier anyone can verify.
-let sth = log.log().checkpoint_self();
-let dossier = Dossier::from_log(log.log(), sth);
-let report = dossier.verify(0.66, &VerifyContext::default());
-assert!(report.internally_consistent);
+let dossier = Dossier::from_log(log.log(), log.log().checkpoint_self());
+assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 ```
 
-Right-to-be-forgotten, without breaking tree continuity:
+`cargo run -p witness-log-core --example quickstart` is the complete integration in one runnable file.
+[Quickstart: Rust](docs/wiki/Quickstart-Rust.md) explains the crates, the invariants and why the API has its shape.
 
-```rust
-let leaf_index = log.append_memory(b"contact: alice@example.com")?;
-log.forget(leaf_index)?; // salt erased from <journal>.salts; a 0x03 marker is appended.
-                         // Every earlier leaf hash, and every proof over it, is unchanged.
-```
+### CLI, from any language
 
-The journal is two files: `agent.jsonl` (header with the identity key,
-then one line per leaf) and `agent.jsonl.salts` (the redaction salts).
-Both are created `0600`; back them up together and treat them as key
-material. `witness_log_core::log::WitnessLog` is the in-memory core
-underneath, for callers who bring their own persistence.
+| command | what it does |
+|---|---|
+| `witness-log demo [--tamper]` | the walkthrough in the GIF; no arguments, no files, no network |
+| `witness-log verify <dossier> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--json] [--explain]` | offline verification; exit code is the verdict |
+| `witness-log diff <a.json> <b.json>` | two copies of one log: honest growth, equivocation, or tampering |
+| `witness-log explain [verdict]` | what each verdict proves and does not |
+| `witness-log witness init / serve / submit / info / verify-evidence` | run a witness; get a journal cosigned |
+| `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
+| `witness-log conform <dir>` | check another implementation against the corpus |
 
-## Beyond the basics
+Go, TypeScript and shell integrate by writing the dossier (schema: `spec/dossier.schema.json`), shelling out to
+`verify`, and branching on the exit code: [Other languages](docs/wiki/Other-Languages.md).
 
-Everything below is built, tested, and specified — see SPEC.md sections in parentheses.
-
-- **Session expiry**: `resume_with_ttl(identity, session, ttl_ms)` issues a key binding that provably expires — a verifier can tell a stale session from a live one without an explicit revocation (§5).
-- **Crash-safe persistence, two ways**: `save_snapshot`/`load_snapshot` (atomic whole-file rewrite — fine for logs up to the low thousands of leaves; the O(n)-per-save cost becomes the wall past that) and the append-only **journal** (`witness_log_core::journal::JournaledLog`) — one JSON line per leaf, written once, never rewritten, torn tail writes detected and physically healed on resume, the intended path to millions of leaves. Use the journal for long-lived logs.
-- **Handoff attestations** (§3.1): when agent A passes context to agent B, each commits independently in its own log; `verify_handoff_binding` later proves both committed to the same bytes — no shared state, no coordination protocol.
-- **Authorization events** (§3.2): logging-only record that a delegation/revocation/scope-change happened, with the same cross-log binding. If a grantee claims a wider scope than the granter logged, the binding fails. WitnessLog never mints or enforces authorization — see §1.1 on layering.
-- **Machine-readable verification**: `witness-log verify --json`, and from Python, `witness_log.verify_dossier_json(dossier_json, threshold, identity, directory_json)` — the same single verification implementation the CLI uses, including quorum and both diversity axes. A regulator asking for "Q3 only" gets `WitnessLog::evidence_window(range, &key)`: the signed checkpoint, just those leaves, and an inclusion proof for each.
-- **Running a witness in production**: [`deploy/witness/`](deploy/witness) has the Dockerfile, compose file, systemd unit and `OPERATORS.md` (backup rule, TLS, limits).
-- **Conformance tooling**: `witness-log conform <your-corpus-dir>` field-diffs another implementation's vectors against `/corpus` — this is how a from-scratch reimplementation proves wire-format agreement (CONTRIBUTING.md).
-- **Strict signature verification** (§6, normative): all Ed25519 verification is strict-mode, so conformant verifiers can never disagree about a dossier's validity on degenerate edge-case signatures.
-
-## Catching equivocation
-
-The attack a Merkle log alone does *not* stop is equivocation: presenting
-history A to you and history B to someone else, each internally perfect,
-each validly signed. Neither copy looks wrong on its own. The divergence
-only exists in the comparison.
-
-That comparison is what witnesses automate — and `witness-log diff` is
-what it looks like when you do it by hand, during an incident or a
-dispute, with two copies in front of you:
-
-```
-$ witness-log diff alice-copy.json bob-copy.json
-
-  Both claim identity 92ddf224…7b13908b
-  A checkpoint signature: valid   B checkpoint signature: valid
-
-  A: 3 leaves, checkpoint at size 3, root 956a7924…31e8b78c
-  B: 3 leaves, checkpoint at size 3, root 05339015…07e63ec1
-
-  Leaves 0–1: identical
-  Leaf 2: DIVERGENT
-
-    A  type 0x01  ts 1787979414785  payload_hash 1db8b25b…c39c29a8
-    B  type 0x01  ts 1787979414786  payload_hash a8a1ec2e…e277bea1
-
-  ⚠ EQUIVOCATION DETECTED
-
-  Neither copy is "the wrong one" — that is precisely the finding.
-```
-
-It also refuses to cry wolf. Two *different* logs that happen to record
-the same events are not equivocation, and the tool says so rather than
-raising an accusation — payload hashes are salted per log instance, so
-independent logs always differ at leaf 0, and that specific case is
-detected and explained rather than reported as a finding.
-
-## Verifying a real dossier
-
-`examples/sample-dossier.json` is a real generated fixture (see
-`crates/witness-log-network/examples/generate_sample_dossier.rs`), not a
-mock — an actual agent log with a redaction, four candidate witnesses (one
-project-operated, one unresponsive), and a checkpoint, produced by running
-the code in this repo.
-
-```bash
-# unanchored: proves internal consistency, nothing more
-witness-log verify examples/sample-dossier.json
-
-# anchored: the identity and the witness directory both come from you
-witness-log verify examples/sample-dossier.json \
-  --identity <hex-pubkey-you-expected> \
-  --directory examples/trusted-directory.json
-```
-
-The unanchored run prints the exact anchored command to run next, with
-the identity filled in — the CLI teaches its own trust model rather than
-making you find it in a document. Add `--explain` to get a line under
-every check stating what it does and, more importantly, what it doesn't
-prove.
-
-## Interoperating with existing transparency-log witnesses
-
-The hardest problem here was never cryptographic. A witness network is
-worthless until independent operators actually run witnesses, and nobody
-wants to be first.
-
-Certificate Transparency solved that over a decade. The operators, the
-protocols, and the tooling already exist and are running now. So rather
-than recruit a witness network from zero, WitnessLog speaks their
-protocol — [`c2sp.org/signed-note`](https://c2sp.org/signed-note),
-[`tlog-checkpoint`](https://c2sp.org/tlog-checkpoint), and
-[`tlog-cosignature`](https://c2sp.org/tlog-cosignature) — so an existing
-witness can cosign a WitnessLog checkpoint **without implementing
-anything WitnessLog-specific**.
-
-```bash
-# render this log's checkpoint in C2SP form, to hand to a witness
-witness-log c2sp show examples/sample-dossier.json --origin agents.example.com/agent-42
-
-# verify what comes back, including the witness cosignature
-witness-log c2sp verify cosigned-note.txt --vkey "$LOG_VKEY" --vkey "$WITNESS_VKEY"
-```
-
-Conformance is proven against the **specs' own published example
-vectors** — the implementation parses the spec's signed note, verifies it
-against the spec's verifier key, re-encodes it byte-for-byte, and
-recomputes the spec's key ID independently. Round-trip tests pass just as
-happily against a wrong-but-self-consistent implementation; those don't.
-Corpus vector `10_c2sp_checkpoint.json` pins the encoding for anyone
-building a second implementation.
-
-One consequence worth knowing: a C2SP checkpoint carries **no timestamp**.
-Time is asserted only by cosigners. A log structurally cannot claim its
-own time, which is strictly stronger than the native format's
-self-asserted field. See `spec/SPEC.md` §9.3.
+---
 
 ## Run a witness, get witnessed
 
-A witness is one command. It speaks
-[`c2sp.org/tlog-witness`](https://c2sp.org/tlog-witness), so it serves
-WitnessLog agents and any other C2SP log alike.
-
-```bash
-# operator: create a key and run it (state is fsynced before every cosignature)
-witness-log witness init ./w1 --name w1.example.org/witness --org "Example Org" \
-    --url http://w1.example.org:7380 --compute hetzner      # prints your directory entry
-witness-log witness serve ./w1 --listen 0.0.0.0:7380 --open-enrollment
+```sh
+witness-log witness init ./w1 --name w1.example.org/witness --org "Example Org" --url https://w1.example.org --compute hetzner
+witness-log witness serve ./w1 --listen 127.0.0.1:7380 --open-enrollment       # 1 MB binary, ~10 MB RAM
 ```
 
-`--open-enrollment` accepts any agent whose origin is
-`witness-log/<its identity key>`: the origin *names* the key, so there is
-no key exchange and nothing to trust on first use. Forks are refused
-(HTTP 422); when the log signed two roots for the same size, a
-self-contained proof anyone can check goes to `evidence/`. `submit`
-refuses to publish a journal that contradicts what witnesses already
-cosigned, so an honest agent whose journal was rolled back cannot get
-itself recorded as equivocating by accident. That memory lives in
-`<journal>.witnesses.json`; a backup that restores the journal *and*
-that file together restores the old memory too, so keep the two apart
-(`--state <path>`) if your backups could ever roll the journal back.
+`--open-enrollment` accepts any log whose origin is `witness-log/<its identity key>`: the origin *is* the key, so
+there is no registration and nothing to trust on first use. Then, as an agent:
 
-```bash
-# agent: get the journal cosigned by the witnesses in a directory, then verify
-witness-log witness submit agent.jsonl --directory witnesses.json --out dossier.json
-witness-log verify dossier.json --identity $AGENT_KEY --directory witnesses.json   # exit 0 = WITNESSED
+```sh
+witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json      # exit 0 = WITNESSED
 ```
 
-`witnesses.json` is `{"witnesses": [ ... ]}` holding the entries `witness
-init` prints (a bare JSON array of them is accepted too; `witness-log
-witness info <url>` returns the entry under `directory_entry`). See
-[`examples/trusted-directory.json`](examples/trusted-directory.json). The
-resulting dossier verifies fully offline — the witnesses can be down.
-WITNESSED needs cosignatures from at least two distinct `operator_org`
-values in *your* directory; witnesses you run yourself all share one. From Python:
-`log.add_checkpoint_body(old_size)` gives the POST body,
-`log.dossier_from_responses([(witness_pubkey, body), ...])` builds the
-dossier, and `witness_log.WitnessService.new(name, seed, state_path,
-open_enrollment=True)` is a witness you can mount in any web framework
-(create its state once with `WitnessService.create_state(path)`)
-([60-line example](examples/live-network/py_witness.py)).
+`submit` handles `409` resyncs and `Retry-After`, and refuses to publish a journal that contradicts what
+witnesses already cosigned, so a journal restored from an old backup cannot get your identity recorded as
+equivocating by accident.
 
-[`examples/live-network`](examples/live-network) runs ten live witnesses
-(8 Rust, 2 Python) through ten scenarios — forks, crashes, hostile HTTP,
-50 concurrent agents, Byzantine witnesses, offline audit — in about a
-minute. [`examples/swarm`](examples/swarm) runs 100 named scenarios
-against the *released* CLI and wheel (`--release vX.Y.Z` downloads them)
-with twelve witnesses and 25 agents, and `outside.py` runs a thousand
-concurrent agents in eighteen personas against a 100-witness network; both
-run in CI on every push and their reports are committed under
-`examples/swarm/reports/`.
+WITNESSED needs two distinct organisations in *your* directory. A fleet of a hundred witnesses under one
+organisation is one voice. [`deploy/witness/`](deploy/witness) has the Dockerfile, compose with TLS, systemd
+units, `fleet.py` for N witnesses on one host, `OPERATORS.md` (the backup rule: key and memory are one object)
+and [`AGENT_OPERATOR.md`](deploy/witness/AGENT_OPERATOR.md), a playbook a coding agent can execute end to end on
+free always-on compute. Registered witnesses live in [`registry/`](registry); verifiers build their directory
+from it. The registry starts empty: the first independent operator is the one that makes WITNESSED mean something.
 
-Running witnesses: [`deploy/witness/`](deploy/witness) has the single-host
-kit (Dockerfile, compose with TLS, systemd units, `fleet.py` for N on one
-host, `OPERATORS.md`) and [`AGENT_OPERATOR.md`](deploy/witness/AGENT_OPERATOR.md),
-a playbook a coding agent can execute end to end on free always-on
-compute. Registered witnesses live in [`registry/`](registry); verifiers
-build their directory from it.
+---
+
+## Evidence
+
+Every push runs 268 Rust tests, the Python and MCP suites, clippy and rustdoc with `-D warnings`,
+`cargo deny`, the conformance corpus, ten live witnesses through ten scenarios, 100 scenarios against the
+*released* CLI and wheel, and a 200-agent swarm, on Linux, macOS and Windows.
+
+| run | result |
+|---|---|
+| [100 release scenarios against v0.3.3](examples/swarm/reports/v0.3.3-release.md) | 100/100 |
+| [1,000 concurrent agents, 18 personas, before fixes](examples/swarm/reports/outside-1000-before-fixes.md) | 356 rate-limit stalls, 3 honest logs mis-flagged → three design defects found |
+| [1,000 agents after fixes](examples/swarm/reports/outside-1000.md) | 92,301 operations, 0 failures |
+| [3,000 agents, 100 witnesses](examples/swarm/reports/outside-3000.md) | 325,708 operations, 137,462 cosignings, 0 failures, 100/100 witnesses up |
+
+The defects the first large run found (fraction-only quorum, every agent choosing the same eight witnesses,
+clients ignoring `Retry-After`) are fixed in 0.3.3 and the before/after reports are committed. `examples/swarm/`
+reproduces all of it; [Testing and evidence](docs/wiki/Testing-and-Evidence.md) explains what each layer checks.
+
+---
 
 ## Repository layout
 
 ```
 witness-log/
 ├── crates/
-│   ├── witness-log-core/      # leaf schema, Merkle tree, identity, redaction, STH
-│   ├── witness-log-network/   # witness receipts, quorum + diversity evaluation, verdicts
-│   ├── witness-log-cli/       # `witness-log` CLI: verify, diff, witness serve/submit
-│   └── witness-log-python/    # PyO3 bindings — pip install witness-log, import witness_log
-├── spec/SPEC.md          # normative wire format
-├── corpus/               # frozen conformance test vectors (deterministic)
-├── fuzz/                 # cargo-fuzz targets (Merkle proofs, dossiers, journals, CLI render, witness requests)
-├── .github/workflows/    # CI (build/test/clippy/fmt/MSRV per-OS) and scheduled fuzzing
-├── examples/             # sample dossier, verify_demo.py, live-network/ (10 witnesses), swarm/ (100 scenarios)
+│   ├── witness-log-core/      # leaves, Merkle tree, identity, redaction, journal, STH, C2SP encoding
+│   ├── witness-log-network/   # witnesses, directories, selection, receipts, quorum, dossiers, verdicts
+│   ├── witness-log-cli/       # `witness-log`: demo, verify, diff, explain, witness, c2sp, conform
+│   └── witness-log-python/    # PyO3 bindings: pip install witness-log
+├── spec/                 # SPEC.md (normative wire format) and dossier.schema.json
+├── corpus/               # 11 deterministic conformance vectors
+├── docs/wiki/            # the wiki source (auto-published); docs/assets/ holds the graphics above
+├── brand/                # logo mark, wordmark, palette
 ├── integrations/mcp/     # MCP server: the audit trail as tools for any MCP-capable agent
-├── deploy/witness/       # run witnesses: Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
+├── examples/             # sample dossier, verify_demo.py, live-network/ (10 witnesses), swarm/ (100 scenarios, 3,000 agents)
+├── deploy/witness/       # Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
 ├── registry/             # the public witness list (PR-registered, CI-validated) and directory builder
+├── fuzz/                 # cargo-fuzz targets
 ├── THREAT_MODEL.md       # what this proves, what it doesn't
 ├── GOVERNANCE.md         # federation model, witness recruitment, transition plan
-├── SECURITY.md           # vulnerability disclosure process
-└── CONTRIBUTING.md       # conformance-gate workflow for spec/wire-format changes
+├── SECURITY.md           # vulnerability disclosure
+└── CONTRIBUTING.md       # conformance-gate workflow for spec changes
 ```
-
-## Conformance
-
-`/corpus/*.json` (11 vectors) contains deterministic test vectors — leaf
-encoding, Merkle roots, inclusion proofs, checkpoint signatures,
-redaction continuity, consistency proofs, handoff attestations,
-authorization events, external anchors, C2SP checkpoints, and the §8 payload hash — generated from a fixed seed
-with no randomness, so any reimplementation can reproduce them exactly.
-This is the actual interoperability gate: a wire-compatible
-implementation is one that reproduces every value in `/corpus/`
-byte-for-byte, not one that merely reads `SPEC.md` and looks similar.
-See `CONTRIBUTING.md`.
 
 ## Status
 
-Pre-1.0. The core log (`witness-log-core`) and witness protocol
-(`witness-log-network`) are implemented and tested — see each crate's test
-suite. Language bindings beyond Rust (Python via PyO3, then Node, then Go)
-are in progress; see `crates/witness-log-python/README.md`.
-The witness server and client are built and pressure-tested with live
-processes (`examples/live-network`); real, independent witness operators
-are still being recruited — see `GOVERNANCE.md`.
+Pre-1.0 (v0.3.3). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
+released; the wire format is specified and corpus-pinned. Independent witness operators are being
+recruited: see `GOVERNANCE.md` and `deploy/witness/AGENT_OPERATOR.md`.
 
 ## License
 
-AGPL-3.0 — see `LICENSE`. This is a deliberate choice for a trust-layer
-project: derivatives, including ones offered as a network service, must
-stay open. See `GOVERNANCE.md` for the broader reasoning on keeping this
-infrastructure federated rather than single-vendor.
+AGPL-3.0; see `LICENSE`. A deliberate choice for a trust layer: derivatives, including ones offered as a
+network service, must stay open. `GOVERNANCE.md` has the reasoning on keeping this infrastructure federated
+rather than single-vendor.
 
 ## Contributing
 
-Spec changes go through a public RFC process (see `GOVERNANCE.md`). Code
-changes should include or update conformance vectors where they touch
-anything in §2–§9 of `spec/SPEC.md`.
+Spec changes go through a public RFC process (`GOVERNANCE.md`). Code changes touching §2–§9 of
+`spec/SPEC.md` include or update conformance vectors. See [Contributing](docs/wiki/Contributing.md).

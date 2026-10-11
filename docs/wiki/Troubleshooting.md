@@ -1,0 +1,174 @@
+# Troubleshooting
+
+Symptoms, what they mean, and what to do. Grouped by where you see them.
+Each entry explains the cause, because most of these are the system doing
+its job rather than failing.
+
+## Verification
+
+**`Verdict: UNANCHORED` (exit 20) when I expected WITNESSED.**
+You did not pass `--directory`. Without a directory the verifier has no
+witnesses to trust, so receipts are not scored at all; the file is checked
+only against itself. Pass the directory *you* trust. If you also omitted
+`--identity`, the identity line reads "self-consistent (not pinned)", which
+means you have not said whose log this should be.
+
+**`Verdict: CONSISTENT-UNWITNESSED` (exit 10).**
+Cryptography is sound; coverage fell short. The quorum line says why:
+- *1 independent operator*: all receipts come from one `operator_org`. Two organisations are required. Add witnesses run by someone else to your directory and resubmit.
+- *below --min-witnesses N* or *below threshold*: fewer valid receipts than your gate. Either submit to more witnesses or lower the gate deliberately.
+- *0 witness signatures valid* but the dossier shows receipts: the witnesses that cosigned are not in your directory. Receipts from unknown keys are ignored by design; add the entries if you trust those operators.
+
+**`Verdict: DIVERGED` (exit 30).**
+Read the `✗` line:
+- *Identity NOT bound: the checkpoint was signed by X, not the --identity you expected*: wrong `--identity`, or someone else's log. Check your configuration source.
+- *Identity NOT bound: the dossier's identity_pubkey is not the key that signed its checkpoint*: the file's claimed identity and its signature disagree. Fabricated or corrupted.
+- *Merkle continuity*: a leaf was altered after the checkpoint was signed, or leaves are missing/reordered.
+- *Checkpoint signature*: the signature does not verify; corrupted or forged.
+- *Key bindings*: a leaf's session key has no valid binding to the identity, or a revoked identity signed after `as_of`.
+Run with `--explain` for one line under each check.
+
+**Exit 2 with a usage message.**
+Malformed input: `--identity` not 64 hex characters, `--min-witnesses 0`
+or non-integer, unreadable JSON, a directory file that is neither
+`{"witnesses":[...]}` nor a bare array. The message names the field.
+
+**`Large directory: 66% of N is M cosignatures per checkpoint ... gate on an absolute count with --min-witnesses N`.**
+A hint, not an error: with a large directory a fraction threshold is weak
+(2 of 60 operators is 3%). Set an absolute floor.
+
+## Journals (Python, Rust)
+
+**`OSError: journal is already open: lock file agent.jsonl.lock is held by a live process`.**
+Another process has this journal. One writer per journal is enforced
+because two writers would fork the history and witnesses would record the
+identity as equivocating. Options: use one process; give each agent its own
+journal; or, if you are *certain* the other process is gone (PID reuse after
+a reboot, a container that was killed), `JournaledLog.force_unlock(path)`.
+On Linux a lock whose PID is dead is reclaimed automatically; this error
+only appears when the PID is alive.
+
+**`resume` reports `dropped_trailing_lines > 0`.**
+A crash tore the last line. The partial line was discarded and the file
+truncated to the last complete leaf. You lost at most the event in flight.
+Nothing to fix; if it recurs, call `sync()` more often or use `sync=True`.
+
+**`forget(i)` returns `False` / `can_forget(i)` is `False`.**
+Either the salt is already gone (erased earlier), or the leaf is a marker
+type (Redaction, KeyRevocation) that never had one, or you are using the
+in-memory `WitnessLog` across a restart (salts live only in memory there;
+use `JournaledLog`). Also check that `agent.jsonl.salts` exists: if it was
+not backed up with the journal, every salt is gone.
+
+**`unsupported journal format_version X (this build supports Y)`.**
+The journal was written by a different major on-disk format. The format is
+versioned and refused, never reinterpreted. Use the version that wrote it
+to export a dossier, then start a new journal with the same identity seed.
+
+**Two machines, one identity: `409` loops or a `422` from a witness.**
+You have two live journals under one identity, or restored one from a
+backup after the other advanced. The witness remembers the larger head.
+Stop one. If a `422` was already returned, the witness has recorded
+equivocation evidence against your identity; that is permanent. See
+[Keys and identity](Keys-and-Identity) for the safe migration order.
+
+**The Python wheel will not import / `No module named witness_log._core`.**
+Wrong platform wheel or Python version. Wheels are built per platform for
+CPython ≥3.9 (abi3). Install the one matching `python -c "import sysconfig;print(sysconfig.get_platform())"`.
+
+## Submitting to witnesses
+
+**`409` from a witness.**
+Normal. It remembers a different size than your `old`. The CLI and MCP
+server resend automatically with a consistency proof; if you wrote your own
+client, read the body (the witness's size, decimal) and resubmit from it.
+
+**`422 consistency proof failed`.**
+Your submitted history does not extend what the witness remembers. If you
+are the honest operator, you restored from a backup or ran two writers.
+The witness has recorded evidence if both checkpoints were signed by your
+key. See the entry above.
+
+**`REFUSING TO SUBMIT: witnesses already cosigned size N for this identity, and <journal> (size M) does not extend it`.**
+The local cache `agent.jsonl.witnesses.json` says a witness holds a larger
+or different head than this journal. This is the guard that stops a
+restored backup from equivocating. Find the current journal; do not delete
+the cache to force it.
+
+**`429` / `503` with `Retry-After`.**
+Rate limited (default 16 connections and 600 enrollments per minute per
+address; stricter if many clients share a NAT or proxy). Clients honour
+`Retry-After` up to 60 s. Operators behind a reverse proxy should raise
+`--max-conns-per-ip` and `--enroll-rate`.
+
+**`404 unknown log`.**
+The witness does not have open enrollment and your origin is not added.
+Ask the operator to `witness add-log`, or use a witness with
+`--open-enrollment`.
+
+**`403 checkpoint signature not verified`.**
+The note's signature does not verify under the key in its canonical origin.
+Usually a non-canonical origin (you set a custom one) or a corrupted note.
+
+**All witnesses in my directory are mine; verdict stays CONSISTENT-UNWITNESSED.**
+Correct. Independence is scored by `operator_org`, and a fleet of 100 under
+one organisation is one voice. You need a second organisation:
+[Getting witnessed](Getting-Witnessed), or ask a peer to follow
+`deploy/witness/AGENT_OPERATOR.md`.
+
+## Running a witness
+
+**`witness.lock` names a PID that is alive but is not a witness.**
+PID reuse after a reboot. Stop anything that could be serving this
+directory, delete `witness.lock`, start again. Never run two processes on
+one state directory.
+
+**`WARNING: .../witness.key is readable by other users` at start.**
+`chmod 600 witness.key`. The witness still starts; the warning is about
+custody.
+
+**I restored `witness.key` from backup and now verifiers dropped my entry.**
+The backup did not include `logs/`, so the witness forgot its heads and
+cosigned a conflicting one: it equivocated. This cannot be undone; retire
+the key (`init` a new directory, publish the new entry). Back up `witness.key`,
+`witness.json` and `logs/` as one snapshot, always.
+[Running a witness](Running-a-Witness) §3.
+
+**Clients get `429` constantly behind my TLS proxy.**
+Every client arrives from the proxy's address. Start with
+`--max-conns-per-ip 256 --enroll-rate 6000` (or `fleet.py serve --behind-proxy`).
+
+**`witness verify-evidence` says the file does not prove equivocation.**
+The file is not two log-signed checkpoints for one size with different
+roots. A failed consistency proof alone is not evidence (anyone can attach a
+junk proof to an honest checkpoint), and since 0.3.1 the witness does not
+record it as such.
+
+## MCP server
+
+**`ModuleNotFoundError: mcp`.**
+The MCP SDK needs Python ≥3.10. The core library works on 3.9; the server
+does not.
+
+**`submit_to_witnesses` returns fewer receipts than `max_witnesses`.**
+Some witnesses were unreachable or rate-limited; the result lists each
+outcome. `min_witnesses` controls whether that counts as success.
+
+## CI and builds
+
+**`cargo deny` fails.**
+Run `cargo deny --config deny.toml check` from the workspace root; the
+`--config` flag must precede `check`.
+
+**The outside-swarm CI job is skipped on Python 3.9.**
+Intentional; it needs the MCP SDK.
+
+**`witness-log verify ... | head` panicked with a broken pipe in old versions.**
+Fixed in 0.3.3 (SIGPIPE is reset to default on Unix).
+
+## Still stuck
+
+Open an issue with: the exact command, the full `verify --json` output (it
+contains no payloads, only hashes and metadata), your witness-log version,
+and the platform. For a suspected equivocation, attach the evidence file;
+it is self-contained and safe to share.
