@@ -9,10 +9,10 @@ One file, no framework: `witness_mcp_server.py` on top of
 | `initialize_witness_chain(session_id, metadata?)` | Create, or resume on boot, a Merkle log bound to an Ed25519 identity. Idempotent. |
 | `append_audit_step(session_id, intent, tool_name, payload?, state_transition?)` | Record a step as an intent leaf (+ a result leaf). Returns a signed checkpoint and an inclusion proof. |
 | `get_inclusion_proof(session_id, entry_index)` | Proof an entry is in the tree; verifiable offline by any RFC 6962 verifier. |
-| `verify_chain_integrity(session_id, trusted_directory?)` | Re-run the full verifier; returns the verdict and any tamper alerts. |
+| `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | Re-run the full verifier; returns the verdict and any tamper alerts. `min_witnesses` gates on an absolute count (use for large directories). |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload; all proofs stay valid. |
 | `export_dossier(session_id)` | The portable record anyone can verify with `witness-log verify`. |
-| `submit_to_witnesses(session_id, directory?)` | Get the head cosigned by independent witnesses over `c2sp.org/tlog-witness`. |
+| `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | Get the head cosigned by up to `max_witnesses` diversity-selected witnesses over `c2sp.org/tlog-witness`; WITNESSED needs `min_witnesses` cosignatures from two independent operators. |
 
 ## Run
 

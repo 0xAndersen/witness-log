@@ -281,7 +281,9 @@ async def get_inclusion_proof(session_id: str, entry_index: int) -> dict[str, An
 
 @server.tool()
 async def verify_chain_integrity(
-    session_id: str, trusted_directory: Optional[dict[str, Any]] = None
+    session_id: str,
+    trusted_directory: Optional[dict[str, Any]] = None,
+    min_witnesses: Optional[int] = None,
 ) -> dict[str, Any]:
     """Re-verify the whole chain and report any tampering.
 
@@ -291,6 +293,10 @@ async def verify_chain_integrity(
     leaves. Any mismatch is a tamper alert. With a `trusted_directory`
     (a witness directory *you* trust, never the chain's own) the witness
     quorum is scored too and the verdict can reach "witnessed".
+
+    `min_witnesses` gates on an absolute number of cosigning witnesses
+    instead of a fraction of the directory; use it when the directory is
+    large.
 
     Returns: verdict (witnessed / consistent_unwitnessed / unanchored /
     diverged), the full check report, and a list of tamper alerts (empty
@@ -306,6 +312,7 @@ async def verify_chain_integrity(
             DEFAULT_THRESHOLD,
             ident,
             json.dumps(trusted_directory) if trusted_directory is not None else None,
+            min_witnesses,
         )
     )
     alerts = [
@@ -373,7 +380,8 @@ async def export_dossier(session_id: str) -> dict[str, Any]:
     }
 
 
-def _post(url: str, body: str) -> tuple[int, str]:
+def _post(url: str, body: str) -> tuple[int, str, int]:
+    """POST to /add-checkpoint. Returns (status, body, retry_after_seconds)."""
     req = urllib.request.Request(
         url.rstrip("/") + "/add-checkpoint",
         data=body.encode(),
@@ -382,14 +390,21 @@ def _post(url: str, body: str) -> tuple[int, str]:
     )
     try:
         with urllib.request.urlopen(req, timeout=WITNESS_TIMEOUT_S) as r:
-            return r.status, r.read().decode()
+            return r.status, r.read().decode(), 0
     except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()
+        try:
+            retry = int(e.headers.get("Retry-After") or 0)
+        except ValueError:
+            retry = 0
+        return e.code, e.read().decode(), retry
 
 
 @server.tool()
 async def submit_to_witnesses(
-    session_id: str, directory: Optional[dict[str, Any]] = None
+    session_id: str,
+    directory: Optional[dict[str, Any]] = None,
+    max_witnesses: int = 8,
+    min_witnesses: int = 2,
 ) -> dict[str, Any]:
     """Get the current head cosigned by independent witnesses.
 
@@ -399,17 +414,29 @@ async def submit_to_witnesses(
     protocol, keeps only cosignatures that verify against the witness's
     published key, and returns a dossier carrying them plus the verdict a
     verifier holding that directory would reach. WITNESSED needs valid
-    cosignatures from at least two distinct independent operators.
+    cosignatures from at least two distinct independent operators and at
+    least `min_witnesses` cosignatures in total.
+
+    Only `max_witnesses` witnesses are contacted, chosen for operator
+    diversity first (one per operator, then round-robin), so a directory
+    the size of a registry does not mean a hundred requests per checkpoint.
     """
     if directory is None:
         p = HOME / "witnesses.json"
         if not p.exists():
             raise ValueError(f"no directory given and {p} does not exist")
         directory = json.loads(p.read_text())
-    witnesses = directory.get("witnesses") or []
-    if not witnesses:
+    if not (directory.get("witnesses") or []):
         raise ValueError("directory has no witnesses")
+    if max_witnesses < 1 or min_witnesses < 1:
+        raise ValueError("max_witnesses and min_witnesses must be at least 1")
     log, lock = await _get(session_id)
+    async with lock:
+        witnesses = json.loads(
+            wl.select_witnesses(json.dumps(directory), log.identity_pubkey_hex(), max_witnesses, False)
+        )
+    if not witnesses:
+        raise ValueError("directory has no independent witnesses to contact")
     state_path = _journal_path(session_id).with_suffix(".jsonl.witnesses.json")
     try:
         sizes: dict[str, int] = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -426,10 +453,11 @@ async def submit_to_witnesses(
             if old > size:
                 old = 0
             status, text = 0, ""
-            for _ in range(4):
+            waited = 0
+            for _ in range(6):
                 body = log.add_checkpoint_body(old)
                 try:
-                    status, text = await asyncio.to_thread(_post, str(w.get("url", "")), body)
+                    status, text, retry = await asyncio.to_thread(_post, str(w.get("url", "")), body)
                 except (urllib.error.URLError, OSError, ValueError) as e:
                     outcomes.append({"witness": w.get("name"), "status": 0, "error": str(e)})
                     return
@@ -440,6 +468,11 @@ async def submit_to_witnesses(
                         break
                     if old > size:
                         break
+                    continue
+                if status in (429, 503) and 0 < retry <= 60 and waited + retry <= 60:
+                    # Enrollment rate limit or a busy witness: wait as told.
+                    await asyncio.sleep(retry)
+                    waited += retry
                     continue
                 break
             outcomes.append({"witness": w.get("name"), "status": status, "body": text.strip()[:200]})
@@ -457,7 +490,7 @@ async def submit_to_witnesses(
     doc = json.loads(dossier)
     doc["witness_directory"] = directory
     report = json.loads(
-        wl.verify_dossier_json(json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory))
+        wl.verify_dossier_json(json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory), min_witnesses)
     )
     return {
         "cosignatures_accepted": accepted,

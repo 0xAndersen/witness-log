@@ -143,6 +143,21 @@ jobs:
         run: python examples/live-network/scenarios.py
       - name: Swarm (100 scenarios, 12 witnesses, 25 agents)
         run: python examples/swarm/run.py --out swarm-report
+      - name: Outside swarm (200 agents, 18 personas, 40 witnesses)
+        # The full 1,000-agent run is ~4 minutes on two cores; CI runs a
+        # fifth of it so a regression in any persona still shows up.
+        run: |
+          pip install "mcp>=2" anyio jsonschema
+          export WL_BIN=target/release/witness-log
+          python deploy/witness/fleet.py init fleet-a --count 20 --org "CI Operator A" --name-base a.witness.test/w --url-base http://127.0.0.1 --base-port 20000
+          python deploy/witness/fleet.py init fleet-b --count 20 --org "CI Operator B" --name-base b.witness.test/w --url-base http://127.0.0.1 --base-port 20020
+          python deploy/witness/fleet.py serve fleet-a --open-enrollment & echo $! > a.pid
+          python deploy/witness/fleet.py serve fleet-b --open-enrollment & echo $! > b.pid
+          sleep 3
+          python -c "import json; w=json.load(open('fleet-a/directory.json'))['witnesses']+json.load(open('fleet-b/directory.json'))['witnesses']; json.dump({'witnesses': w}, open('directory.json','w'))"
+          python examples/swarm/outside.py --agents 200 --directory directory.json --out swarm-report/outside --processes 4 --threads 12 --operator-serve-seconds 60
+          kill $(cat a.pid) $(cat b.pid)
+        if: matrix.python != '3.9'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -150,6 +165,18 @@ jobs:
           path: |
             swarm-report/REPORT.md
             swarm-report/results.json
+            swarm-report/outside/REPORT.md
+
+  registry:
+    name: Witness registry entries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python registry/validate.py --offline
+      - run: python registry/build_directory.py > /dev/null
 
   cargo-deny:
     name: Supply chain audit (advisories + licenses)

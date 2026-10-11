@@ -1182,7 +1182,11 @@ fn submit_one(
                 }
                 old = theirs;
             }
-            429 | 503 if retry_after.is_some_and(|s| s <= 15) => {
+            // Enrollment rate limit or a busy witness: honour Retry-After
+            // (the server's windows are at most a minute). Found by the
+            // 1,000-agent swarm: fleets of agents behind one address hit
+            // the per-address enrollment limit together.
+            429 | 503 if retry_after.is_some_and(|s| s <= 60) => {
                 std::thread::sleep(Duration::from_secs(retry_after.unwrap_or(1)));
             }
             422 => {

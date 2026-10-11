@@ -39,6 +39,7 @@ __all__ = [
     "verify_dossier_json",
     "verify_inclusion",
     "select_diverse_witnesses",
+    "select_witnesses",
     "witness_entry_independent",
     "witness_entry_project_operated",
     "WitnessLogError",
@@ -51,7 +52,7 @@ __all__ = [
     "canonical_json",
 ]
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 
 def canonical_json(value: Any) -> bytes:

@@ -44,8 +44,7 @@ fn main() {
     //    third witness present in the directory that never signed —
     //    deliberately included so the sample demonstrates a realistic,
     //    partial-diversity outcome rather than a too-clean 100% case. One
-    //    witness is agent-operated (continuous polling + consistency-proof
-    //    checking, see examples/agent_witness.rs) and one is human-operated,
+    //    witness is agent-operated and one is human-operated,
     //    to show both runtime kinds coexisting in the same directory.
     let mut directory = WitnessDirectory::default();
     let mut receipts = Vec::new();

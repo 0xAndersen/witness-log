@@ -173,7 +173,7 @@ the payloads, ship it.
 witness-log-core = "0.3"
 witness-log-network = "0.3"   # witnesses, quorum, dossiers, verification
 # or, straight from the repository:
-# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.2" }
+# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.3" }
 ```
 
 ```rust
@@ -370,9 +370,18 @@ open_enrollment=True)` is a witness you can mount in any web framework
 (8 Rust, 2 Python) through ten scenarios — forks, crashes, hostile HTTP,
 50 concurrent agents, Byzantine witnesses, offline audit — in about a
 minute. [`examples/swarm`](examples/swarm) runs 100 named scenarios
-against the *released* CLI and wheel (`--release v0.3.2` downloads them)
-with twelve witnesses and 25 agents; both run in CI on every push and
-their reports are committed under `examples/swarm/reports/`.
+against the *released* CLI and wheel (`--release vX.Y.Z` downloads them)
+with twelve witnesses and 25 agents, and `outside.py` runs a thousand
+concurrent agents in eighteen personas against a 100-witness network; both
+run in CI on every push and their reports are committed under
+`examples/swarm/reports/`.
+
+Running witnesses: [`deploy/witness/`](deploy/witness) has the single-host
+kit (Dockerfile, compose with TLS, systemd units, `fleet.py` for N on one
+host, `OPERATORS.md`) and [`AGENT_OPERATOR.md`](deploy/witness/AGENT_OPERATOR.md),
+a playbook a coding agent can execute end to end on free always-on
+compute. Registered witnesses live in [`registry/`](registry); verifiers
+build their directory from it.
 
 ## Repository layout
 
@@ -389,7 +398,8 @@ witness-log/
 ├── .github/workflows/    # CI (build/test/clippy/fmt/MSRV per-OS) and scheduled fuzzing
 ├── examples/             # sample dossier, verify_demo.py, live-network/ (10 witnesses), swarm/ (100 scenarios)
 ├── integrations/mcp/     # MCP server: the audit trail as tools for any MCP-capable agent
-├── deploy/witness/       # run a witness in production: Dockerfile, compose, systemd, OPERATORS.md
+├── deploy/witness/       # run witnesses: Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
+├── registry/             # the public witness list (PR-registered, CI-validated) and directory builder
 ├── THREAT_MODEL.md       # what this proves, what it doesn't
 ├── GOVERNANCE.md         # federation model, witness recruitment, transition plan
 ├── SECURITY.md           # vulnerability disclosure process

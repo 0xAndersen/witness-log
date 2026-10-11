@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release, e.g. v0.3.2 (must match Cargo.toml version)"
+        description: "Tag to release, e.g. v0.3.3 (must match Cargo.toml version)"
         required: true
         type: string
 

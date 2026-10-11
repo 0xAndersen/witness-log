@@ -149,7 +149,15 @@ head the witness has not committed to.
 - **Updating** the binary is a stop/replace/start; the on-disk format is
   versioned and refused, never reinterpreted, if it ever changes.
 
-## 5. What you are promising
+## 5. More than one, and letting an agent do it
+
+`fleet.py init/serve/status` runs N witnesses on one host (one key and
+one memory each; one operator bucket in total). `witness-log-witness@.service`
+is the per-instance systemd template. `AGENT_OPERATOR.md` is the same
+procedure written for a coding agent to execute end to end, including
+registration in `registry/`.
+
+## 6. What you are promising
 
 By publishing a directory entry you are telling verifiers that this key
 will never cosign two histories of one log, and that the `operator_org`

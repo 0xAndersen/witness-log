@@ -428,6 +428,7 @@ fn cohort_of_1000_under_realistic_conditions() {
         let ctx = VerifyContext {
             expected_identity_pubkey: Some(&a.identity_hex),
             trusted_directory: Some(&directory),
+            min_receipts: None,
         };
         let r = dossier.verify(0.0, &ctx);
         *verdicts.entry(r.verdict.to_string()).or_default() += 1;
@@ -550,6 +551,7 @@ fn cohort_of_1000_under_realistic_conditions() {
         let ctx = VerifyContext {
             expected_identity_pubkey: Some(&victim.identity_hex),
             trusted_directory: Some(&directory),
+            min_receipts: None,
         };
         let r = dossier.verify(0.0, &ctx);
         f5.check(

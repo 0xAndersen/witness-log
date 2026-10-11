@@ -483,6 +483,10 @@ pub struct QuorumResult {
     #[serde(alias = "operators_represented")]
     pub independent_operators_represented: Vec<String>,
     pub meets_count_threshold: bool,
+    /// Which count gate `meets_count_threshold` applied: `"fraction >= 0.66"`
+    /// or `"count >= 4"`.
+    #[serde(default)]
+    pub count_gate: String,
     /// The newest `witnessed_at_ms` among counted (deduplicated,
     /// trusted-directory) receipts. `None` when no receipts counted.
     ///
@@ -611,6 +615,7 @@ pub fn evaluate_quorum(
             v
         },
         meets_count_threshold: quorum_fraction >= threshold_fraction,
+        count_gate: format!("fraction >= {threshold_fraction}"),
         newest_trusted_witness_ms,
     }
 }
@@ -747,6 +752,15 @@ pub struct VerifyContext<'a> {
     /// diversity. If `None`, the verdict is capped at `Unanchored`
     /// regardless of how many receipts the dossier ships.
     pub trusted_directory: Option<&'a WitnessDirectory>,
+    /// Absolute receipt-count gate. When `Some(n)`, the count gate is
+    /// "at least `n` valid receipts from distinct witnesses in the trusted
+    /// directory" and `threshold_fraction` is reported but not enforced.
+    /// A fraction of the directory is the wrong gate once a directory is a
+    /// registry of hundreds of witnesses (0.66 of 100 is 66 cosignatures
+    /// per checkpoint); an absolute count plus the two-independent-operator
+    /// rule is what a verifier actually means. Found by the 1,000-agent
+    /// swarm against a 100-witness network.
+    pub min_receipts: Option<usize>,
 }
 
 /// Everything `witness-log verify` reports, structured rather than printed —
@@ -960,12 +974,19 @@ impl Dossier {
         // receipts); it must never reach a trust decision. See finding 02.
         let externally_anchored = ctx.trusted_directory.is_some();
         let quorum = match ctx.trusted_directory {
-            Some(trusted) if !self.witness_receipts.is_empty() => Some(evaluate_quorum(
-                &self.checkpoint,
-                &self.witness_receipts,
-                trusted,
-                threshold_fraction,
-            )),
+            Some(trusted) if !self.witness_receipts.is_empty() => {
+                let mut q = evaluate_quorum(
+                    &self.checkpoint,
+                    &self.witness_receipts,
+                    trusted,
+                    threshold_fraction,
+                );
+                if let Some(n) = ctx.min_receipts {
+                    q.meets_count_threshold = q.valid_receipts >= n;
+                    q.count_gate = format!("count >= {n}");
+                }
+                Some(q)
+            }
             _ => None,
         };
 
@@ -1493,6 +1514,7 @@ mod policy_tests {
                     .map(|i| format!("op-{i}"))
                     .collect(),
                 meets_count_threshold: true,
+                count_gate: String::new(),
                 newest_trusted_witness_ms: if valid == 0 { None } else { Some(0) },
             })
         };
@@ -1799,6 +1821,14 @@ pub fn silence_proof(
 /// Project-operated witnesses are returned *after* independent ones when
 /// `include_project_operated` is set, so they top up a thin quorum
 /// without ever displacing a genuinely independent signature.
+///
+/// Within an operator, the witness chosen is a function of the subject's
+/// identity key, so one agent keeps using the same witnesses run after
+/// run (no 409 resync churn) while a thousand agents spread across all of
+/// an operator's witnesses instead of all choosing its first one. Found
+/// by the 1,000-agent swarm: deterministic first-entry selection sent
+/// every agent to the same eight witnesses and tripped their enrollment
+/// rate limits while ninety-two sat idle.
 pub fn select_diverse_witnesses<'a>(
     directory: &'a WitnessDirectory,
     subject_identity_pubkey: &str,
@@ -1811,23 +1841,34 @@ pub fn select_diverse_witnesses<'a>(
         .find(|w| normalize_hex(&w.pubkey) == normalize_hex(subject_identity_pubkey))
         .map(operator_key);
 
-    let mut chosen: Vec<&WitnessEntry> = Vec::new();
-    let mut used_operators: HashSet<String> = HashSet::new();
-
+    // Group independent witnesses by operator, in directory order.
+    let mut order: Vec<String> = Vec::new();
+    let mut buckets: std::collections::HashMap<String, Vec<&WitnessEntry>> =
+        std::collections::HashMap::new();
     for w in directory
         .witnesses
         .iter()
         .filter(|w| !w.is_project_operated)
     {
-        if chosen.len() >= want {
-            break;
-        }
         let op = normalize_label(&w.operator_org);
         if subject_operator.as_deref() == Some(op.as_str()) {
             continue; // the subject's own operator adds no independence
         }
-        if used_operators.insert(op) {
-            chosen.push(w);
+        if !buckets.contains_key(&op) {
+            order.push(op.clone());
+        }
+        buckets.entry(op).or_default().push(w);
+    }
+    let spread = subject_spread(subject_identity_pubkey);
+    let mut chosen: Vec<&WitnessEntry> = Vec::new();
+    for op in &order {
+        if chosen.len() >= want {
+            break;
+        }
+        if let Some(bucket) = buckets.get(op) {
+            if let Some(w) = bucket.get(spread % bucket.len()) {
+                chosen.push(w);
+            }
         }
     }
 
@@ -1841,6 +1882,86 @@ pub fn select_diverse_witnesses<'a>(
         }
     }
     chosen
+}
+
+/// Diversity first, then capacity. Starts from [`select_diverse_witnesses`]
+/// (one witness per independent operator) and, if `want` is not yet met,
+/// fills the remaining slots round-robin across operators, so a submitter
+/// asking for eight witnesses from a four-operator directory gets two per
+/// operator rather than four. Use this to choose whom to *submit* to when
+/// availability matters; the verifier's independence count is unchanged
+/// either way. Found by the 1,000-agent swarm against a 100-witness
+/// network, where one-per-operator left most of the capacity idle.
+pub fn select_witnesses<'a>(
+    directory: &'a WitnessDirectory,
+    subject_identity_pubkey: &str,
+    want: usize,
+    include_project_operated: bool,
+) -> Vec<&'a WitnessEntry> {
+    let mut chosen = select_diverse_witnesses(
+        directory,
+        subject_identity_pubkey,
+        want,
+        include_project_operated,
+    );
+    let subject_operator: Option<String> = directory
+        .witnesses
+        .iter()
+        .find(|w| normalize_hex(&w.pubkey) == normalize_hex(subject_identity_pubkey))
+        .map(operator_key);
+    if chosen.len() < want {
+        let mut by_op: Vec<Vec<&WitnessEntry>> = Vec::new();
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for w in directory
+            .witnesses
+            .iter()
+            .filter(|w| !w.is_project_operated)
+        {
+            let op = normalize_label(&w.operator_org);
+            if subject_operator.as_deref() == Some(op.as_str())
+                || chosen.iter().any(|c| c.pubkey == w.pubkey)
+            {
+                continue;
+            }
+            let i = *index.entry(op).or_insert_with(|| {
+                by_op.push(Vec::new());
+                by_op.len() - 1
+            });
+            by_op[i].push(w);
+        }
+        let spread = subject_spread(subject_identity_pubkey);
+        let mut round = 0;
+        while chosen.len() < want {
+            let mut added = false;
+            for bucket in &by_op {
+                if chosen.len() >= want {
+                    break;
+                }
+                if bucket.is_empty() || round >= bucket.len() {
+                    continue;
+                }
+                if let Some(w) = bucket.get((spread + round) % bucket.len()) {
+                    chosen.push(w);
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+            round += 1;
+        }
+    }
+    chosen
+}
+
+/// A stable per-subject offset for spreading load across an operator's
+/// witnesses: the first eight bytes of SHA-256(identity key).
+fn subject_spread(subject_identity_pubkey: &str) -> usize {
+    // leaf_hash is SHA-256 with a domain prefix; any stable hash works here.
+    let h = leaf_hash(normalize_hex(subject_identity_pubkey).as_bytes());
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&h[..8]);
+    (u64::from_be_bytes(b) % (usize::MAX as u64)) as usize
 }
 
 #[cfg(test)]
@@ -2071,5 +2192,155 @@ pub fn compare_checkpoints(
         CheckpointRelation::Extends
     } else {
         CheckpointRelation::Unproven
+    }
+}
+
+#[cfg(test)]
+mod registry_scale_tests {
+    //! Found by the 1,000-agent swarm against a 100-witness network: a
+    //! fraction of the directory is the wrong count gate once the
+    //! directory is a registry, and one-per-operator selection left most
+    //! of the network idle.
+    use super::*;
+    use rand::rngs::OsRng;
+    use witness_log_core::identity::IdentityKeypair;
+
+    fn big_directory(ops: usize, per_op: usize) -> (WitnessDirectory, Vec<SigningKey>) {
+        let mut d = WitnessDirectory::default();
+        let mut keys = Vec::new();
+        for o in 0..ops {
+            for w in 0..per_op {
+                let k = SigningKey::generate(&mut OsRng);
+                d.witnesses.push(WitnessEntry {
+                    name: format!("op{o}/w{w}"),
+                    operator_org: format!("Operator {o}"),
+                    url: format!("https://op{o}.example/w{w}"),
+                    pubkey: hex::encode(k.verifying_key().to_bytes()),
+                    runtime: WitnessRuntime::Agent,
+                    compute_provider: Some(format!("cloud-{o}")),
+                    is_project_operated: false,
+                });
+                keys.push(k);
+            }
+        }
+        (d, keys)
+    }
+
+    #[test]
+    fn select_witnesses_fills_round_robin_after_one_per_operator() {
+        let (d, _) = big_directory(4, 25);
+        let diverse = select_diverse_witnesses(&d, &hex::encode([7u8; 32]), 8, false);
+        assert_eq!(diverse.len(), 4, "one per operator");
+        let picked = select_witnesses(&d, &hex::encode([7u8; 32]), 8, false);
+        assert_eq!(picked.len(), 8);
+        let mut per_op = std::collections::HashMap::new();
+        for w in &picked {
+            *per_op.entry(w.operator_org.clone()).or_insert(0) += 1;
+        }
+        assert!(
+            per_op.values().all(|&n| n == 2),
+            "two per operator: {per_op:?}"
+        );
+        let distinct: HashSet<_> = picked.iter().map(|w| &w.pubkey).collect();
+        assert_eq!(distinct.len(), 8, "no witness twice");
+        assert_eq!(
+            select_witnesses(&d, &hex::encode([7u8; 32]), 500, false).len(),
+            100
+        );
+    }
+
+    #[test]
+    fn selection_spreads_subjects_across_each_operators_witnesses() {
+        let (d, _) = big_directory(4, 25);
+        let mut used: HashSet<String> = HashSet::new();
+        let mut first: Option<Vec<String>> = None;
+        for i in 0..400u32 {
+            let subject = hex::encode(leaf_hash(&i.to_be_bytes()));
+            let picked: Vec<String> = select_witnesses(&d, &subject, 8, false)
+                .iter()
+                .map(|w| w.pubkey.clone())
+                .collect();
+            if i == 0 {
+                first = Some(picked.clone());
+            }
+            used.extend(picked);
+        }
+        assert_eq!(
+            used.len(),
+            100,
+            "400 subjects must reach every witness, not the same eight"
+        );
+        // Deterministic per subject: the same agent picks the same witnesses every run.
+        let subject = hex::encode(leaf_hash(&0u32.to_be_bytes()));
+        let again: Vec<String> = select_witnesses(&d, &subject, 8, false)
+            .iter()
+            .map(|w| w.pubkey.clone())
+            .collect();
+        assert_eq!(first.unwrap(), again);
+    }
+
+    #[test]
+    fn min_receipts_gate_reaches_witnessed_where_the_fraction_cannot() {
+        let (d, keys) = big_directory(4, 25);
+        let id = IdentityKeypair::generate();
+        let key = SigningKey::from_bytes(&id.to_bytes());
+        let mut log = witness_log_core::log::WitnessLog::resume(id, 0);
+        log.append_intent(b"x");
+        let sth = log.checkpoint(&key);
+        // Eight cosignatures, two per operator, as select_witnesses would arrange.
+        let picked = select_witnesses(&d, &log.identity_pubkey_hex(), 8, false);
+        let receipts: Vec<WitnessReceipt> = picked
+            .iter()
+            .map(|w| {
+                let k = keys
+                    .iter()
+                    .find(|k| hex::encode(k.verifying_key().to_bytes()) == w.pubkey)
+                    .unwrap();
+                WitnessReceipt::sign(k, &sth, 1_000)
+            })
+            .collect();
+        let mut dossier = Dossier::from_log(&log, sth);
+        dossier.witness_receipts = receipts;
+        let ident = log.identity_pubkey_hex();
+        let fraction = dossier.verify(
+            0.66,
+            &VerifyContext {
+                expected_identity_pubkey: Some(&ident),
+                trusted_directory: Some(&d),
+                min_receipts: None,
+            },
+        );
+        assert_eq!(
+            fraction.verdict,
+            Verdict::ConsistentUnwitnessed,
+            "8/100 < 66%"
+        );
+        assert_eq!(
+            fraction.quorum.as_ref().unwrap().count_gate,
+            "fraction >= 0.66"
+        );
+        let absolute = dossier.verify(
+            0.66,
+            &VerifyContext {
+                expected_identity_pubkey: Some(&ident),
+                trusted_directory: Some(&d),
+                min_receipts: Some(4),
+            },
+        );
+        assert_eq!(absolute.verdict, Verdict::Witnessed);
+        assert_eq!(absolute.quorum.as_ref().unwrap().count_gate, "count >= 4");
+        let too_few = dossier.verify(
+            0.0,
+            &VerifyContext {
+                expected_identity_pubkey: Some(&ident),
+                trusted_directory: Some(&d),
+                min_receipts: Some(9),
+            },
+        );
+        assert_eq!(
+            too_few.verdict,
+            Verdict::ConsistentUnwitnessed,
+            "absolute gate still binds"
+        );
     }
 }

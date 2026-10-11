@@ -125,11 +125,15 @@ def verify_dossier_json(
     threshold: float,
     expected_identity_pubkey: Optional[str] = None,
     trusted_directory_json: Optional[str] = None,
+    min_witnesses: Optional[int] = None,
 ) -> str: ...
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str
 ) -> bool: ...
 def select_diverse_witnesses(
+    directory_json: str, subject_pubkey_hex: str, want: int, include_project_operated: bool = False
+) -> str: ...
+def select_witnesses(
     directory_json: str, subject_pubkey_hex: str, want: int, include_project_operated: bool = False
 ) -> str: ...
 def witness_entry_independent(

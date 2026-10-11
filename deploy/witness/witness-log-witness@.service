@@ -1,0 +1,47 @@
+# systemd template: one witness per instance, several per host.
+#
+#   sudo install -d -o witness-log -g witness-log -m 0700 /var/lib/witness-log
+#   sudo -u witness-log witness-log witness init /var/lib/witness-log/w1 --name witness.example/w1 --org "Example Org" --url https://witness.example/w1
+#   echo 'LISTEN=127.0.0.1:7381' | sudo tee /etc/witness-log/w1.env
+#   sudo systemctl enable --now witness-log-witness@w1
+#
+# Each instance has its own key and its own memory under /var/lib/witness-log/<name>.
+# All instances on one host are one operator; see OPERATORS.md and fleet.py.
+
+[Unit]
+Description=witness-log witness %i (c2sp.org/tlog-witness)
+Documentation=https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=witness-log
+Group=witness-log
+EnvironmentFile=/etc/witness-log/%i.env
+ExecStart=/usr/local/bin/witness-log witness serve /var/lib/witness-log/%i \
+    --listen ${LISTEN} --open-enrollment --max-conns-per-ip 256 --enroll-rate 6000
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=10
+StateDirectory=witness-log
+ReadWritePaths=/var/lib/witness-log
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -51,8 +51,8 @@ diversity. This is being worked on as an ongoing, public effort:
 - **Agent-operated witnesses are explicitly in scope**, not just
   human-operated ones — see THREAT_MODEL.md's "Witness independence"
   section. `witness-log witness serve` (or `witness_log.WitnessService`
-  from Python) is the witness; `examples/agent_witness.rs` in the network
-  crate shows the verify-before-sign loop in isolation. An agent witness registering under `runtime: agent`
+  from Python) is the witness an agent runs; `deploy/witness/AGENT_OPERATOR.md`
+  is the playbook. An agent witness registering under `runtime: agent`
   should also disclose a `compute_provider` where possible — recruiting
   witness agents deliberately spread across distinct model/inference
   providers (not just distinct organizations) is its own, separate goal,

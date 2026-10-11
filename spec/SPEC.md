@@ -531,9 +531,9 @@ decorative: without it, a witness has no algorithmic way to refuse a
 checkpoint whose tree quietly doesn't contain the previous one as a prefix
 (i.e., rewritten or forked history). `witness-log-core::merkle::consistency_proof`
 / `verify_consistency` implement generation and verification; see
-`/corpus/06_consistency_proof.json` for a worked vector and
-`crates/witness-log-network/examples/agent_witness.rs` for a full reference loop,
-including the refusal case.
+`/corpus/06_consistency_proof.json` for a worked vector. The witness in
+`witness_log_network::tlog_witness::WitnessService` runs exactly this check
+before every cosignature, and refuses (HTTP 422) when it fails.
 
 On a witness's very first observation of a target (no prior trusted
 checkpoint), `first_size = 0` and the consistency proof is trivially empty

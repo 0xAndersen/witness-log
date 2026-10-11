@@ -296,15 +296,23 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// Omitting both is legal (the run checks only self-consistency) but
 /// caps the reachable verdict at "unanchored". `trusted_directory_json`
 /// must be a JSON `WitnessDirectory` object, never the dossier's own
-/// embedded directory.
+/// embedded directory. `min_witnesses`, when given, replaces the
+/// fraction with an absolute receipt count: the right gate when the
+/// directory is a registry of many witnesses.
 #[pyfunction]
-#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None))]
+#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None))]
 fn verify_dossier_json(
     dossier_json: &str,
     threshold: f64,
     expected_identity_pubkey: Option<String>,
     trusted_directory_json: Option<String>,
+    min_witnesses: Option<usize>,
 ) -> PyResult<String> {
+    if min_witnesses == Some(0) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "min_witnesses must be at least 1",
+        ));
+    }
     if !(0.0..=1.0).contains(&threshold) {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "threshold must be between 0.0 and 1.0, got {threshold}"
@@ -336,6 +344,7 @@ fn verify_dossier_json(
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: expected_identity_pubkey.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
+        min_receipts: min_witnesses,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)
@@ -1156,6 +1165,28 @@ fn select_diverse_witnesses(
     serde_json::to_string(&picked).map_err(malformed_err)
 }
 
+/// Like `select_diverse_witnesses`, then fill up to `want` round-robin
+/// across operators: the set to *submit* to when availability matters.
+/// Returns a JSON array of directory entries.
+#[pyfunction]
+#[pyo3(signature = (directory_json, subject_pubkey_hex, want, include_project_operated=false))]
+fn select_witnesses(
+    directory_json: &str,
+    subject_pubkey_hex: &str,
+    want: usize,
+    include_project_operated: bool,
+) -> PyResult<String> {
+    let dir: witness_log_network::WitnessDirectory =
+        serde_json::from_str(directory_json).map_err(malformed_err)?;
+    let picked = witness_log_network::select_witnesses(
+        &dir,
+        subject_pubkey_hex,
+        want,
+        include_project_operated,
+    );
+    serde_json::to_string(&picked).map_err(malformed_err)
+}
+
 /// Build an independent witness directory entry. Returns JSON. Prefer
 /// this over hand-writing the struct: it makes the honest case the easy
 /// case.
@@ -1205,6 +1236,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_diverse_witnesses, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(select_witnesses, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(witness_entry_independent, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(witness_entry_project_operated, m)?)?;
     m.add("WitnessLogError", py.get_type::<WitnessLogError>())?;

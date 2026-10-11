@@ -52,6 +52,9 @@ fn exit_code_for(verdict: &witness_log_network::Verdict) -> ExitCode {
 struct Options {
     path: String,
     threshold: f64,
+    /// Absolute receipt-count gate (`--min-witnesses`); overrides the
+    /// fraction when set. The right gate for a registry-sized directory.
+    min_witnesses: Option<usize>,
     json: bool,
     explain: bool,
     /// Out-of-band identity pin — NEVER read from the dossier itself.
@@ -86,14 +89,15 @@ USAGE:
       changes when you anchor verification to something outside the file.
       --tamper   build a convincing forgery instead, and watch it get caught.
 
-  witness-log verify <dossier.json> [--threshold 0.0-1.0] [--json] [--explain]
+  witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain]
                       [--identity <hex-pubkey>] [--directory <path.json>]
       Verify a dossier fully offline: checkpoint signature, identity
       binding, leaf structural validity, key-binding validity, Merkle
       continuity rebuilt from the leaves, and (when a --directory is
       supplied) quorum + operator diversity + compute-provider diversity
       against THAT directory.
-      --threshold  quorum bar as a fraction (default 0.66)
+      --threshold  quorum bar as a fraction of the directory (default 0.66)
+      --min-witnesses N  quorum bar as an absolute count (use for large directories)
       --json       machine-readable structured report
       --explain    one line under each check: what it does and doesn't prove
       --identity   the identity pubkey you expect, obtained out-of-band
@@ -492,6 +496,8 @@ const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshol
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --threshold  receipt-count bar as a fraction of the directory (default 0.66)
+  --min-witnesses N  receipt-count bar as an absolute number of distinct witnesses; use this
+               instead of --threshold when the directory is large (a registry)
   Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage";
 
 /// 64 hex characters: a 32-byte key.
@@ -516,6 +522,7 @@ pub(crate) fn parse_directory(raw: &str) -> Result<WitnessDirectory, String> {
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut path = None;
     let mut threshold = DEFAULT_QUORUM_THRESHOLD;
+    let mut min_witnesses = None;
     let mut json = false;
     let mut explain = false;
     let mut identity = None;
@@ -535,6 +542,19 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         "--threshold must be between 0.0 and 1.0, got {threshold}"
                     ));
                 }
+                i += 2;
+            }
+            "--min-witnesses" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or("--min-witnesses requires a positive integer")?;
+                let n: usize = v.parse().map_err(|_| {
+                    format!("--min-witnesses value '{v}' is not a positive integer")
+                })?;
+                if n == 0 {
+                    return Err("--min-witnesses must be at least 1".to_string());
+                }
+                min_witnesses = Some(n);
                 i += 2;
             }
             "--json" => {
@@ -590,6 +610,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(Options {
         path: path.ok_or(VERIFY_USAGE)?,
         threshold,
+        min_witnesses,
         json,
         explain,
         identity,
@@ -638,6 +659,7 @@ fn run_verify(opts: &Options) -> ExitCode {
     let ctx = VerifyContext {
         expected_identity_pubkey: opts.identity.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
+        min_receipts: opts.min_witnesses,
     };
 
     let report = dossier.verify(opts.threshold, &ctx);
@@ -648,6 +670,7 @@ fn run_verify(opts: &Options) -> ExitCode {
             "path": opts.path,
             "identity_pubkey": dossier.identity_pubkey,
             "threshold_used": opts.threshold,
+            "min_witnesses_used": opts.min_witnesses,
             "identity_pinned": opts.identity.is_some(),
             "directory_pinned": opts.directory_path.is_some(),
             "verdict": report.verdict.to_string(),
@@ -670,7 +693,7 @@ fn run_verify(opts: &Options) -> ExitCode {
         witness_log_network::Verdict::ConsistentUnwitnessed => {
             print!(
                 " \u{2014} cryptography is sound; {}; do NOT treat as fully verified",
-                unwitnessed_reason(&report, opts.threshold)
+                unwitnessed_reason(&report)
             );
         }
         witness_log_network::Verdict::Unanchored => {
@@ -738,15 +761,15 @@ fn run_verify(opts: &Options) -> ExitCode {
 
 /// The gate that actually failed for a CONSISTENT-UNWITNESSED verdict,
 /// so the reason is printed instead of implied by a row of check marks.
-fn unwitnessed_reason(report: &DossierReport, threshold: f64) -> String {
+fn unwitnessed_reason(report: &DossierReport) -> String {
     let min = witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED;
     match &report.quorum {
         None => "no receipt in this dossier is from a witness in your trusted directory".to_string(),
         Some(q) if !q.meets_count_threshold => format!(
-            "{}/{} directory witnesses cosigned, below the {:.0}% threshold",
+            "{}/{} directory witnesses cosigned, below the count gate ({})",
             q.valid_receipts,
             q.total_directory_witnesses,
-            threshold * 100.0
+            q.count_gate
         ),
         Some(q) => format!(
             "only {} independent operator{} cosigned; WITNESSED needs at least {min} (project-operated witnesses count as one bucket, the log's own operator as none)",
@@ -847,16 +870,28 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
                 "\u{2717}"
             };
             println!(
-                "{quorum_symbol} {}/{} witness signatures valid (threshold: {:.0}%{})",
+                "{quorum_symbol} {}/{} witness signatures valid (gate: {}{})",
                 result.valid_receipts,
                 result.total_directory_witnesses,
-                opts.threshold * 100.0,
+                match opts.min_witnesses {
+                    Some(n) => format!("at least {n} witnesses"),
+                    None => format!("{:.0}% of the directory", opts.threshold * 100.0),
+                },
                 if result.meets_count_threshold {
                     ""
                 } else {
                     ", NOT MET"
                 }
             );
+            if opts.min_witnesses.is_none() && result.total_directory_witnesses >= 16 {
+                println!(
+                    "    Large directory: {:.0}% of {} is {} cosignatures per checkpoint. \
+                     For a registry-sized directory, gate on an absolute count with --min-witnesses N.",
+                    opts.threshold * 100.0,
+                    result.total_directory_witnesses,
+                    (opts.threshold * result.total_directory_witnesses as f64).ceil() as usize
+                );
+            }
             if result.project_operated_receipts > 0 {
                 println!(
                     "\u{26A0} {} of those {} signatures are from project-operated witnesses, not independent third parties.",

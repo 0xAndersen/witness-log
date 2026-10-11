@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.3 — 2026-10-11
+
+Found by `examples/swarm/outside.py`: 1,000 concurrent agents in 18
+personas against a 100-witness, four-operator network.
+
+### Fixed — verification did not scale to a registry-sized directory
+
+- `VerifyContext.min_receipts`, CLI `--min-witnesses N`, Python
+  `verify_dossier_json(..., min_witnesses=)`, MCP `min_witnesses`: an
+  absolute receipt-count gate. `--threshold` as a fraction of the directory
+  meant 66 cosignatures per checkpoint against a 100-witness directory.
+  `QuorumResult.count_gate` reports which gate applied; the CLI warns when
+  a fraction is used against a directory of 16 or more.
+- `select_diverse_witnesses` now picks, within each operator, the witness
+  determined by the subject's identity key, so a thousand agents spread
+  across an operator's witnesses instead of all choosing its first entry
+  (which tripped enrollment rate limits and left most of the network idle).
+  New `select_witnesses` (Rust and Python) fills to `want` round-robin
+  after one per operator. The MCP `submit_to_witnesses` tool contacts at
+  most `max_witnesses` (default 8) chosen this way instead of the whole
+  directory.
+- `witness submit` and the MCP client honour `Retry-After` up to 60 s on
+  429/503 instead of giving up.
+
+### Added
+
+- `deploy/witness/fleet.py` (init/serve/status N witnesses on one host),
+  `witness-log-witness@.service` template, `AGENT_OPERATOR.md` (a playbook
+  an agent can execute end to end on free always-on compute).
+- `registry/`: the public witness list, PR-registered, validated in CI
+  (`validate.py`), with `build_directory.py` for verifiers.
+- `examples/swarm/outside.py` and the 1,000-agent reports.
+
+### Removed
+
+- `crates/witness-log-network/examples/agent_witness.rs` (a pre-protocol
+  sketch superseded by `witness serve` / `WitnessService`).
+
+### Compatibility
+
+`VerifyContext` gained a field; code constructing it with a struct literal
+adds `min_receipts: None` or uses `..Default::default()`. No wire-format
+change.
+
 ## 0.3.2 — 2026-10-10
 
 Found by four independent integrators (Rust service, Python agent loop,

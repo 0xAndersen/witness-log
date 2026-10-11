@@ -85,9 +85,10 @@ The specific mechanism that makes an agent witness meaningful rather than
 theatrical is the **consistency-proof check it must run before signing
 anything** (SPEC.md §7.1): without it, an agent witness has no algorithmic
 way to refuse a checkpoint that quietly doesn't extend the last one it
-saw. `crates/witness-log-network/examples/agent_witness.rs` is a complete
-reference loop demonstrating this, including the refusal case against a
-simulated rewritten history.
+saw. `WitnessService::handle_add_checkpoint` (the witness every
+`witness-log witness serve` and Python `WitnessService` runs) performs this
+check before every cosignature and refuses with 422 when it fails; the
+`tlog_witness_protocol` tests cover the refusal case.
 
 ## Running a witness: what the server defends against
 
