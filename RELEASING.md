@@ -27,6 +27,11 @@ on the exact commit being released.
    cargo-deny).
 3. Publish the crates **in dependency order**, waiting for each to appear
    on crates.io before the next (each depends on the previous one):
+   Preferred: Actions → *publish-crates* → Run workflow → tag `v0.3.5`.
+   The token lives in the `crates-io` environment as
+   `CARGO_REGISTRY_TOKEN`; the job publishes core → network → cli in
+   order, skips versions already on crates.io, and verifies with
+   `cargo install`. Locally, the equivalent is:
    ```sh
    cargo publish -p witness-log-core
    cargo publish -p witness-log-network

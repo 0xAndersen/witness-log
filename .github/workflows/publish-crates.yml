@@ -1,0 +1,63 @@
+name: publish-crates
+
+# Publish witness-log-core, -network and -cli to crates.io from a tag, in
+# dependency order, without the token ever leaving GitHub: it lives in the
+# `crates-io` environment as CARGO_REGISTRY_TOKEN. Idempotent: a crate
+# version that is already on crates.io is skipped, so re-running after a
+# partial failure publishes only what is missing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. v0.3.5 (must match Cargo.toml version)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: tag matches Cargo.toml version
+        shell: bash
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          test "v$v" = "${{ inputs.tag }}" || { echo "::error::tag ${{ inputs.tag }} does not match Cargo.toml version $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: publish in dependency order
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN" || { echo "::error::CARGO_REGISTRY_TOKEN is not set in the crates-io environment"; exit 1; }
+          for crate in witness-log-core witness-log-network witness-log-cli; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -A "witness-log-release (github actions)" \
+                   "https://crates.io/api/v1/crates/$crate/$VERSION")
+            if [ "$code" = "200" ]; then
+              echo "$crate $VERSION already on crates.io; skipping"
+              continue
+            fi
+            echo "::group::cargo publish -p $crate"
+            cargo publish -p "$crate" --locked
+            echo "::endgroup::"
+            # The index needs a moment before a dependent crate can resolve it.
+            for i in $(seq 1 30); do
+              sleep 10
+              code=$(curl -s -o /dev/null -w '%{http_code}' -A "witness-log-release (github actions)" \
+                     "https://crates.io/api/v1/crates/$crate/$VERSION")
+              [ "$code" = "200" ] && break
+            done
+          done
+      - name: verify
+        shell: bash
+        run: |
+          cargo install witness-log-cli --version "$VERSION" --locked
+          witness-log --version | grep -F "$VERSION"
