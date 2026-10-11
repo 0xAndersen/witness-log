@@ -23,7 +23,7 @@ compiler, no C toolchain, no native dependency to install.
 ```sh
 # download the wheel for your platform (CPython 3.9+, abi3) from
 # https://github.com/0xAndersen/witness-log/releases/latest, then:
-pip install ./witness_log-0.3.4-*.whl
+pip install ./witness_log-0.3.5-*.whl
 python -c "import witness_log; print(witness_log.__version__)"
 ```
 

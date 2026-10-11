@@ -28,9 +28,9 @@ privacy request without breaking a single proof.
 ```sh
 # CLI: prebuilt binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows,
 # with SHA256SUMS, on the Releases page; or build from source:
-cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.4 witness-log-cli
+cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.5 witness-log-cli
 # Python: the wheel for your platform from the same release page (CPython 3.9+, abi3):
-pip install https://github.com/0xAndersen/witness-log/releases/download/v0.3.4/<wheel-for-your-platform>.whl
+pip install https://github.com/0xAndersen/witness-log/releases/download/v0.3.5/<wheel-for-your-platform>.whl
 
 witness-log demo                   # the GIF above, live, in your terminal: no files, no network
 witness-log demo --tamper          # a forgery with flawless cryptography, caught
@@ -351,7 +351,7 @@ witness-log/
 
 ## Status
 
-Pre-1.0 (v0.3.4). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
+Pre-1.0 (v0.3.5). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
 released; the wire format is specified and corpus-pinned. Independent witness operators are being
 recruited: see `GOVERNANCE.md` and `deploy/witness/AGENT_OPERATOR.md`.
 

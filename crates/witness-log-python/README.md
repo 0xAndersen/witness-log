@@ -8,7 +8,7 @@ this for anything real. Ships type stubs (`py.typed`).
 ## Install
 
 ```bash
-pip install ./witness_log-0.3.4-*.whl     # wheel from the Releases page; PyPI publication pending
+pip install ./witness_log-0.3.5-*.whl     # wheel from the Releases page; PyPI publication pending
 ```
 
 Until the package is on PyPI, download the wheel for your platform from the

@@ -12,7 +12,7 @@ MSRV 1.75. No `unsafe`. Dependencies are audited with `cargo deny` in CI.
 [dependencies]
 witness-log-core    = "0.3"   # log, Merkle tree, identity, redaction, journal, C2SP encoding
 witness-log-network = "0.3"   # witnesses, directories, quorum, dossiers, verification
-# or: { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.4" }
+# or: { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.5" }
 ```
 
 **Why two crates.** `core` is everything a single process needs to keep a

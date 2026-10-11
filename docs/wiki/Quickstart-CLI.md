@@ -21,7 +21,7 @@ Linux x86_64/aarch64, macOS Intel/Apple Silicon, Windows. No runtime.
 # prebuilt: download the archive for your platform from
 # https://github.com/0xAndersen/witness-log/releases/latest, then `sha256sum -c SHA256SUMS`
 # from source (needs Rust 1.75+):
-cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.4 witness-log-cli
+cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.5 witness-log-cli
 witness-log --version
 witness-log demo
 ```

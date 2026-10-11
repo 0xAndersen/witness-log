@@ -54,7 +54,7 @@ __all__ = [
     "canonical_json",
 ]
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 
 
 def canonical_json(value: Any) -> bytes:
