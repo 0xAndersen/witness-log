@@ -43,6 +43,7 @@ Results on 2026-10-10 (Linux x86_64, Python 3.13):
 |---|---|---|
 | GitHub release v0.3.1 (downloaded) | 67/100 | 0 (33 expected: 26 `fixed_in 0.3.2`, 7 `since 0.3.2`) |
 | GitHub release v0.3.2 (downloaded) | 100/100 | 0 |
+| GitHub release v0.3.3 (downloaded) | 100/100 | 0 |
 
 Reports: [`reports/v0.3.1-release.md`](reports/v0.3.1-release.md),
 [`reports/v0.3.2-release.md`](reports/v0.3.2-release.md).
