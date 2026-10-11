@@ -12,6 +12,20 @@ can add it to their directory. Every witness adds capacity; a witness run by
 a **new organisation** adds independence, which is the thing the network
 needs most (WITNESSED requires two distinct operators).
 
+## Zero-touch path (no terminal): cloud-init
+
+`cloud-init.yaml` in this directory does steps 1–5 and 7 by itself at the
+VM's first boot: binary (checksum-verified), system user, one witness,
+hardened systemd unit, Caddy with automatic TLS on `<public-ip>.sslip.io`
+(no DNS needed), host firewall. Edit the three values at the top (`ORG`,
+`NAME_BASE`, `COMPUTE`), paste the file into the provider's cloud-init /
+user-data box when creating the VM, open ports 80 and 443 in the
+provider's firewall, and 3–5 minutes later `http://<public-ip>/health`
+answers `ok`. Then register it from the repo: Actions → *register-witness*
+→ Run workflow → `url = https://<public-ip>.sslip.io` (an outside operator
+opens the PR in step 6 instead). Manual steps follow for anyone who wants
+to see what it does.
+
 ## 0. Where to run it (free, always-on)
 
 The witness is a 1 MB static binary that needs ~10 MB of RAM, a few MB of
@@ -39,8 +53,8 @@ VER=v0.3.5
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar xzf witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
-sudo install -m 0755 witness-log-$VER-$ARCH-unknown-linux-gnu/witness-log /usr/local/bin/witness-log
+tar xzf witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz      # flat: ./witness-log, LICENSE, README.md
+sudo install -m 0755 ./witness-log /usr/local/bin/witness-log
 witness-log --version
 ```
 

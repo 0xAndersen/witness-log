@@ -1,0 +1,157 @@
+#cloud-config
+# witness-log witness, zero-touch. Paste this whole file into the VM's
+# "cloud-init" / "user data" box when creating it (Oracle Cloud: Advanced
+# options → Management → "Paste cloud-init script"; GCP: "Automation →
+# Startup script" does NOT take cloud-config, use the metadata key
+# `user-data`; Hetzner/DigitalOcean/Vultr: "Cloud config" / "User data").
+#
+# Edit the three values under `write_files` → /etc/witness-log/env before
+# pasting. Everything else is automatic:
+#   - installs the latest witness-log release for this CPU, checksum-verified
+#   - creates a locked-down system user and initialises ONE witness
+#   - serves it under systemd (hardened unit from the repo)
+#   - puts Caddy in front with automatic TLS on <public-ip>.sslip.io
+#     (or your own hostname if you set HOST and point DNS at the box)
+#   - opens 80/443 in the host firewall (Oracle images ship iptables rules
+#     that block everything but 22; this handles that)
+#   - writes the directory entry to /var/lib/witness-log/w1/entry.json and
+#     serves it at GET / so it can be registered with one workflow run
+#
+# After first boot (3–5 min), check:   curl -s http://<public-ip>/health  → ok
+# Then register it: Actions → register-witness → Run workflow → url.
+#
+# Backups: /var/lib/witness-log/w1 is the whole witness (key + memory). Snapshot
+# the directory as one unit; never restore the key without logs/. OPERATORS.md §3.
+
+package_update: true
+packages: [curl, ca-certificates, jq, iptables-persistent]
+
+write_files:
+  - path: /etc/witness-log/env
+    permissions: "0644"
+    content: |
+      # ---- edit these three ----
+      ORG="Your Organisation"        # the organisation that controls this machine; the independence label
+      NAME_BASE="yourorg"            # key name becomes <NAME_BASE>.witness/<HOST>; letters, digits, dashes
+      COMPUTE="oracle-cloud"         # where it runs: oracle-cloud, gcp, aws, hetzner, homelab, ...
+      # ---- optional ----
+      HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed)
+      WL_VERSION="latest"            # a tag like v0.3.5 to pin, or latest
+
+  - path: /usr/local/sbin/witness-log-bootstrap
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      . /etc/witness-log/env
+      log(){ echo "[witness-log-bootstrap] $*"; }
+
+      # 1. public IP and hostname
+      IP=$(curl -fsS --max-time 10 https://api.ipify.org || curl -fsS --max-time 10 https://ifconfig.me)
+      if [ -z "${HOST}" ]; then HOST="${IP}.sslip.io"; fi
+      log "public ip $IP, host $HOST"
+
+      # 2. latest release for this CPU, checksum-verified
+      ARCH=$(uname -m)   # x86_64 | aarch64
+      if [ "$WL_VERSION" = "latest" ]; then
+        WL_VERSION=$(curl -fsS https://api.github.com/repos/0xAndersen/witness-log/releases/latest | jq -r .tag_name)
+      fi
+      ASSET="witness-log-${WL_VERSION}-${ARCH}-unknown-linux-gnu"
+      BASE="https://github.com/0xAndersen/witness-log/releases/download/${WL_VERSION}"
+      TMP=$(mktemp -d); cd "$TMP"
+      curl -fsSLO "$BASE/$ASSET.tar.gz"
+      curl -fsSLO "$BASE/SHA256SUMS"
+      sha256sum --ignore-missing -c SHA256SUMS
+      tar xzf "$ASSET.tar.gz"      # the archive is flat: ./witness-log, LICENSE, README.md
+      install -m 0755 ./witness-log /usr/local/bin/witness-log
+      log "installed $(witness-log --version)"
+
+      # 3. system user and ONE witness
+      id witness-log >/dev/null 2>&1 || useradd --system --home /var/lib/witness-log --shell /usr/sbin/nologin witness-log
+      install -d -o witness-log -g witness-log -m 0700 /var/lib/witness-log
+      if [ ! -f /var/lib/witness-log/w1/witness.key ]; then
+        sudo -u witness-log witness-log witness init /var/lib/witness-log/w1 \
+          --name "${NAME_BASE}.witness/${HOST}" \
+          --org "${ORG}" \
+          --url "https://${HOST}" \
+          --compute "${COMPUTE}" > /var/lib/witness-log/entry.json
+        install -o witness-log -g witness-log -m 0644 /var/lib/witness-log/entry.json /var/lib/witness-log/w1/entry.json
+        rm -f /var/lib/witness-log/entry.json
+        log "witness initialised: $(jq -c . /var/lib/witness-log/w1/entry.json)"
+      fi
+
+      # 4. systemd unit from the repo (hardened), enabled
+      curl -fsSL -o /etc/systemd/system/witness-log-witness.service \
+        "https://raw.githubusercontent.com/0xAndersen/witness-log/main/deploy/witness/witness-log-witness.service"
+      systemctl daemon-reload
+      systemctl enable --now witness-log-witness
+      for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7380/health >/dev/null 2>&1 && break; sleep 1; done
+      log "witness serving on 127.0.0.1:7380: $(curl -s http://127.0.0.1:7380/health)"
+
+      # 5. Caddy: TLS on $HOST, plus plain http on :80 so the witness works
+      #    even before (or without) a certificate.
+      CADDY_ARCH=$([ "$ARCH" = "aarch64" ] && echo arm64 || echo amd64)
+      if ! command -v caddy >/dev/null; then
+        curl -fsSL -o /usr/local/bin/caddy "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}"
+        chmod 0755 /usr/local/bin/caddy
+        id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+        install -d -o caddy -g caddy /etc/caddy /var/lib/caddy
+        setcap cap_net_bind_service=+ep /usr/local/bin/caddy || true
+      fi
+      cat > /etc/caddy/Caddyfile <<EOF
+      {
+          email admin@${HOST}
+      }
+      http://${HOST}, http://${IP} {
+          reverse_proxy 127.0.0.1:7380
+      }
+      https://${HOST} {
+          reverse_proxy 127.0.0.1:7380
+      }
+      EOF
+      cat > /etc/systemd/system/caddy.service <<'EOF'
+      [Unit]
+      Description=Caddy (TLS in front of witness-log)
+      After=network-online.target witness-log-witness.service
+      Wants=network-online.target
+      [Service]
+      User=caddy
+      Group=caddy
+      ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+      ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+      Restart=always
+      RestartSec=3
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+      ProtectSystem=full
+      PrivateTmp=true
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      systemctl daemon-reload
+      systemctl enable --now caddy
+
+      # 6. host firewall: Oracle's Ubuntu images reject everything but 22 in
+      #    iptables; most other images have no rules. Both end up open.
+      for p in 80 443; do
+        iptables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport $p -j ACCEPT
+        ip6tables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || ip6tables -I INPUT 1 -p tcp --dport $p -j ACCEPT || true
+      done
+      netfilter-persistent save >/dev/null 2>&1 || true
+      command -v ufw >/dev/null && ufw --force enable >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null && ufw allow 22/tcp >/dev/null || true
+
+      # 7. report
+      sleep 3
+      echo "----------------------------------------------------------------"
+      echo "witness-log witness is up."
+      echo "  health:    http://${HOST}/health      (https once the certificate is issued, ~1 min)"
+      echo "  entry:     http://${HOST}/            (JSON, field directory_entry)"
+      echo "  register:  GitHub → Actions → register-witness → Run workflow → url = https://${HOST}"
+      echo "  backup:    /var/lib/witness-log/w1 as ONE unit (key + logs/)"
+      echo "----------------------------------------------------------------"
+      curl -s "http://127.0.0.1:7380/" | jq .
+      echo "$HOST" > /etc/witness-log/host
+
+runcmd:
+  - [bash, -lc, "/usr/local/sbin/witness-log-bootstrap 2>&1 | tee /var/log/witness-log-bootstrap.log"]
+
+final_message: "witness-log bootstrap finished after $UPTIME seconds; see /var/log/witness-log-bootstrap.log"
