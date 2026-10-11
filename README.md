@@ -26,17 +26,13 @@ one of four verdicts as an exit code. Any single entry can be erased for a
 privacy request without breaking a single proof.
 
 ```sh
-# CLI: prebuilt binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows,
-# with SHA256SUMS, on the Releases page; or build from source:
-cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.5 witness-log-cli
-pip install witness-log            # Python (CPython 3.9+; Linux, macOS, Windows wheels)
+cargo install witness-log-cli      # the CLI (crates.io); prebuilt binaries + SHA256SUMS on the Releases page
+pip install witness-log            # Python (PyPI; CPython 3.9+; Linux, macOS, Windows wheels)
 
 witness-log demo                   # the GIF above, live, in your terminal: no files, no network
 witness-log demo --tamper          # a forgery with flawless cryptography, caught
 ```
 
-crates.io publication (`cargo install witness-log-cli`) is pending; until it lands use the prebuilt
-binaries or the `--git` install above.
 
 **Docs:** the [wiki](https://github.com/0xAndersen/witness-log/wiki) (source in [`docs/wiki/`](docs/wiki/Home.md)):
 educational [Python](docs/wiki/Quickstart-Python.md) / [Rust](docs/wiki/Quickstart-Rust.md) / [CLI](docs/wiki/Quickstart-CLI.md)

@@ -18,16 +18,12 @@ Linux x86_64/aarch64, macOS Intel/Apple Silicon, Windows. No runtime.
 ## 0. Install and run the demo
 
 ```sh
-# prebuilt: download the archive for your platform from
+cargo install witness-log-cli            # from crates.io (Rust 1.75+)
+# or prebuilt: the archive for your platform from
 # https://github.com/0xAndersen/witness-log/releases/latest, then `sha256sum -c SHA256SUMS`
-# from source (needs Rust 1.75+):
-cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.5 witness-log-cli
 witness-log --version
 witness-log demo
 ```
-
-(`cargo install witness-log-cli` from crates.io will work once publication
-lands; it is not there yet.)
 
 `demo` writes nothing to disk and talks to no network. With throwaway keys
 it creates an identity, logs three events, erases one under
