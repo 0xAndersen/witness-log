@@ -40,7 +40,7 @@ on the exact commit being released.
    Windows plus an sdist, publishes them to PyPI, and creates a GitHub
    Release with CLI binaries and `SHA256SUMS`:
    ```sh
-   git tag -a v0.3.5 -m "witness-log 0.3.4" && git push origin v0.3.5
+   git tag -a v0.3.5 -m "witness-log 0.3.5" && git push origin v0.3.5
    ```
 5. Check from a clean machine: `cargo install witness-log-cli && witness-log
    demo`, and `pip install witness-log && python -c "import witness_log"`.
