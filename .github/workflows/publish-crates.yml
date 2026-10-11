@@ -46,7 +46,12 @@ jobs:
               continue
             fi
             echo "::group::cargo publish -p $crate"
-            cargo publish -p "$crate" --locked
+            if ! cargo publish -p "$crate" --locked 2>&1 | tee /tmp/publish.log; then
+              echo "::endgroup::"
+              msg=$(grep -iE "error|caused by|denied|permission|verified|token" /tmp/publish.log | tail -5 | tr '\n' ' ')
+              echo "::error title=cargo publish -p $crate failed::$msg"
+              exit 1
+            fi
             echo "::endgroup::"
             # The index needs a moment before a dependent crate can resolve it.
             for i in $(seq 1 30); do
