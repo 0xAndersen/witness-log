@@ -284,11 +284,10 @@ fn verify_path(leaf: &Hash, index: u64, size: u64, proof: &[Hash]) -> Option<Has
 
 fn largest_power_of_two_lt(n: usize) -> usize {
     debug_assert!(n > 1);
-    let mut k = 1;
-    while k * 2 < n {
-        k *= 2;
-    }
-    k
+    // Sizes here are backed by a real slice, so overflow is unreachable
+    // in practice; the bit form is kept identical to the u64 helper so
+    // the two can never disagree.
+    1usize << (usize::BITS - 1 - (n - 1).leading_zeros())
 }
 
 /// Same computation as `largest_power_of_two_lt`, but entirely in `u64`.
@@ -304,11 +303,12 @@ fn largest_power_of_two_lt(n: usize) -> usize {
 /// review, finding 16.
 fn largest_power_of_two_lt_u64(n: u64) -> u64 {
     debug_assert!(n > 1);
-    let mut k: u64 = 1;
-    while k * 2 < n {
-        k *= 2;
-    }
-    k
+    // Bit arithmetic, not a doubling loop: `while k * 2 < n` overflows
+    // for any n > 2^63 (k * 2 wraps to 0, which is < n forever), so a
+    // dossier claiming tree_size 2^63 + 1 hung the verifier in release
+    // builds and panicked it in debug. The attacker needs no valid proof,
+    // just the number. Found by an outside evaluation of 0.3.3.
+    1u64 << (63 - (n - 1).leading_zeros())
 }
 
 /// Verify a consistency proof between two checkpoints, fully offline: no
@@ -817,6 +817,31 @@ mod tests {
         // And the value is still mathematically correct: the largest
         // power of two strictly less than 2^32+8 is 2^32.
         assert_eq!(largest_power_of_two_lt_u64(huge), 1u64 << 32);
+    }
+
+    #[test]
+    fn power_of_two_helper_terminates_above_2_pow_63() {
+        // The doubling-loop version never terminated here (k * 2 wrapped
+        // to 0). Verification with an absurd claimed size must simply
+        // fail, quickly.
+        assert_eq!(largest_power_of_two_lt_u64(u64::MAX), 1u64 << 63);
+        assert_eq!(largest_power_of_two_lt_u64((1u64 << 63) + 1), 1u64 << 63);
+        assert_eq!(largest_power_of_two_lt_u64(1u64 << 63), 1u64 << 62);
+        assert_eq!(largest_power_of_two_lt_u64(2), 1);
+        assert_eq!(largest_power_of_two_lt_u64(3), 2);
+        assert_eq!(largest_power_of_two_lt_u64(8), 4);
+        assert_eq!(largest_power_of_two_lt_u64(9), 8);
+        let leaf = leaf_hash(b"x");
+        let proof = vec![leaf_hash(b"y"); 63];
+        assert!(!verify_inclusion(&leaf, 5, u64::MAX, &proof, &leaf));
+        assert!(!verify_inclusion(&leaf, 5, (1u64 << 63) + 1, &proof, &leaf));
+        assert!(!verify_consistency(
+            1u64 << 63,
+            &leaf,
+            u64::MAX,
+            &leaf,
+            &proof
+        ));
     }
 
     #[test]

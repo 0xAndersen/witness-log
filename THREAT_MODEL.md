@@ -40,7 +40,7 @@ strong result on both.
 | **Log truncation / selective omission** | Operator drops leaves from what's shown to a specific verifier, without altering the ones shown. | **Detected only via consistency proofs against a witnessed STH.** A dossier that isn't checked against an independently-witnessed checkpoint cannot distinguish "complete history" from "history with inconvenient leaves quietly missing." |
 | **Traffic analysis** | An observer who cannot read payloads still sees leaf types, timestamps, and tree positions. | **Not protected against.** Redaction (§8, SPEC.md) hides payload content, not the existence, timing, or type of an event. |
 | **Low-entropy payload correlation** | Adversary has a small dictionary of likely payloads (e.g. common email formats) and tries to match them against a `payload_hash`. | **Partially hardened** via bucket-padding and folding `leaf_index` into the hash (see SPEC.md §8), which prevents length-correlation and cross-leaf reuse of a dictionary attack. **This has not had an external cryptographic review.** Treat the unlinkability property as unproven until one is completed — do not make compliance claims resting on it without independent audit. |
-| **Key compromise, identity key** | Attacker obtains an agent's persistent identity private key. | Detected/contained only if a `RevocationStatement` (SPEC.md §5) is issued and propagated before the attacker uses it further. Leaves signed before compromise remain valid; leaves after revocation `as_of_ms` should be treated as untrusted by verifiers who see the revocation. Leaves signed *between* actual compromise and revocation being issued/observed are **not** distinguishable from legitimate ones. |
+| **Key compromise, identity key** | Attacker obtains an agent's persistent identity private key. By default the seed lives in the journal header (mode 0600); `JournaledLog::create_sealed` / Python `open(..., seal=True)` keeps it out of the file entirely, so the journal holds only the public key and the seed stays in a KMS, secrets manager or environment. | Detected/contained only if a `RevocationStatement` (SPEC.md §5) is issued and propagated before the attacker uses it further. Leaves signed before compromise remain valid; leaves after revocation `as_of_ms` should be treated as untrusted by verifiers who see the revocation. Leaves signed *between* actual compromise and revocation being issued/observed are **not** distinguishable from legitimate ones. |
 | **Post-quantum cryptanalysis** | A future adversary with a cryptographically-relevant quantum computer breaks Ed25519. | **Not currently mitigated**, but the wire format's `sig_alg` field (SPEC.md §6) is designed so a PQ-safe signature scheme can be introduced without invalidating the format or breaking historical checkpoints signed under Ed25519. Migration itself is not yet designed. |
 | **Silent handoff tampering** | A transport or intermediary between two agents alters context/state in transit during a handoff. | **Detected**, if and only if both agents independently log a HandoffAttestation (SPEC.md §3.1) and someone later runs `verify_handoff_binding`. A mismatch in `handoff_state_hash` is directly visible. **Not detected** if only one side logs, if the tampering happens before either side computes its hash (e.g. a compromised sender that never saw the real content to begin with), or if the comparison is simply never run. |
 | **Misattributed or falsely-widened authorization claims** | A grantee later claims a broader scope than was actually granted, or a delegation is misattributed to the wrong party. | **Detected**, if and only if both the granter and grantee independently log an AuthorizationEvent (SPEC.md §3.2) and someone runs `verify_authorization_binding` — a scope-hash or counterparty mismatch fails the check. **Not detected or enforced in any other sense**: WitnessLog never evaluates whether a claimed scope is reasonable, never checks it against a real authorization system's state, and provides no protection at all if only one side logs the event. |
@@ -80,6 +80,24 @@ cryptographic check it should). This is why `WitnessEntry` and
 `evaluate_quorum` track **two separate diversity axes** — operator and
 compute-provider — rather than one, and why a caller should look at both,
 not just whichever one happens to look better.
+
+**Split views: what a gate below a majority cannot catch.** A witness
+refuses a second history only for a log it has already seen. A log that
+sends history A to one subset of the directory and history B to a
+disjoint subset never meets a witness that has seen both, so each history
+collects honest cosignatures and, if the gate is satisfied by either
+subset alone, each dossier reaches WITNESSED. The condition that rules
+this out among honest witnesses is a strict majority: when counted
+receipts exceed half the directory, any two gate-satisfying sets overlap
+in at least one witness, and that witness refused the second history.
+The default `--threshold 0.66` is a majority; `--threshold 0.5`, or
+`--min-witnesses N` with `N <= directory/2`, is not. The verifier reports
+`split_view_resistant` for the dossier in hand and warns when the gate
+itself permits a split; it cannot see the other dossier. Two copies in
+hand are compared with `witness-log diff`, and a split view is still
+equivocation under one key: the two dossiers together are the evidence.
+(Found by an outside evaluation of 0.3.3; the live test
+`split_view_below_a_majority_is_reported_not_hidden` reproduces it.)
 
 The specific mechanism that makes an agent witness meaningful rather than
 theatrical is the **consistency-proof check it must run before signing

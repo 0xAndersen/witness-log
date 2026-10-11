@@ -343,3 +343,70 @@ def test_release_test_findings_resume_forget_stale_lock_threshold(tmp_path):
     assert report["internally_consistent"] is True
     assert report["bindings_asserted"] is True
     assert report["verdict"] == "unanchored"
+
+
+def test_sealed_journal_keeps_the_seed_off_disk(tmp_path):
+    """An outside evaluation of 0.3.3 flagged the identity seed sitting in
+    plaintext in the journal header. seal=True keeps it out: the header
+    pins only the public key, and resume needs the seed back."""
+    p = str(tmp_path / "sealed.jsonl")
+    seed = os.urandom(32)
+    with pytest.raises(ValueError):
+        witness_log.open(p, seal=True)  # no seed, nothing to seal with
+    log = witness_log.open(p, identity_seed=seed, seal=True)
+    pk = log.identity_pubkey_hex()
+    log.append_intent(b"x")
+    log.sync()
+    log.close()
+    text = open(p).read()
+    assert seed.hex() not in text and pk in text
+    with pytest.raises(OSError, match="sealed"):
+        witness_log.open(p)
+    with pytest.raises(OSError):
+        witness_log.JournaledLog.resume_with_identity(p, os.urandom(32))
+    again = witness_log.open(p, identity_seed=seed, seal=True)
+    assert again.identity_pubkey_hex() == pk and again.tree_size() == 1
+    again.close()
+    # An unsealed journal also accepts (and checks) a supplied seed.
+    q = str(tmp_path / "plain.jsonl")
+    plain = witness_log.open(q, identity_seed=seed)
+    plain.close()
+    assert witness_log.open(q, identity_seed=seed).identity_pubkey_hex() == pk
+
+
+def test_cross_agent_leaves_and_bindings_from_python(tmp_path):
+    """Handoff and authorization leaves were Rust-only (outside evaluation
+    of 0.3.3); both sides and the after-the-fact binding now exist here."""
+    a = witness_log.open(str(tmp_path / "a.jsonl"))
+    b = witness_log.open(str(tmp_path / "b.jsonl"))
+    ia, ib = a.identity_pubkey_hex(), b.identity_pubkey_hex()
+    scope = witness_log.canonical_json({"mandate_hash": "ab" * 32, "max_usd": 500})
+    la = a.append_authorization_event("granted_by_me", scope, ib)
+    lb = b.append_authorization_event("granted_to_me", scope, ia)
+    leaf_a = json.dumps(json.loads(a.leaves_json())[la])
+    leaf_b = json.dumps(json.loads(b.leaves_json())[lb])
+    assert witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_b) is None
+    wider = b.append_authorization_event(
+        "granted_to_me", witness_log.canonical_json({"mandate_hash": "ab" * 32, "max_usd": 5000}), ia
+    )
+    leaf_w = json.dumps(json.loads(b.leaves_json())[wider])
+    assert "scope hashes do not match" in witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_w)
+    with pytest.raises(ValueError):
+        a.append_authorization_event("granted", scope, ib)
+
+    state = witness_log.canonical_json({"task": "reconcile"})
+    ha = a.append_handoff_sent(state, ib)
+    hb = b.append_handoff_received(state, ia)
+    sa = json.dumps(json.loads(a.leaves_json())[ha])
+    sb = json.dumps(json.loads(b.leaves_json())[hb])
+    assert witness_log.verify_handoff_binding(ia, sa, ib, sb) is None
+    assert witness_log.verify_handoff_binding(ib, sb, ia, sa) is not None  # roles swapped
+
+    # An anchor's proof JSON is bound to its hash in the leaf.
+    i = a.append_external_anchor("https://rekor.sigstore.dev/api/v1/log/entries/x", '{"logIndex":1}')
+    leaf = json.loads(a.leaves_json())[i]
+    assert leaf["leaf_type"] == 7 and len(leaf["anchor_proof_hash"]) == 64
+    d = json.loads(a.to_dossier_json())
+    d["leaves"][i]["anchor_proof_json"] = '{"logIndex":2}'
+    r = json.loads(witness_log.verify_dossier_json(json.dumps(d), 0.66, ia))
+    assert r["verdict"] == "diverged"

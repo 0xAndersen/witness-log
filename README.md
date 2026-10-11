@@ -25,12 +25,19 @@ one. Anyone can verify the whole record offline with one command and get
 one of four verdicts as an exit code. Any single entry can be erased for a
 privacy request without breaking a single proof.
 
-```
-pip install witness-log            # Python (CPython 3.9+; Linux, macOS, Windows wheels)
-cargo install witness-log-cli      # the CLI; prebuilt binaries on the Releases page
+```sh
+# CLI: prebuilt binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows,
+# with SHA256SUMS, on the Releases page; or build from source:
+cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.4 witness-log-cli
+# Python: the wheel for your platform from the same release page (CPython 3.9+, abi3):
+pip install https://github.com/0xAndersen/witness-log/releases/download/v0.3.4/<wheel-for-your-platform>.whl
+
 witness-log demo                   # the GIF above, live, in your terminal: no files, no network
 witness-log demo --tamper          # a forgery with flawless cryptography, caught
 ```
+
+PyPI (`pip install witness-log`) and crates.io (`cargo install witness-log-cli`) publication is
+pending; until it lands those commands do not work and this README will not claim they do.
 
 **Docs:** the [wiki](https://github.com/0xAndersen/witness-log/wiki) (source in [`docs/wiki/`](docs/wiki/Home.md)):
 educational [Python](docs/wiki/Quickstart-Python.md) / [Rust](docs/wiki/Quickstart-Rust.md) / [CLI](docs/wiki/Quickstart-CLI.md)
@@ -73,14 +80,21 @@ only commitments ever leave the machine.
 import witness_log
 log = witness_log.open("agent.jsonl")        # create, or resume the same identity
 
-@witness_log.step(log)                       # every call: a signed intent + result leaf
+@witness_log.step(log)                       # every call: an intent leaf, then a result leaf
 def call_tool(name: str, **args) -> dict: ...
 ```
 
-That is the whole integration for a Python loop. Measured: about **80 µs**
-per decorated call in memory, **115 µs** journaled. The journal (`agent.jsonl`
-plus `agent.jsonl.salts`) is append-only, fsyncs on demand, heals a torn
-last line after a crash, and refuses a second writer.
+That is the whole integration for a Python loop. Leaves are not individually
+signed; each records the session key that wrote it, and the identity-signed
+checkpoint over the whole tree is what is load-bearing (a leaf is either in
+the signed tree or it is not). Measured cost: **tens of microseconds** per
+decorated call (20–115 µs across the machines it has been timed on). The
+journal (`agent.jsonl` plus `agent.jsonl.salts`) is append-only, fsyncs on
+demand, heals a torn last line after a crash, and refuses a second writer.
+By default the identity seed lives in the journal header (mode 0600);
+`witness_log.open(path, identity_seed=seed, seal=True)` keeps it out of the
+file entirely so the journal holds only the public key and the seed stays in
+your KMS or secrets manager.
 
 ### 2 · Commit: one signed root for the whole history
 
@@ -149,6 +163,23 @@ now be honoured without choosing between the regulator and the auditor.
 
 ---
 
+## Where it sits
+
+witness-log is the **transparency layer** under whatever your agents already
+use for identity, authorization and payments, not a replacement for any of
+them. Mandate-based protocols (AP2, Visa/Mastercard verifiable-intent
+schemes, x402, UCAN) prove a principal *authorized* an action; none of them
+detects the operator later rewriting its own record of what the agent did
+with that authority. SCITT (RFC 9943) standardises transparency receipts;
+witness-log's leaves, checkpoints and C2SP witnessing are the same shape of
+primitive applied per agent, with erasure and intent/result semantics added.
+Record the mandate hash as an `AuthorizationEvent` scope (`record_authorization`
+over MCP, `append_authorization_event` in Python or Rust), get the head
+witnessed, and `witness-log bind` later proves both parties committed to the
+same mandate while `verify` proves neither side's history moved. The
+[Comparison](docs/wiki/Comparison.md) page covers Tessera, immudb, Signet,
+Microsoft AGT and others by property.
+
 ## What makes it different
 
 <p align="center"><img src="docs/assets/architecture.png" width="880" alt="Architecture: five layers, one trust boundary"></p>
@@ -194,8 +225,9 @@ print(witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex()))
 ```
 
 [Quickstart: Python](docs/wiki/Quickstart-Python.md) explains every line. For agents that speak MCP,
-[`integrations/mcp`](integrations/mcp) exposes the same capability as seven tools (provision a chain on boot,
-record every step, prove any step, erase on request, get witnessed) for Claude Code, Claude Desktop, Cursor or any MCP host, with no code.
+[`integrations/mcp`](integrations/mcp) exposes the same capability as nine tools (provision a chain on boot,
+record every step, record handoffs and authorizations between agents, prove any step, erase on request, get
+witnessed) for Claude Code, Claude Desktop, Cursor or any MCP host, with no code.
 
 ### Rust
 
@@ -228,6 +260,7 @@ assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 | `witness-log demo [--tamper]` | the walkthrough in the GIF; no arguments, no files, no network |
 | `witness-log verify <dossier> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--json] [--explain]` | offline verification; exit code is the verdict |
 | `witness-log diff <a.json> <b.json>` | two copies of one log: honest growth, equivocation, or tampering |
+| `witness-log bind <a.json> <b.json>` | two different agents' logs: prove their handoff / authorization leaves commit to the same bytes and scope |
 | `witness-log explain [verdict]` | what each verdict proves and does not |
 | `witness-log witness init / serve / submit / info / verify-evidence` | run a witness; get a journal cosigned |
 | `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
@@ -280,7 +313,14 @@ Every push runs 268 Rust tests, the Python and MCP suites, clippy and rustdoc wi
 | [3,000 agents, 100 witnesses](examples/swarm/reports/outside-3000.md) | 325,708 operations, 137,462 cosignings, 0 failures, 100/100 witnesses up |
 
 The defects the first large run found (fraction-only quorum, every agent choosing the same eight witnesses,
-clients ignoring `Retry-After`) are fixed in 0.3.3 and the before/after reports are committed. `examples/swarm/`
+clients ignoring `Retry-After`) are fixed in 0.3.3 and the before/after reports are committed. An independent
+three-persona evaluation of 0.3.3 (agent developer, transparency-log engineer, agent-commerce lead; competitors
+run on the same tasks) confirmed every core claim, measured 20–27 µs per call, and found six defects, all fixed
+in 0.3.4: a verifier hang on absurd tree sizes, anchor proofs not bound to their hash, split views passing a
+sub-majority gate silently, `submit` failing on bare paths, cross-agent leaves being Rust-only, and the identity
+seed always on disk. The one test that separated witness-log from every competitor it was run against: when the
+operator rewrote the whole history with its own key, the others accepted it; the witnesses refused (422) and
+produced proof. `examples/swarm/`
 reproduces all of it; [Testing and evidence](docs/wiki/Testing-and-Evidence.md) explains what each layer checks.
 
 ---
@@ -311,7 +351,7 @@ witness-log/
 
 ## Status
 
-Pre-1.0 (v0.3.3). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
+Pre-1.0 (v0.3.4). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
 released; the wire format is specified and corpus-pinned. Independent witness operators are being
 recruited: see `GOVERNANCE.md` and `deploy/witness/AGENT_OPERATOR.md`.
 

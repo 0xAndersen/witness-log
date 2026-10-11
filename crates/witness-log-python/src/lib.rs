@@ -472,6 +472,69 @@ fn verify_inclusion(
     witness_log_core::merkle::verify_inclusion(&leaf, leaf_index, tree_size, &proof, &root)
 }
 
+fn parse_auth_kind(kind: &str) -> PyResult<witness_log_core::leaf::AuthorizationEventKind> {
+    use witness_log_core::leaf::AuthorizationEventKind as K;
+    Ok(match kind {
+        "granted_by_me" => K::GrantedByMe,
+        "granted_to_me" => K::GrantedToMe,
+        "revoked_by_me" => K::RevokedByMe,
+        "revoked_to_me" => K::RevokedToMe,
+        "scope_changed_by_me" => K::ScopeChangedByMe,
+        "scope_changed_to_me" => K::ScopeChangedToMe,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown authorization event kind {other:?}; expected granted_by_me, granted_to_me, revoked_by_me, revoked_to_me, scope_changed_by_me or scope_changed_to_me"
+            )))
+        }
+    })
+}
+
+/// Match a HandoffAttestation pair across two logs (SPEC §3.1): the
+/// sender's `Sent` leaf and the receiver's `Received` leaf, as JSON
+/// objects from `leaves_json()` or a dossier's `leaves`. Returns None when
+/// they bind, else the reason they do not.
+#[pyfunction]
+fn verify_handoff_binding(
+    sender_identity_hex: &str,
+    sender_leaf_json: &str,
+    receiver_identity_hex: &str,
+    receiver_leaf_json: &str,
+) -> PyResult<Option<String>> {
+    let a: witness_log_core::leaf::Leaf = serde_json::from_str(sender_leaf_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("sender_leaf_json: {e}")))?;
+    let b: witness_log_core::leaf::Leaf = serde_json::from_str(receiver_leaf_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("receiver_leaf_json: {e}")))?;
+    Ok(witness_log_core::leaf::verify_handoff_binding(
+        sender_identity_hex,
+        &a,
+        receiver_identity_hex,
+        &b,
+    )
+    .err())
+}
+
+/// Match an AuthorizationEvent pair across two logs (SPEC §3.2). Returns
+/// None when they bind, else the reason.
+#[pyfunction]
+fn verify_authorization_binding(
+    party_a_identity_hex: &str,
+    party_a_leaf_json: &str,
+    party_b_identity_hex: &str,
+    party_b_leaf_json: &str,
+) -> PyResult<Option<String>> {
+    let a: witness_log_core::leaf::Leaf = serde_json::from_str(party_a_leaf_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("party_a_leaf_json: {e}")))?;
+    let b: witness_log_core::leaf::Leaf = serde_json::from_str(party_b_leaf_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("party_b_leaf_json: {e}")))?;
+    Ok(witness_log_core::leaf::verify_authorization_binding(
+        party_a_identity_hex,
+        &a,
+        party_b_identity_hex,
+        &b,
+    )
+    .err())
+}
+
 fn verify_error_to_py(e: VerifyError) -> PyErr {
     match e {
         VerifyError::BadSignature(_) => SignatureError::new_err(e.to_string()),
@@ -538,6 +601,39 @@ impl PyJournaledLog {
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
+    /// Like `create`, but the seed is never written to the journal: the
+    /// header holds only the public key, and every later start must be
+    /// `resume_with_identity(path, seed)` with the same seed (from a KMS,
+    /// a secrets manager, an environment variable).
+    #[staticmethod]
+    fn create_sealed(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
+        let identity = parse_identity_seed(identity_seed)?;
+        witness_log_core::journal::JournaledLog::create_sealed(path, identity)
+            .map(|inner| Self {
+                inner: Mutex::new(Some(inner)),
+            })
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
+    /// Resume a sealed journal (or an unsealed one; the seed must then
+    /// match). Returns `(log, dropped_trailing_lines)` like `resume`.
+    #[staticmethod]
+    fn resume_with_identity(path: &str, identity_seed: &[u8]) -> PyResult<(Self, usize)> {
+        let seed: [u8; 32] = identity_seed.try_into().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("identity_seed must be exactly 32 bytes")
+        })?;
+        witness_log_core::journal::JournaledLog::resume_with_identity(path, &seed)
+            .map(|(inner, report)| {
+                (
+                    Self {
+                        inner: Mutex::new(Some(inner)),
+                    },
+                    report.dropped_trailing_lines,
+                )
+            })
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
     /// Create a journaled log with a throwaway identity. For tests and
     /// demos. Dossiers from this log belong to a key you cannot reproduce.
     #[staticmethod]
@@ -593,6 +689,31 @@ impl PyJournaledLog {
     ) -> PyResult<u64> {
         self.j()?
             .append_handoff_received(state, counterparty_pubkey_hex)
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+    /// Record that a delegation/authorization change happened between this
+    /// agent and `counterparty_pubkey_hex` (SPEC §3.2). `kind` is one of
+    /// "granted_by_me", "granted_to_me", "revoked_by_me", "revoked_to_me",
+    /// "scope_changed_by_me", "scope_changed_to_me". `scope` is the raw
+    /// scope description (an AP2 mandate, a UCAN, a JSON policy: any bytes);
+    /// its unsalted SHA-256 is what the two sides later match on.
+    fn append_authorization_event(
+        &self,
+        kind: &str,
+        scope: &[u8],
+        counterparty_pubkey_hex: &str,
+    ) -> PyResult<u64> {
+        let kind = parse_auth_kind(kind)?;
+        self.j()?
+            .append_authorization_event(kind, scope, counterparty_pubkey_hex)
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+    /// Record an external anchor (Rekor entry, RFC 3161 token, ...) for
+    /// the current head (SPEC §3.3). The proof JSON is hashed into the
+    /// leaf; verifiers check the carried JSON against that hash.
+    fn append_external_anchor(&self, anchor_url: &str, anchor_proof_json: &str) -> PyResult<u64> {
+        self.j()?
+            .append_external_anchor(anchor_url, anchor_proof_json)
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -673,7 +794,7 @@ impl PyJournaledLog {
     /// reply's body tells you the right value).
     #[pyo3(signature = (old_size=0))]
     fn add_checkpoint_body(&self, old_size: u64) -> PyResult<String> {
-        add_checkpoint_body(&self.j()?.log(), old_size)
+        add_checkpoint_body(self.j()?.log(), old_size)
     }
 
     /// Dossier JSON for the current head from witness 200 responses:
@@ -684,7 +805,7 @@ impl PyJournaledLog {
         &self,
         responses: Vec<(String, String)>,
     ) -> PyResult<(String, usize)> {
-        dossier_from_responses(&self.j()?.log(), responses)
+        dossier_from_responses(self.j()?.log(), responses)
     }
 
     /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
@@ -860,7 +981,7 @@ fn persist_witness_state(
         state = state.bind(k);
     }
     let json = serde_json::to_vec_pretty(&state)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     let p = std::path::Path::new(path);
     let dir = p
         .parent()
@@ -1235,6 +1356,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWitnessService>()?;
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(verify_handoff_binding, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(verify_authorization_binding, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_diverse_witnesses, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_witnesses, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(witness_entry_independent, m)?)?;

@@ -268,6 +268,81 @@ async def append_audit_step(
 
 
 @server.tool()
+async def record_handoff(
+    session_id: str,
+    direction: str,
+    counterparty_identity_pubkey: str,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Record one side of a handoff between two agents (SPEC §3.1).
+
+    Call with direction "sent" on the agent handing state over and
+    "received" on the agent taking it, each in its own chain, with the
+    OTHER agent's identity public key. Both sides commit to the unsalted
+    SHA-256 of the canonical-JSON `state`; later, `witness-log bind a.json
+    b.json` (or witness_log.verify_handoff_binding) proves both committed
+    to the same bytes between the same two identities. Hand off a
+    reference (an ID, a content address) rather than sensitive content.
+
+    Args:
+        session_id: This agent's chain.
+        direction: "sent" or "received".
+        counterparty_identity_pubkey: The other agent's identity key (64 hex).
+        state: The handoff payload, as a JSON object.
+    """
+    log, lock = await _get(session_id)
+    payload = _payload_bytes(state)
+    async with lock:
+        if direction == "sent":
+            idx = log.append_handoff_sent(payload, counterparty_identity_pubkey)
+        elif direction == "received":
+            idx = log.append_handoff_received(payload, counterparty_identity_pubkey)
+        else:
+            raise ValueError('direction must be "sent" or "received"')
+        await asyncio.to_thread(log.sync)
+        leaf = json.loads(log.leaves_json())[idx]
+        return {
+            "leaf_index": idx,
+            "handoff_state_hash": leaf["handoff_state_hash"],
+            "checkpoint": json.loads(log.checkpoint()),
+            **_head(log),
+        }
+
+
+@server.tool()
+async def record_authorization(
+    session_id: str,
+    kind: str,
+    counterparty_identity_pubkey: str,
+    scope: dict[str, Any],
+) -> dict[str, Any]:
+    """Record that a delegation or authorization change happened between
+    this agent and another (SPEC §3.2). Logging only: witness-log never
+    mints or enforces authority, it records that both sides committed to
+    the same scope so an auditor can later ask "under what authority?".
+
+    `kind` is one of granted_by_me, granted_to_me, revoked_by_me,
+    revoked_to_me, scope_changed_by_me, scope_changed_to_me. `scope` is
+    the scope description as a JSON object: an AP2 mandate (put its
+    mandate hash in a field), a UCAN, a policy document, a spending limit.
+    Both sides commit to the unsalted SHA-256 of its canonical JSON;
+    `witness-log bind` matches them afterwards.
+    """
+    log, lock = await _get(session_id)
+    payload = _payload_bytes(scope)
+    async with lock:
+        idx = log.append_authorization_event(kind, payload, counterparty_identity_pubkey)
+        await asyncio.to_thread(log.sync)
+        leaf = json.loads(log.leaves_json())[idx]
+        return {
+            "leaf_index": idx,
+            "authorization_scope_hash": leaf["authorization_scope_hash"],
+            "checkpoint": json.loads(log.checkpoint()),
+            **_head(log),
+        }
+
+
+@server.tool()
 async def get_inclusion_proof(session_id: str, entry_index: int) -> dict[str, Any]:
     """Inclusion proof that a given entry is in the current tree.
 

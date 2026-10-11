@@ -382,3 +382,105 @@ fn witness_rejects_hostile_http() {
     drop(w);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Witnessing detects equivocation only where two histories meet the same
+/// witness. With a gate below a majority of the directory, a log can send
+/// history A to one half and history B to the other, and both dossiers
+/// reach WITNESSED. The verifier cannot stop that (it never sees the
+/// other dossier); what it can do is say so, loudly, whenever the gate or
+/// the cosigning set is not a majority. Found by an outside evaluation.
+#[test]
+fn split_view_below_a_majority_is_reported_not_hidden() {
+    let root = tmpdir("split");
+    let ws: Vec<Witness> = (0..4).map(|i| Witness::init(&root, i)).collect();
+    let dir_path = root.join("directory.json");
+    let d =
+        serde_json::json!({ "witnesses": ws.iter().map(|w| w.entry.clone()).collect::<Vec<_>>() });
+    std::fs::write(&dir_path, serde_json::to_vec(&d).unwrap()).unwrap();
+    let dir_s = dir_path.to_str().unwrap().to_string();
+    // Two half-directories, disjoint.
+    let half = |idx: &[usize], name: &str| {
+        let p = root.join(name);
+        let d = serde_json::json!({ "witnesses": idx.iter().map(|&i| ws[i].entry.clone()).collect::<Vec<_>>() });
+        std::fs::write(&p, serde_json::to_vec(&d).unwrap()).unwrap();
+        p.to_str().unwrap().to_string()
+    };
+    let left = half(&[0, 1], "left.json");
+    let right = half(&[2, 3], "right.json");
+
+    let seed = [9u8; 32];
+    let identity = hex::encode(
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes(),
+    );
+    let a = root.join("a.jsonl");
+    journal(&a, &seed, &[b"shared-0", b"shared-1", b"history-A"]);
+    let b = root.join("b.jsonl");
+    journal(&b, &seed, &[b"shared-0", b"shared-1", b"history-B"]);
+    let (da, db) = (root.join("a.json"), root.join("b.json"));
+    for (j, d, half) in [(&a, &da, &left), (&b, &db, &right)] {
+        let (code, err) = run(&[
+            "witness",
+            "submit",
+            j.to_str().unwrap(),
+            "--directory",
+            half,
+            "--out",
+            d.to_str().unwrap(),
+            "--min",
+            "2",
+        ]);
+        assert_eq!(code, 0, "{err}");
+    }
+    // Against the full directory, each half-cosigned dossier passes a
+    // count-2 gate ... and the verifier says a split view is possible.
+    for d in [&da, &db] {
+        let out = Command::new(BIN)
+            .args([
+                "verify",
+                d.to_str().unwrap(),
+                "--identity",
+                &identity,
+                "--directory",
+                &dir_s,
+                "--min-witnesses",
+                "2",
+            ])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{stdout}");
+        assert!(stdout.contains("Split view possible: 2 of 4"), "{stdout}");
+        let json = Command::new(BIN)
+            .args([
+                "verify",
+                d.to_str().unwrap(),
+                "--directory",
+                &dir_s,
+                "--min-witnesses",
+                "2",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(v["report"]["quorum"]["split_view_resistant"], false);
+    }
+    // With the default gate (0.66 of 4 = 3), neither half passes, and the
+    // two copies side by side are an equivocation finding.
+    let (code, _) = run(&[
+        "verify",
+        da.to_str().unwrap(),
+        "--identity",
+        &identity,
+        "--directory",
+        &dir_s,
+    ]);
+    assert_eq!(
+        code, 10,
+        "a half-cosigned dossier must not be WITNESSED at the default gate"
+    );
+    let (code, _) = run(&["diff", da.to_str().unwrap(), db.to_str().unwrap()]);
+    assert_ne!(code, 0, "diff must flag two histories under one identity");
+}

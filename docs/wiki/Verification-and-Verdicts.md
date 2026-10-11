@@ -39,6 +39,21 @@ cosignatures per checkpoint). Use `--min-witnesses N` for an absolute
 count; the report shows `count_gate: "count >= N"`. The independence
 rule (two operators) applies either way and is the gate that matters.
 
+**Split views and the majority rule.** A witness refuses a second history
+only for a log it has already seen. If your gate can be satisfied by fewer
+than half the directory, a log can send history A to one half and history
+B to the other, and both dossiers reach WITNESSED without any witness
+seeing both. A strict majority (`2 × receipts > directory size`) makes
+that impossible among honest witnesses, because any two passing sets share
+a witness. The default 0.66 is a majority; `--threshold 0.5` or
+`--min-witnesses 2` against a directory of four is not. The report carries
+`quorum.split_view_resistant` for the dossier in hand, and the CLI warns
+both when this dossier's cosigners are not a majority and when the gate
+you chose would let a sub-majority pass. The verifier cannot see the other
+dossier; `witness-log diff` is how two copies are compared, and a split
+view is still equivocation under one key once both copies are in hand.
+([Threat model](Threat-Model) has the full row.)
+
 ## Reading `--json`
 
 ```json
@@ -51,7 +66,7 @@ rule (two operators) applies either way and is the gate that matters.
     "leaf_count": 6, "claimed_tree_size": 6,
     "quorum": { "valid_receipts": 3, "total_directory_witnesses": 4,
                 "distinct_independent_operators": 2, "independent_operators_represented": ["example-infra-co","example-university"],
-                "project_operated_receipts": 1, "meets_count_threshold": true, "count_gate": "count >= 3",
+                "project_operated_receipts": 1, "meets_count_threshold": true, "count_gate": "count >= 3", "split_view_resistant": true,
                 "diversity_fraction": 0.75, "compute_diversity_fraction": 0.75, "newest_trusted_witness_ms": 1759000000000 },
     "verdict": "witnessed" } }
 ```

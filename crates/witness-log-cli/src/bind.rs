@@ -1,0 +1,183 @@
+//! `witness-log bind <a.json> <b.json>`: cross-log binding of handoff
+//! attestations (SPEC §3.1) and authorization events (§3.2) between two
+//! dossiers, from the command line. Each side committed independently
+//! in its own log; this is the after-the-fact match that proves both
+//! parties committed to the same content (or scope) changing hands
+//! between the same two identities.
+//!
+//! Exit 0 when at least one pair binds and no candidate pair fails; 30
+//! when a candidate pair exists but fails to bind (the two sides disagree
+//! on what was handed over, or on who the other party was); 10 when
+//! neither dossier carries a cross-log leaf naming the other; 2 for
+//! unreadable input. The verdict of each dossier on its own is `verify`'s
+//! job; run that first.
+
+use std::process::ExitCode;
+use witness_log_core::leaf::{
+    verify_authorization_binding, verify_handoff_binding, HandoffDirection, Leaf, LeafType,
+};
+use witness_log_network::Dossier;
+
+use crate::exit;
+
+fn load(path: &str) -> Result<Dossier, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("{path}: not a dossier: {e}"))
+}
+
+fn names_other<'a>(leaves: &'a [Leaf], other_identity: &str, tag: u8) -> Vec<&'a Leaf> {
+    leaves
+        .iter()
+        .filter(|l| l.leaf_type == tag)
+        .filter(|l| l.counterparty_pubkey.as_deref() == Some(other_identity))
+        .collect()
+}
+
+pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
+    let (a, b) = match (load(path_a), load(path_b)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("{e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    let (ia, ib) = (a.identity_pubkey.as_str(), b.identity_pubkey.as_str());
+    if ia == ib {
+        eprintln!("both dossiers claim the same identity {ia}; `bind` is for two different agents (use `diff` for two copies of one log)");
+        return ExitCode::from(exit::USAGE);
+    }
+
+    let mut bound: Vec<serde_json::Value> = Vec::new();
+    let mut failed: Vec<serde_json::Value> = Vec::new();
+
+    // Handoffs: A→B (A Sent, B Received) and B→A.
+    let h = LeafType::HandoffAttestation.tag();
+    for (sender, sender_id, receiver, receiver_id) in [(&a, ia, &b, ib), (&b, ib, &a, ia)] {
+        let sent: Vec<&Leaf> = names_other(&sender.leaves, receiver_id, h)
+            .into_iter()
+            .filter(|l| l.handoff_direction == Some(HandoffDirection::Sent))
+            .collect();
+        let recv: Vec<&Leaf> = names_other(&receiver.leaves, sender_id, h)
+            .into_iter()
+            .filter(|l| l.handoff_direction == Some(HandoffDirection::Received))
+            .collect();
+        for s in &sent {
+            // A Sent leaf binds to the first Received leaf with the same
+            // state hash; if none matches, every candidate is a failure
+            // worth reporting (the receiver logged *something* from this
+            // sender, but not these bytes).
+            let hit = recv
+                .iter()
+                .find(|r| verify_handoff_binding(sender_id, s, receiver_id, r).is_ok());
+            match hit {
+                Some(r) => bound.push(serde_json::json!({
+                    "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
+                    "receiver": receiver_id, "receiver_leaf": r.index,
+                    "state_hash": s.handoff_state_hash,
+                })),
+                None => {
+                    let reasons: Vec<String> = recv
+                        .iter()
+                        .map(|r| {
+                            format!(
+                                "receiver leaf {}: {}",
+                                r.index,
+                                verify_handoff_binding(sender_id, s, receiver_id, r)
+                                    .err()
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect();
+                    failed.push(serde_json::json!({
+                        "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
+                        "receiver": receiver_id,
+                        "reason": if reasons.is_empty() { "receiver logged no HandoffAttestation naming this sender".to_string() } else { reasons.join("; ") },
+                    }));
+                }
+            }
+        }
+    }
+
+    // Authorization events: any A leaf naming B against any B leaf naming A.
+    let t = LeafType::AuthorizationEvent.tag();
+    let auth_a = names_other(&a.leaves, ib, t);
+    let auth_b = names_other(&b.leaves, ia, t);
+    for la in &auth_a {
+        match auth_b
+            .iter()
+            .find(|lb| verify_authorization_binding(ia, la, ib, lb).is_ok())
+        {
+            Some(lb) => bound.push(serde_json::json!({
+                "kind": "authorization", "a": ia, "a_leaf": la.index, "a_event": format!("{:?}", la.authorization_event_kind),
+                "b": ib, "b_leaf": lb.index, "b_event": format!("{:?}", lb.authorization_event_kind),
+                "scope_hash": la.authorization_scope_hash,
+            })),
+            None => failed.push(serde_json::json!({
+                "kind": "authorization", "a": ia, "a_leaf": la.index, "b": ib,
+                "reason": if auth_b.is_empty() { "the other log has no AuthorizationEvent naming this agent".to_string() }
+                          else { auth_b.iter().map(|lb| format!("b leaf {}: {}", lb.index, verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default())).collect::<Vec<_>>().join("; ") },
+            })),
+        }
+    }
+
+    let code = if !failed.is_empty() {
+        exit::DIVERGED
+    } else if bound.is_empty() {
+        exit::CONSISTENT_UNWITNESSED
+    } else {
+        0
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "a": {"path": path_a, "identity": ia}, "b": {"path": path_b, "identity": ib},
+                "bound": bound, "failed": failed, "exit": code,
+            }))
+            .unwrap_or_default()
+        );
+    } else {
+        println!("witness-log bind\n  A: {ia}\n  B: {ib}\n");
+        for v in &bound {
+            match v["kind"].as_str() {
+                Some("handoff") => println!(
+                    "\u{2713} handoff bound: {}#{} → {}#{}  state {}",
+                    crate::short(v["sender"].as_str().unwrap_or("")),
+                    v["sender_leaf"],
+                    crate::short(v["receiver"].as_str().unwrap_or("")),
+                    v["receiver_leaf"],
+                    crate::short(v["state_hash"].as_str().unwrap_or(""))
+                ),
+                _ => println!(
+                    "\u{2713} authorization bound: {}#{} {} ↔ {}#{} {}  scope {}",
+                    crate::short(v["a"].as_str().unwrap_or("")),
+                    v["a_leaf"],
+                    v["a_event"].as_str().unwrap_or(""),
+                    crate::short(v["b"].as_str().unwrap_or("")),
+                    v["b_leaf"],
+                    v["b_event"].as_str().unwrap_or(""),
+                    crate::short(v["scope_hash"].as_str().unwrap_or(""))
+                ),
+            }
+        }
+        for v in &failed {
+            println!(
+                "\u{2717} {} NOT bound (leaf {}): {}",
+                v["kind"].as_str().unwrap_or(""),
+                v.get("sender_leaf")
+                    .or(v.get("a_leaf"))
+                    .cloned()
+                    .unwrap_or_default(),
+                v["reason"].as_str().unwrap_or("")
+            );
+        }
+        println!();
+        match code {
+            0 => println!("Result: BOUND — both parties committed, in their own logs, to the same content between the same two identities ({} binding(s)).", bound.len()),
+            exit::DIVERGED => println!("Result: MISMATCH — the two logs disagree about what was handed over or to whom. Neither copy is 'the wrong one'; the disagreement is the finding."),
+            _ => println!("Result: NO CROSS-LOG LEAVES — neither dossier carries a HandoffAttestation or AuthorizationEvent naming the other identity."),
+        }
+        println!("\nThis checks the two logs against each other only. Run `witness-log verify` on each dossier first; a binding between two unverified logs proves nothing.");
+    }
+    ExitCode::from(code)
+}

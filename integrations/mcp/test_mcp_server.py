@@ -94,6 +94,8 @@ async def test_every_tool_over_stdio(tmp_path):
                 "redact_audit_entry",
                 "export_dossier",
                 "submit_to_witnesses",
+                "record_handoff",
+                "record_authorization",
             } <= tools
 
             init = _data(
@@ -133,6 +135,7 @@ async def test_every_tool_over_stdio(tmp_path):
 
             v = _data(await client.call_tool("verify_chain_integrity", {"session_id": "agent-7"}))
             assert v["tamper_alerts"] == [] and v["verdict"] == "unanchored"
+
 
             red = _data(
                 await client.call_tool(
@@ -192,6 +195,69 @@ async def test_every_tool_over_stdio(tmp_path):
             assert init2["identity_pubkey"] == ident and init2["tree_size"] == 4
             missing = await client.call_tool("export_dossier", {"session_id": "never-made"})
             assert _is_error(missing)
+            # Cross-agent leaves from MCP: a second chain receives a handoff
+            # and a grant from agent-7; the two sides bind.
+            other = _data(
+                await client.call_tool("initialize_witness_chain", {"session_id": "agent-8"})
+            )
+            h1 = _data(
+                await client.call_tool(
+                    "record_handoff",
+                    {
+                        "session_id": "agent-7",
+                        "direction": "sent",
+                        "counterparty_identity_pubkey": other["identity_pubkey"],
+                        "state": {"task": "reconcile", "rows": 12},
+                    },
+                )
+            )
+            h2 = _data(
+                await client.call_tool(
+                    "record_handoff",
+                    {
+                        "session_id": "agent-8",
+                        "direction": "received",
+                        "counterparty_identity_pubkey": init["identity_pubkey"],
+                        "state": {"task": "reconcile", "rows": 12},
+                    },
+                )
+            )
+            assert h1["handoff_state_hash"] == h2["handoff_state_hash"]
+            g1 = _data(
+                await client.call_tool(
+                    "record_authorization",
+                    {
+                        "session_id": "agent-7",
+                        "kind": "granted_by_me",
+                        "counterparty_identity_pubkey": other["identity_pubkey"],
+                        "scope": {"mandate_hash": "ab" * 32, "max_usd": 500},
+                    },
+                )
+            )
+            g2 = _data(
+                await client.call_tool(
+                    "record_authorization",
+                    {
+                        "session_id": "agent-8",
+                        "kind": "granted_to_me",
+                        "counterparty_identity_pubkey": init["identity_pubkey"],
+                        "scope": {"mandate_hash": "ab" * 32, "max_usd": 500},
+                    },
+                )
+            )
+            assert g1["authorization_scope_hash"] == g2["authorization_scope_hash"]
+            da = _data(await client.call_tool("export_dossier", {"session_id": "agent-7"}))["dossier"]
+            db = _data(await client.call_tool("export_dossier", {"session_id": "agent-8"}))["dossier"]
+            da = json.loads(da) if isinstance(da, str) else da
+            db = json.loads(db) if isinstance(db, str) else db
+            sent = next(l for l in da["leaves"] if l["leaf_type"] == 5)
+            recv = next(l for l in db["leaves"] if l["leaf_type"] == 5)
+            assert (
+                wl.verify_handoff_binding(
+                    da["identity_pubkey"], json.dumps(sent), db["identity_pubkey"], json.dumps(recv)
+                )
+                is None
+            )
     finally:
         for httpd, _ in witnesses:
             httpd.shutdown()

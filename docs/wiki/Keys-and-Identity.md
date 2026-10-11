@@ -122,11 +122,35 @@ and resends with a consistency proof, which is fine.
 than or conflicting with what it remembers each witness cosigning, so a
 journal restored from an old backup fails locally instead of equivocating.
 
+## Sealed journals: keeping the seed off disk
+
+By default the identity seed is stored in the journal header so that
+`open(path)` alone resumes the same identity. That is convenient and, for a
+file with mode 0600 on a machine you control, usually fine. It is not fine
+when the journal is on a shared volume, shipped by a log collector, or
+included in backups with wider access than the key should have.
+
+A **sealed** journal stores only the identity *public* key:
+
+```python
+seed = kms.fetch("agent-7-identity")                       # 32 bytes, from wherever you keep secrets
+log = witness_log.open("agent.jsonl", identity_seed=seed, seal=True)   # create and every resume
+```
+
+```rust
+let mut log = JournaledLog::create_sealed("agent.jsonl", IdentityKeypair::from_bytes(&seed))?;
+let (mut log, report) = JournaledLog::resume_with_identity("agent.jsonl", &seed)?;
+```
+
+A plain `resume` of a sealed journal fails with a message naming the fix;
+a resume with the wrong seed fails because the header pins the public key.
+Disclose custody as `kms`/`hsm` on the binding so verifiers see it.
+
 ## Where the private material is
 
 | artefact | contains | permissions | back up |
 |---|---|---|---|
-| `agent.jsonl` header | identity seed | 0600 | yes, with the sidecar |
+| `agent.jsonl` header | identity seed (or only the public key, when sealed) | 0600 | yes, with the sidecar |
 | `agent.jsonl.salts` | redaction salts | 0600 | yes, with the journal |
 | process memory | session key | — | no; it is disposable |
 | `witness.key` (operators) | witness seed | 0600 | yes, **with `logs/`** |

@@ -21,11 +21,14 @@ Python ≥ 3.9. The wheel contains the compiled Rust core, so there is no
 compiler, no C toolchain, no native dependency to install.
 
 ```sh
-pip install witness-log
-# until PyPI publication completes, download the wheel for your platform from
-# https://github.com/0xAndersen/witness-log/releases/latest and pip install it
+# download the wheel for your platform (CPython 3.9+, abi3) from
+# https://github.com/0xAndersen/witness-log/releases/latest, then:
+pip install ./witness_log-0.3.4-*.whl
 python -c "import witness_log; print(witness_log.__version__)"
 ```
+
+(`pip install witness-log` from PyPI will work once publication lands; it
+is not there yet, and this page will say so until it is.)
 
 Why Rust underneath? The hashing, Merkle construction and Ed25519 code is
 the part that must be *identical* across every language and every verifier,

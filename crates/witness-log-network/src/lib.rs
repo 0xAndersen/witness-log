@@ -487,6 +487,22 @@ pub struct QuorumResult {
     /// or `"count >= 4"`.
     #[serde(default)]
     pub count_gate: String,
+    /// True when the counted receipts are a strict majority of the
+    /// directory's witnesses (`2 * valid_receipts > total_directory_witnesses`).
+    ///
+    /// Witnessing detects equivocation only where two histories meet the
+    /// same witness: a witness that has cosigned size N for one history
+    /// refuses the other (422). A log that can collect a gate-satisfying
+    /// set of receipts from one half of the directory and a second,
+    /// disjoint set from the other half can therefore present two
+    /// WITNESSED dossiers with different pasts and no witness ever sees
+    /// both. A strict majority makes any two gate-satisfying sets
+    /// overlap, so no such split exists among honest witnesses. The
+    /// default `--threshold 0.66` has this property; a low fraction or
+    /// a small `--min-witnesses` against a larger directory does not,
+    /// and this flag says so. Found by an outside evaluation of 0.3.3.
+    #[serde(default)]
+    pub split_view_resistant: bool,
     /// The newest `witnessed_at_ms` among counted (deduplicated,
     /// trusted-directory) receipts. `None` when no receipts counted.
     ///
@@ -616,6 +632,7 @@ pub fn evaluate_quorum(
         },
         meets_count_threshold: quorum_fraction >= threshold_fraction,
         count_gate: format!("fraction >= {threshold_fraction}"),
+        split_view_resistant: 2 * valid > directory.witnesses.len(),
         newest_trusted_witness_ms,
     }
 }
@@ -1515,6 +1532,7 @@ mod policy_tests {
                     .collect(),
                 meets_count_threshold: true,
                 count_gate: String::new(),
+                split_view_resistant: false,
                 newest_trusted_witness_ms: if valid == 0 { None } else { Some(0) },
             })
         };

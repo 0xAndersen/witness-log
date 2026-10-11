@@ -110,7 +110,18 @@ The witnesses do not know the two logs are related. They do not need to.
 ## Step 6: an auditor proves the handoff
 
 Given both dossiers, the auditor verifies each (`WITNESSED`, pinned to the
-expected identities), then matches the handoff leaves:
+expected identities), then matches the cross-log leaves with one command:
+
+```sh
+witness-log bind orch.json worker.json
+#   ✓ handoff bound: 1ae11da3…#3 → fb2e8280…#0  state f72a7560…
+#   Result: BOUND — both parties committed, in their own logs, to the same content ...
+# exit 0 bound · 30 mismatch · 10 nothing to bind;  --json for a machine-readable report
+```
+
+Or in Python, `witness_log.verify_handoff_binding(sender_id, sender_leaf_json,
+receiver_id, receiver_leaf_json)` returns `None` when they bind and the
+reason otherwise. By hand, the match is:
 
 ```python
 import json
@@ -157,7 +168,12 @@ over the scope description. It is logging-only: witness-log is not an
 authorization system and does not evaluate the scope; it records that the
 change was committed by both sides so an auditor can later ask "under what
 authority did the worker do this?" and get two matching answers.
-(`append_authorization_event` in Rust; corpus vector `08_authorization_event.json`.)
+`append_authorization_event(kind, scope, counterparty)` in Python and Rust,
+`record_authorization` over MCP, `witness-log bind` to match the two sides;
+corpus vector `08_authorization_event.json`. The natural scope to commit to
+is the mandate your payment or delegation protocol already produces (an AP2
+mandate hash, a UCAN, a verifiable-intent token): witness-log does not
+replace it, it makes the record of what was done under it unrewritable.
 
 ## Patterns
 

@@ -104,7 +104,13 @@ pub(crate) fn read_bounded_line<R: BufRead>(
 #[derive(serde::Serialize, serde::Deserialize)]
 struct JournalHeader {
     format_version: u8,
+    /// The raw Ed25519 identity seed, hex. Empty when the journal is
+    /// *sealed*: the seed is then supplied by the caller on every resume
+    /// (`JournaledLog::resume_with_identity`) and `identity_pubkey_hex`
+    /// pins which seed is acceptable.
     identity_bytes_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity_pubkey_hex: Option<String>,
     session_number: u64,
 }
 
@@ -289,6 +295,27 @@ impl LeafJournal {
         identity_bytes: &[u8; 32],
         session_number: u64,
     ) -> std::io::Result<Self> {
+        Self::create_inner(path, Some(identity_bytes), None, session_number)
+    }
+
+    /// Create a journal whose header holds only the identity's PUBLIC
+    /// key. The seed never touches this file; `replay_with_identity`
+    /// must be given it (from a KMS, an environment variable, a secrets
+    /// manager) and checks that it matches the pinned public key.
+    pub fn create_sealed(
+        path: &str,
+        identity_pubkey_hex: &str,
+        session_number: u64,
+    ) -> std::io::Result<Self> {
+        Self::create_inner(path, None, Some(identity_pubkey_hex), session_number)
+    }
+
+    fn create_inner(
+        path: &str,
+        identity_bytes: Option<&[u8; 32]>,
+        identity_pubkey_hex: Option<&str>,
+        session_number: u64,
+    ) -> std::io::Result<Self> {
         let mut open_opts = OpenOptions::new();
         open_opts.write(true).create_new(true);
         // 0600 from the moment of creation: the journal header contains
@@ -304,7 +331,8 @@ impl LeafJournal {
         let mut file = open_opts.open(path)?;
         let header = JournalHeader {
             format_version: Self::JOURNAL_FORMAT_VERSION,
-            identity_bytes_hex: hex::encode(identity_bytes),
+            identity_bytes_hex: identity_bytes.map(hex::encode).unwrap_or_default(),
+            identity_pubkey_hex: identity_pubkey_hex.map(str::to_string),
             session_number,
         };
         // Zeroizing: same rationale as save_snapshot's -- this string
@@ -470,6 +498,23 @@ impl LeafJournal {
     /// only line a crash can ever damage; every earlier line was complete
     /// when written.
     pub fn replay(path: &str) -> std::io::Result<(WitnessLog, ReplayReport)> {
+        Self::replay_inner(path, None)
+    }
+
+    /// Replay a sealed journal (see `create_sealed`), supplying the
+    /// identity seed the header does not hold. Also accepted for an
+    /// unsealed journal, in which case the seed must equal the stored one.
+    pub fn replay_with_identity(
+        path: &str,
+        identity_bytes: &[u8; 32],
+    ) -> std::io::Result<(WitnessLog, ReplayReport)> {
+        Self::replay_inner(path, Some(identity_bytes))
+    }
+
+    fn replay_inner(
+        path: &str,
+        supplied: Option<&[u8; 32]>,
+    ) -> std::io::Result<(WitnessLog, ReplayReport)> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let mut offset: u64 = 0;
@@ -498,15 +543,46 @@ impl LeafJournal {
                 ),
             ));
         }
-        let identity_bytes: [u8; 32] = hex::decode(&header.identity_bytes_hex)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
-            .try_into()
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "identity key must be 32 bytes",
-                )
-            })?;
+        let invalid = |m: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, m.to_string());
+        let identity_bytes: [u8; 32] = if header.identity_bytes_hex.is_empty() {
+            // Sealed journal: the seed must come from the caller and must
+            // be the one the header pinned, or a stranger's key could
+            // continue this history under a new identity.
+            let Some(seed) = supplied else {
+                return Err(invalid(
+                    "this journal is sealed (header holds only identity_pubkey_hex); \
+                     resume it with the identity seed (JournaledLog::resume_with_identity)",
+                ));
+            };
+            let expected = header
+                .identity_pubkey_hex
+                .as_deref()
+                .ok_or_else(|| invalid("sealed journal header has no identity_pubkey_hex"))?;
+            let actual = hex::encode(
+                ed25519_dalek::SigningKey::from_bytes(seed)
+                    .verifying_key()
+                    .to_bytes(),
+            );
+            if actual != expected.to_ascii_lowercase() {
+                return Err(invalid(
+                    "supplied identity seed does not match the public key this sealed journal was created with",
+                ));
+            }
+            *seed
+        } else {
+            let stored: [u8; 32] = hex::decode(&header.identity_bytes_hex)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+                .try_into()
+                .map_err(|_| invalid("identity key must be 32 bytes"))?;
+            if let Some(seed) = supplied {
+                if seed != &stored {
+                    return Err(invalid(
+                        "supplied identity seed does not match the identity stored in this journal",
+                    ));
+                }
+            }
+            stored
+        };
 
         let mut leaves = Vec::new();
         let mut replayed_bindings: Vec<KeyBindingStatement> = Vec::new();
@@ -654,6 +730,47 @@ impl JournaledLog {
         Ok(Self { log, journal })
     }
 
+    /// Like [`create`](Self::create), but the identity SEED is never
+    /// written to disk: the journal header holds only the public key.
+    /// Every later start must be [`resume_with_identity`](Self::resume_with_identity)
+    /// with the same seed, which is then your KMS's, secrets manager's or
+    /// environment's job to keep. Choose this for anything where the
+    /// journal file might be readable by more parties than the key should
+    /// be; disclose custody accordingly.
+    pub fn create_sealed(
+        path: &str,
+        identity: crate::identity::IdentityKeypair,
+    ) -> std::io::Result<Self> {
+        let salts_path = Self::salts_path(path);
+        if std::path::Path::new(&salts_path).exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{salts_path} exists but {path} does not: remove the stale salt sidecar \
+                     before creating a new journal here"
+                ),
+            ));
+        }
+        let mut log = WitnessLog::resume(identity, 0);
+        let pubkey_hex = log.identity_pubkey_hex();
+        let mut journal = LeafJournal::create_sealed(path, &pubkey_hex, 0)?;
+        let salts = crate::redaction::FileSaltStore::open(&salts_path)?;
+        log.set_salt_store(Box::new(salts));
+        journal.append_binding(log.current_binding())?;
+        Ok(Self { log, journal })
+    }
+
+    /// Resume a journal created with [`create_sealed`](Self::create_sealed),
+    /// supplying the identity seed. Works for unsealed journals too (the
+    /// seed must then match the stored one).
+    pub fn resume_with_identity(
+        path: &str,
+        identity_bytes: &[u8; 32],
+    ) -> std::io::Result<(Self, ReplayReport)> {
+        let (log, report) = LeafJournal::replay_with_identity(path, identity_bytes)?;
+        Self::finish_resume(path, log, report)
+    }
+
     /// The salt sidecar that travels with a journal: `<path>.salts`.
     /// Back it up together with the journal; see `FileSaltStore`.
     pub fn salts_path(journal_path: &str) -> String {
@@ -693,7 +810,15 @@ impl JournaledLog {
     /// written before the sidecar existed resume normally; their earlier
     /// leaves simply have no salt to forget, exactly as before.
     pub fn resume(path: &str) -> std::io::Result<(Self, ReplayReport)> {
-        let (mut log, report) = LeafJournal::replay(path)?;
+        let (log, report) = LeafJournal::replay(path)?;
+        Self::finish_resume(path, log, report)
+    }
+
+    fn finish_resume(
+        path: &str,
+        mut log: WitnessLog,
+        report: ReplayReport,
+    ) -> std::io::Result<(Self, ReplayReport)> {
         let mut journal = LeafJournal::open_for_append(path, report.good_byte_length)?;
         let mut salts = crate::redaction::FileSaltStore::open(&Self::salts_path(path))?;
         // Salts for leaves that were torn away, or for leaves whose
@@ -1325,5 +1450,83 @@ mod session_number_tests {
             .collect();
         assert_eq!(numbers, vec![0, 1, 2, 3, 4]);
         let _ = std::fs::remove_file(&p);
+    }
+}
+
+#[cfg(test)]
+mod sealed_identity_tests {
+    use super::*;
+    use crate::identity::IdentityKeypair;
+
+    fn tmp(tag: &str) -> String {
+        let p = std::env::temp_dir().join(format!(
+            "wl-sealed-{tag}-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        p.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn sealed_journal_never_stores_the_seed_and_resumes_only_with_it() {
+        let p = tmp("a");
+        let identity = IdentityKeypair::generate();
+        let seed = identity.to_bytes();
+        let pubkey = {
+            let mut j = JournaledLog::create_sealed(&p, identity).unwrap();
+            j.append_intent(b"one").unwrap();
+            j.sync().unwrap();
+            j.log().identity_pubkey_hex()
+        };
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            !text.contains(&hex::encode(seed)),
+            "the seed must not appear anywhere in a sealed journal"
+        );
+        assert!(text.contains(&pubkey), "the public key pins the identity");
+
+        // Plain resume is refused with a message that names the fix.
+        let err = match JournaledLog::resume(&p) {
+            Ok(_) => panic!("plain resume of a sealed journal must fail"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("sealed"), "{err}");
+
+        // The wrong seed is refused: a stranger cannot continue this log.
+        let wrong = IdentityKeypair::generate().to_bytes();
+        assert!(
+            JournaledLog::resume_with_identity(&p, &wrong).is_err(),
+            "wrong seed accepted"
+        );
+
+        // The right seed resumes with the same identity and a new session.
+        let (mut j, report) = JournaledLog::resume_with_identity(&p, &seed).unwrap();
+        assert_eq!(report.dropped_trailing_lines, 0);
+        assert_eq!(j.log().identity_pubkey_hex(), pubkey);
+        j.append_result(b"two").unwrap();
+        assert_eq!(j.log().tree_size(), 2);
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(JournaledLog::salts_path(&p));
+    }
+
+    #[test]
+    fn unsealed_journal_accepts_a_matching_seed_and_refuses_another() {
+        let p = tmp("b");
+        let identity = IdentityKeypair::generate();
+        let seed = identity.to_bytes();
+        let created = JournaledLog::create(&p, identity).unwrap();
+        drop(created);
+        let (j, _) = JournaledLog::resume_with_identity(&p, &seed).unwrap();
+        drop(j);
+        let other = IdentityKeypair::generate().to_bytes();
+        assert!(
+            JournaledLog::resume_with_identity(&p, &other).is_err(),
+            "wrong seed accepted"
+        );
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(JournaledLog::salts_path(&p));
     }
 }

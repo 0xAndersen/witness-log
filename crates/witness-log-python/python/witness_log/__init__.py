@@ -38,6 +38,8 @@ __all__ = [
     "WitnessService",
     "verify_dossier_json",
     "verify_inclusion",
+    "verify_handoff_binding",
+    "verify_authorization_binding",
     "select_diverse_witnesses",
     "select_witnesses",
     "witness_entry_independent",
@@ -52,7 +54,7 @@ __all__ = [
     "canonical_json",
 ]
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 
 def canonical_json(value: Any) -> bytes:
@@ -65,19 +67,35 @@ def canonical_json(value: Any) -> bytes:
     )
 
 
-def open(path: str, identity_seed: Optional[bytes] = None) -> JournaledLog:  # noqa: A001
+def open(  # noqa: A001
+    path: str, identity_seed: Optional[bytes] = None, *, seal: bool = False
+) -> JournaledLog:
     """Create or resume a journaled log at ``path``.
 
     If the journal exists it is resumed (a torn last line from a crash is
     healed and reported on the log's ``resume`` path). If it does not, a
     new log is created: with ``identity_seed`` (32 bytes, from
-    ``log.identity_bytes()`` of an earlier log) the identity persists
-    across machines; without it a fresh identity is generated and stored
-    in the journal header, so the same path resumes the same identity.
+    ``log.identity_bytes()`` of an earlier log, or from your KMS) the
+    identity persists across machines; without it a fresh identity is
+    generated and stored in the journal header, so the same path resumes
+    the same identity.
+
+    ``seal=True`` keeps the seed OUT of the journal: the header then holds
+    only the public key and ``identity_seed`` is required on every call,
+    create and resume alike. Use it when the journal file may be readable
+    by more parties than the key should be (shared volumes, log shippers,
+    backups), and keep the seed where you keep secrets.
     """
+    if seal and identity_seed is None:
+        raise ValueError("seal=True requires identity_seed (the seed is not stored in a sealed journal)")
     if os.path.exists(path):
-        log, _dropped = JournaledLog.resume(path)
+        if identity_seed is not None:
+            log, _dropped = JournaledLog.resume_with_identity(path, identity_seed)
+        else:
+            log, _dropped = JournaledLog.resume(path)
         return log
+    if seal:
+        return JournaledLog.create_sealed(path, identity_seed)
     if identity_seed is not None:
         return JournaledLog.create(path, identity_seed)
     return JournaledLog.create_ephemeral(path)

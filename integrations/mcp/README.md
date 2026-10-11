@@ -1,8 +1,8 @@
 # witness-log MCP server
 
 Gives any MCP-capable agent its own tamper-evident audit trail as tools.
-One file, no framework: `witness_mcp_server.py` on top of
-`pip install witness-log`.
+One file, no framework: `witness_mcp_server.py` on top of the
+`witness-log` wheel (from the Releases page until PyPI publication lands).
 
 | Tool | What it does |
 |---|---|
@@ -12,6 +12,8 @@ One file, no framework: `witness_mcp_server.py` on top of
 | `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | Re-run the full verifier; returns the verdict and any tamper alerts. `min_witnesses` gates on an absolute count (use for large directories). |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload; all proofs stay valid. |
 | `export_dossier(session_id)` | The portable record anyone can verify with `witness-log verify`. |
+| `record_handoff(session_id, direction, counterparty_identity_pubkey, state)` | One side of an agent-to-agent handoff (SPEC §3.1): `"sent"` or `"received"`, with the other agent's identity. `witness-log bind a.json b.json` proves both sides committed to the same bytes. |
+| `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | A delegation / scope change / revocation between two agents (SPEC §3.2), logging only. Put an AP2 mandate hash or a UCAN in `scope`; both sides commit to its hash and `bind` matches them. |
 | `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | Get the head cosigned by up to `max_witnesses` diversity-selected witnesses over `c2sp.org/tlog-witness`; WITNESSED needs `min_witnesses` cosignatures from two independent operators. |
 
 ## Run

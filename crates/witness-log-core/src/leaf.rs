@@ -397,6 +397,30 @@ impl Leaf {
         if self.leaf_type == LeafType::ExternalAnchor.tag() {
             require(self.anchor_url.is_some(), "anchor_url")?;
             require(self.anchor_proof_hash.is_some(), "anchor_proof_hash")?;
+            // The committed value is SHA-256(anchor_proof_json). When the
+            // JSON travels with the leaf it MUST be the preimage of the
+            // committed hash, or a dossier could carry an anchor proof
+            // the log never committed to (a swapped Rekor entry, say) and
+            // every structural check would still pass. Found by an
+            // outside evaluation of 0.3.3.
+            if let (Some(json), Some(h)) = (&self.anchor_proof_json, &self.anchor_proof_hash) {
+                use sha2::{Digest, Sha256};
+                let actual = hex::encode(Sha256::digest(json.as_bytes()));
+                if &actual != h {
+                    return Err(LeafValidationError::AnchorProofMismatch {
+                        committed: h.clone(),
+                        actual,
+                    });
+                }
+            }
+            if let Some(url) = &self.anchor_url {
+                if !(url.starts_with("https://") || url.starts_with("http://")) {
+                    return Err(LeafValidationError::MalformedField {
+                        field: "anchor_url",
+                        value: url.clone(),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -418,6 +442,8 @@ pub enum LeafValidationError {
     MalformedField { field: &'static str, value: String },
     #[error("leaf_type 0x{leaf_type:02x} requires field `{field}` to be present")]
     MissingMandatoryField { leaf_type: u8, field: &'static str },
+    #[error("anchor_proof_json does not hash to the committed anchor_proof_hash (committed {committed}, actual {actual}); the anchor proof was swapped after the leaf was committed")]
+    AnchorProofMismatch { committed: String, actual: String },
 }
 
 /// Validate every leaf in sequence: each leaf structurally (`Leaf::validate`,
@@ -574,6 +600,39 @@ mod tests {
             anchor_proof_json: None,
             anchor_proof_hash: None,
         }
+    }
+
+    #[test]
+    fn external_anchor_proof_json_must_be_the_committed_preimage() {
+        use sha2::{Digest, Sha256};
+        let hex64 = "ab".repeat(32);
+        let mut l = base_leaf(LeafType::ExternalAnchor);
+        l.session_pubkey = hex64.clone();
+        l.payload_hash = hex64.clone();
+        let proof = r#"{"logIndex":42,"integratedTime":1700000000}"#.to_string();
+        l.anchor_url = Some("https://rekor.sigstore.dev/api/v1/log/entries/abc".into());
+        l.anchor_proof_hash = Some(hex::encode(Sha256::digest(proof.as_bytes())));
+        l.anchor_proof_json = Some(proof.clone());
+        assert!(l.validate(0).is_ok());
+        // Swap the proof after commitment: structurally complete, but not
+        // what the log committed to.
+        l.anchor_proof_json = Some(r#"{"logIndex":43,"integratedTime":1700000000}"#.into());
+        assert!(matches!(
+            l.validate(0),
+            Err(LeafValidationError::AnchorProofMismatch { .. })
+        ));
+        // No JSON carried at all is still valid: the hash is the commitment.
+        l.anchor_proof_json = None;
+        assert!(l.validate(0).is_ok());
+        // A URL that is not a URL is not an anchor.
+        l.anchor_url = Some("etherscan tx 0x1234".into());
+        assert!(matches!(
+            l.validate(0),
+            Err(LeafValidationError::MalformedField {
+                field: "anchor_url",
+                ..
+            })
+        ));
     }
 
     fn matching_pair() -> (String, Leaf, String, Leaf) {

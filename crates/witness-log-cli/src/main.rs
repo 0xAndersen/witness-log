@@ -71,6 +71,7 @@ struct Options {
     directory_path: Option<String>,
 }
 
+mod bind;
 mod c2sp_cmd;
 mod demo;
 mod diff;
@@ -110,6 +111,12 @@ USAGE:
       equivocation check: a log that showed one history to you and a
       different one to someone else is exactly what witnessing exists to
       catch, and this is how you catch it with two copies in hand.
+
+  witness-log bind <a.json> <b.json> [--json]
+      Two DIFFERENT agents' dossiers: match their HandoffAttestation and
+      AuthorizationEvent leaves (SPEC §3.1–§3.2) and prove both sides
+      committed, in their own logs, to the same bytes or scope between the
+      same two identities. Exit 0 bound, 30 mismatch, 10 nothing to bind.
 
   witness-log explain [verdict|<name>]
       What each verdict means, what it does NOT mean, and how to reach the
@@ -245,6 +252,24 @@ fn main() -> ExitCode {
                         positional.len()
                     );
                 }
+                ExitCode::from(exit::USAGE)
+            }
+        }
+        Some("bind") => {
+            let json = args[2..].iter().any(|a| a == "--json");
+            let positional: Vec<&String> =
+                args[2..].iter().filter(|a| !a.starts_with("--")).collect();
+            if let Some(flag) = args[2..]
+                .iter()
+                .find(|a| a.starts_with("--") && *a != "--json")
+            {
+                eprintln!("unrecognized flag for `bind`: {flag}");
+                eprintln!("  usage: witness-log bind <a.json> <b.json> [--json]");
+                ExitCode::from(exit::USAGE)
+            } else if positional.len() == 2 {
+                bind::run_bind(positional[0], positional[1], json)
+            } else {
+                eprintln!("usage: witness-log bind <a.json> <b.json> [--json]");
                 ExitCode::from(exit::USAGE)
             }
         }
@@ -862,6 +887,20 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
         println!("    Rebuilds the Merkle root from every leaf in this file and compares it to the signed checkpoint. See THREAT_MODEL.md's 'Log truncation / selective omission' row — this only catches tampering WITHIN the leaves shown to you, not leaves quietly withheld.");
     }
 
+    let anchors = dossier
+        .leaves
+        .iter()
+        .filter(|l| l.leaf_type == witness_log_core::leaf::LeafType::ExternalAnchor.tag())
+        .count();
+    if anchors > 0 {
+        println!(
+            "\u{2139} External anchors: {anchors} recorded (proof hashes bound to the leaves; the anchors themselves are NOT fetched or verified against their providers by this tool)"
+        );
+        if opts.explain {
+            println!("    An ExternalAnchor leaf commits to SHA-256 of a provider response (Rekor, an RFC 3161 TSA) and its URL. The leaf proves what the log claimed to have anchored, not that the provider agrees; confirm that by fetching the URL and checking the response hash against anchor_proof_hash.");
+        }
+    }
+
     match &report.quorum {
         Some(result) => {
             let quorum_symbol = if result.meets_count_threshold {
@@ -921,6 +960,34 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
             if opts.explain {
                 println!("    The gate is the absolute number of distinct independent operators, not a fraction: a single operator cannot contradict itself, so equivocation is detectable only once two parties who share no operator have both committed to the same head. See THREAT_MODEL.md's 'Witness independence' section.");
             }
+            let gate_count = match opts.min_witnesses {
+                Some(n) => n,
+                None => (opts.threshold * result.total_directory_witnesses as f64).ceil() as usize,
+            };
+            if result.meets_count_threshold
+                && result.split_view_resistant
+                && gate_count * 2 <= result.total_directory_witnesses
+            {
+                println!(
+                    "\u{26A0} This dossier was cosigned by a majority ({}/{}), but the gate you set ({}) is not one: a different dossier passing it could coexist with a conflicting one. Use --min-witnesses {} or the default --threshold 0.66 to make the gate itself split-view resistant.",
+                    result.valid_receipts,
+                    result.total_directory_witnesses,
+                    result.count_gate,
+                    result.total_directory_witnesses / 2 + 1
+                );
+            }
+            if result.meets_count_threshold && !result.split_view_resistant {
+                println!(
+                    "\u{26A0} Split view possible: {} of {} directory witnesses cosigned, not a majority. A conflicting history cosigned by a disjoint set of the other {} would also pass this gate, and no witness would see both.",
+                    result.valid_receipts,
+                    result.total_directory_witnesses,
+                    result.total_directory_witnesses - result.valid_receipts
+                );
+                println!(
+                    "    Raise the gate above half the directory (--min-witnesses {} here, or the default --threshold 0.66), or compare copies with `witness-log diff`.",
+                    result.total_directory_witnesses / 2 + 1
+                );
+            }
 
             let compute_pct = (result.compute_diversity_fraction * 100.0).round();
             if result.compute_diversity_fraction < 0.5 {
@@ -954,7 +1021,7 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
     }
 }
 
-fn short(hexstr: &str) -> String {
+pub(crate) fn short(hexstr: &str) -> String {
     // Previously sliced at byte offsets 8 and len()-8. identity_pubkey is
     // an arbitrary JSON string from an untrusted file -- multibyte UTF-8
     // (e.g. a CJK character) landing on one of those byte offsets panics

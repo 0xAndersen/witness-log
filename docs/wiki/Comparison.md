@@ -103,6 +103,36 @@ their own layers, which is the decomposition the proposed AUDIT working
 group has converged on. The conformance corpus exists so that an
 independent implementation can prove it computes the same bytes.
 
+## Named projects, by the same properties
+
+An independent three-persona evaluation of 0.3.3 built witness-log, attacked
+it, and ran the alternatives below on the same tasks. The one test that
+separated them: the operator rewrote the whole history with its own key.
+The others accepted the rewrite as valid; witness-log's witnesses refused
+it (422) and produced a proof of equivocation. The honest summary of the
+rest is that the *primitives* are commodity and the *package* is not.
+
+| project | what it is | tamper evidence against the operator | erasure | intent/result schema | witnessing | license |
+|---|---|---|---|---|---|---|
+| **Tessera** (Google, Apache-2.0; underpins Sigstore Rekor v2) | a library for running C2SP tiled transparency logs | yes, as a public log with witnesses | no (public, permanent) | no; generic entries | yes, c2sp.org/tlog-witness | Apache-2.0 |
+| **Microsoft Agent Governance Toolkit** | policy and audit tooling for agents; the largest install base | operator-controlled log | yes | yes | no | MIT |
+| **Signet** | signed agent receipts | signatures only; operator can re-sign | yes | yes | no | Apache/MIT |
+| **immudb** | an immutable database with cryptographic proofs | against a client, not against the server operator unless clients keep state | no | no | no | BUSL / Apache client |
+| **agent-receipts** | per-action signed receipts | signatures only | yes | yes | no | permissive |
+| **Mastercard Verifiable Intent / AP2 / x402 mandates** | signed authorization that an action was permitted | proves authorization, not the record of what was done | n/a | mandate, not execution | no | Apache-2.0 |
+| **SCITT (RFC 9943)** | a standards-track transparency service with receipts | yes, via transparency service and witnessing | not specified | agent-receipt drafts in progress | via the service | spec |
+| **witness-log** | per-agent Merkle log + independent witnessing + erasure + offline verdicts | yes: a rewrite is refused and recorded as evidence | yes, proofs intact | yes, two leaves per action, plus handoff and authorization leaves | yes, c2sp.org/tlog-witness, scored by organisation | AGPL-3.0 |
+
+Two things to take from the table. witness-log is the only one combining
+witnessing with an agent schema and erasure, and that combination is what
+catches the rewrite. And a team already on Tessera could add the agent
+schema and salted erasure in a few engineer-weeks, which is why this project
+publishes a conformance corpus and speaks the same witness protocol: the
+goal is the standard shape of an agent audit trail, not a moat. Where a
+Tessera-based deployment makes sense (a public, append-only log of
+non-personal data), use it; witness-log's design is for the private,
+per-agent, erasable case.
+
 ## When not to use witness-log
 
 - You need queryable, mutable state shared between many writers: use a database (and log its changes with witness-log if they need to be provable).

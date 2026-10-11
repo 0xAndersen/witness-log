@@ -18,11 +18,16 @@ Linux x86_64/aarch64, macOS Intel/Apple Silicon, Windows. No runtime.
 ## 0. Install and run the demo
 
 ```sh
-cargo install witness-log-cli
-# or download from https://github.com/0xAndersen/witness-log/releases/latest and `sha256sum -c SHA256SUMS`
+# prebuilt: download the archive for your platform from
+# https://github.com/0xAndersen/witness-log/releases/latest, then `sha256sum -c SHA256SUMS`
+# from source (needs Rust 1.75+):
+cargo install --git https://github.com/0xAndersen/witness-log --tag v0.3.4 witness-log-cli
 witness-log --version
 witness-log demo
 ```
+
+(`cargo install witness-log-cli` from crates.io will work once publication
+lands; it is not there yet.)
 
 `demo` writes nothing to disk and talks to no network. With throwaway keys
 it creates an identity, logs three events, erases one under
@@ -60,6 +65,7 @@ they are the threat model in miniature.
 | `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
 | `explain [verdict]` | what each verdict proves and does not, in words | before you gate anything on a verdict |
 | `diff <a.json> <b.json>` | compare two dossiers of one log: honest growth, equivocation, or tampering | "these two copies disagree" |
+| `bind <a.json> <b.json> [--json]` | two different agents' dossiers: prove their handoff / authorization leaves commit to the same bytes and scope | multi-agent audits |
 | `witness submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory | the step that reaches WITNESSED |
 | `witness init / serve / info / add-log / verify-evidence` | run a witness, inspect one, check an equivocation file | operators |
 | `c2sp show / verify` | C2SP checkpoint bodies and signed notes | interop with other transparency tooling |

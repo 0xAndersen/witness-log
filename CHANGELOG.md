@@ -1,24 +1,64 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 — 2026-10-11
 
-### Fixed
+Driven by an independent three-persona evaluation of 0.3.3 (agent
+developer, transparency-log engineer, agent-commerce infrastructure lead;
+each built it, attacked it, and ran competitors on the same tasks). Every
+core claim held; six defects were found, all fixed here.
 
-- `witness submit --out dossier.json` run from the journal's own directory
-  wrote the dossier and the `.witnesses.json` cache, then reported
-  "No such file or directory" and exited 1: `Path::parent()` of a bare
-  filename is `Some("")`, and fsyncing "" fails. Found by running the new
-  payments tutorial as written. Regression test in `live_witness_network`.
+### Fixed — security and correctness
+
+- **Verifier hang on absurd tree sizes.** `largest_power_of_two_lt_u64`
+  doubled `k` until `k * 2 >= n`; for `n > 2^63` the multiplication wraps
+  to 0 and the loop never ends, so a dossier claiming `tree_size = 2^63+1`
+  hung `verify` (release) or panicked it (debug) with no valid proof
+  needed. Now bit arithmetic; test covers `u64::MAX`.
+- **Anchor proofs were not bound to their hash.** An `ExternalAnchor`
+  leaf carrying `anchor_proof_json` is now rejected unless
+  `SHA-256(anchor_proof_json) == anchor_proof_hash`
+  (`LeafValidationError::AnchorProofMismatch`), and `anchor_url` must be
+  an http(s) URL. `verify` lists how many anchors a dossier records and
+  states plainly that it does not fetch or check them with the provider.
+- **Split views passed a sub-majority gate silently.** With
+  `--threshold 0.5` or `--min-witnesses N <= directory/2`, two conflicting
+  histories cosigned by disjoint halves of a directory both reached
+  WITNESSED and nothing said so. `QuorumResult.split_view_resistant`
+  (`2 × receipts > directory`) is reported in JSON; the CLI warns when the
+  dossier's cosigners are not a majority and, separately, when the chosen
+  gate would admit one. THREAT_MODEL.md has the row; the live test
+  `split_view_below_a_majority_is_reported_not_hidden` reproduces it.
+- `witness submit --out dossier.json` from the journal's own directory
+  wrote the file and the cache, then reported "No such file or directory"
+  and exited 1 (`Path::parent()` of a bare filename is `Some("")`).
+
+### Added
+
+- **Sealed journals**: `JournaledLog::create_sealed` /
+  `resume_with_identity` and Python `open(path, identity_seed=, seal=True)`
+  keep the identity seed out of the journal; the header pins only the
+  public key and the seed comes from your KMS / secrets manager on every
+  start. Resume without it, or with the wrong seed, is refused.
+- **Cross-agent features everywhere, not just Rust.** Python:
+  `append_authorization_event(kind, scope, counterparty)`,
+  `append_external_anchor`, `verify_handoff_binding`,
+  `verify_authorization_binding`. MCP: `record_handoff` and
+  `record_authorization` tools. CLI: `witness-log bind <a.json> <b.json>
+  [--json]` matches two agents' handoff and authorization leaves (exit 0
+  bound, 30 mismatch, 10 nothing to bind).
 
 ### Docs
 
-- Quickstarts (Python, Rust, CLI) rewritten as educational walkthroughs.
-- New wiki pages: Architecture, How a leaf becomes a proof, Witness protocol
-  walkthrough, Redaction explained, Keys and identity, Comparison, Glossary,
-  Troubleshooting, and two end-to-end tutorials (payments agent, multi-agent
-  handoff).
-- README restructured around a 15-second demo GIF and stage-by-stage
-  graphics (`docs/assets/`), with a "what makes it different" section.
+- README no longer claims `pip install witness-log` / `cargo install
+  witness-log-cli` work before publication; measured cost is stated as
+  tens of microseconds; leaves are described accurately as unsigned
+  records under an identity-signed checkpoint; a "Where it sits" section
+  positions the project under AP2 / verifiable-intent / x402 mandates and
+  beside SCITT (RFC 9943).
+- Wiki: named comparison (Tessera, Microsoft AGT, Signet, immudb,
+  agent-receipts, mandate schemes, SCITT), sealed journals, `bind`, split
+  views; quickstarts rewritten as educational walkthroughs; ten new pages.
+- README restructured around a 15-second demo GIF and stage graphics.
 
 ## 0.3.3 — 2026-10-11
 
