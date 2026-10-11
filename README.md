@@ -9,7 +9,7 @@
 <p align="center">
 <a href="https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml"><img src="https://github.com/0xAndersen/witness-log/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/0xAndersen/witness-log/releases/latest"><img src="https://img.shields.io/github/v/release/0xAndersen/witness-log?label=release" alt="Release"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 <a href="spec/SPEC.md"><img src="https://img.shields.io/badge/spec-SPEC.md%20v0.3-informational" alt="Spec"></a>
 <a href="examples/swarm/reports/outside-3000.md"><img src="https://img.shields.io/badge/swarm-3%2C000%20agents%20%C2%B7%200%20failures-success" alt="Swarm"></a>
 </p>
@@ -357,9 +357,11 @@ recruited: see `GOVERNANCE.md` and `deploy/witness/AGENT_OPERATOR.md`.
 
 ## License
 
-AGPL-3.0; see `LICENSE`. A deliberate choice for a trust layer: derivatives, including ones offered as a
-network service, must stay open. `GOVERNANCE.md` has the reasoning on keeping this infrastructure federated
-rather than single-vendor.
+Apache-2.0; see `LICENSE` and `NOTICE`. Releases through 0.3.4 were AGPL-3.0; the project relicensed so the
+client library can be imported into any agent, including inside organisations whose legal review does not admit
+copyleft in-process. What keeps the infrastructure federated is the protocol, not the license: the wire format
+is specified with a conformance corpus, the witness protocol is the public `c2sp.org/tlog-witness`, and anyone
+can run a witness or a verifier. The name is not granted with the code (see `NOTICE`).
 
 ## Contributing
 

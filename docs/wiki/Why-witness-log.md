@@ -48,13 +48,14 @@ Three audiences need better than that:
   a false statement. It is proof the record was not altered afterwards and
   that independent parties saw the same record.
 
-## Why open, why AGPL, why a spec
+## Why open, why Apache-2.0, why a spec
 
 An audit trail only means something if anyone can check it with software
 they did not get from the party being audited. The wire format is
 specified (`spec/SPEC.md`) with a frozen conformance corpus, so a second
 implementation in any language proves agreement byte for byte. The code is
-AGPL-3.0; the format is free for anyone to implement.
+Apache-2.0 (releases through 0.3.4 were AGPL-3.0); the format is free for
+anyone to implement under any license.
 
 ## How it compares
 

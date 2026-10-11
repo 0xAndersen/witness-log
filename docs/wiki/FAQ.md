@@ -40,9 +40,12 @@ forward, yes, until you revoke it; the past is protected by witness
 cosignatures (a rewritten past would fail consistency at every witness).
 Disclose key custody; keep the seed in a secrets store.
 
-**Why AGPL?** So the verifier everyone relies on stays open, including when
-run as a service. The *format* is free for anyone to implement; the spec
-says so.
+**Why Apache-2.0?** So the client library can go into any agent process,
+including at organisations whose legal review does not admit copyleft
+in-process (releases through 0.3.4 were AGPL-3.0). Openness of the
+*network* comes from the protocol, not the license: the format is specified
+with a conformance corpus and the witness protocol is public C2SP, so
+anyone can run a witness or verifier. The name stays with the project.
 
 **Who runs the witnesses today?** The registry starts empty; the project's
 own witnesses are labelled `is_project_operated` and count as one bucket.

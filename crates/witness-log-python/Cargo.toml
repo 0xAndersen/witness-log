@@ -2,7 +2,7 @@
 name = "witness-log-python"
 version = "0.3.4"
 edition = "2021"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 repository = "https://github.com/0xAndersen/witness-log"
 authors = ["WitnessLog Contributors"]
 description = "Python bindings for witness-log-core, via PyO3."

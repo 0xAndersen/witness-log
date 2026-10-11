@@ -864,11 +864,11 @@ wider transparency-log ecosystem is by design (§9.3): WitnessLog
 checkpoints are C2SP signed notes, and any `c2sp.org/tlog-witness`
 witness can cosign them.
 
-The reference implementation is licensed AGPL-3.0-only (see `LICENSE`):
-derivatives of the *code*, including ones offered as a network service,
-must stay open. That license governs the code, not the format: an
-independent implementation of this specification is not a derivative
-work of the reference implementation. Specification changes go through
+The reference implementation is licensed Apache-2.0 (see `LICENSE` and
+`NOTICE`; releases through 0.3.4 were AGPL-3.0-only). That license governs
+the code, not the format: an independent implementation of this
+specification is not a derivative work of the reference implementation,
+and this specification may be implemented by anyone under any license. Specification changes go through
 the public process in `GOVERNANCE.md`, and conformance, not origin, is
 what makes an implementation a WitnessLog implementation.
 

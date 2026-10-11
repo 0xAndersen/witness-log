@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **License: Apache-2.0** (was AGPL-3.0-only through 0.3.4). The outside
+  evaluation's second-ranked blocker: copyleft on an in-process library
+  fails most enterprise and payment-company legal review, and every
+  comparable project is MIT/Apache. Openness of the network rests on the
+  public spec, the conformance corpus and the C2SP witness protocol, not
+  on the license. `NOTICE` records the relicensing and reserves the name.
+
 ## 0.3.4 — 2026-10-11
 
 Driven by an independent three-persona evaluation of 0.3.3 (agent

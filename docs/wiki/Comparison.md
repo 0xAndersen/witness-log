@@ -121,7 +121,7 @@ rest is that the *primitives* are commodity and the *package* is not.
 | **agent-receipts** | per-action signed receipts | signatures only | yes | yes | no | permissive |
 | **Mastercard Verifiable Intent / AP2 / x402 mandates** | signed authorization that an action was permitted | proves authorization, not the record of what was done | n/a | mandate, not execution | no | Apache-2.0 |
 | **SCITT (RFC 9943)** | a standards-track transparency service with receipts | yes, via transparency service and witnessing | not specified | agent-receipt drafts in progress | via the service | spec |
-| **witness-log** | per-agent Merkle log + independent witnessing + erasure + offline verdicts | yes: a rewrite is refused and recorded as evidence | yes, proofs intact | yes, two leaves per action, plus handoff and authorization leaves | yes, c2sp.org/tlog-witness, scored by organisation | AGPL-3.0 |
+| **witness-log** | per-agent Merkle log + independent witnessing + erasure + offline verdicts | yes: a rewrite is refused and recorded as evidence | yes, proofs intact | yes, two leaves per action, plus handoff and authorization leaves | yes, c2sp.org/tlog-witness, scored by organisation | Apache-2.0 |
 
 Two things to take from the table. witness-log is the only one combining
 witnessing with an agent schema and erasure, and that combination is what

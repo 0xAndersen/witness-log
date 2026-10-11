@@ -1,0 +1,25 @@
+witness-log
+Copyright 2026 witness-log contributors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this project except in compliance with the License. You may obtain a copy
+of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+Versions 0.1.0 through 0.3.4 were released under AGPL-3.0-only. From the
+commit that introduced this NOTICE onward, the whole repository (every crate,
+the Python package, the MCP server, the spec and the documentation) is
+Apache-2.0. The sole copyright holder of the prior versions consented to the
+relicensing.
+
+"witness-log" is the name of this project. Apache-2.0 §6 does not grant
+trademark rights: a fork is welcome to the code and must not present itself
+as witness-log or as compatible with it except by passing the conformance
+corpus in `corpus/` (see CONTRIBUTING.md).

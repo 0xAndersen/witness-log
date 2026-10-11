@@ -3,7 +3,7 @@
 **Witnessed, not trusted.** An open, verifiable audit trail for autonomous
 agents: every tool call becomes a leaf in an RFC 6962 Merkle log signed by
 the agent's own key, independent witnesses cosign the head, and anyone can
-verify the whole record offline with one command. AGPL-3.0, Rust core,
+verify the whole record offline with one command. Apache-2.0, Rust core,
 Python bindings, MCP server, CLI.
 
 | I want to… | Read |
