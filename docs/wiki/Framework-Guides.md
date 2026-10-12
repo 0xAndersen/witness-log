@@ -3,64 +3,119 @@
 Every framework below exposes a hook that fires before and after a tool
 call. The pattern is always the same: *intent leaf before, result leaf
 after, on one journal per agent identity*. `witness_log.step` does exactly
-this for a plain function. For LangChain/LangGraph, the OpenAI Agents SDK
-and CrewAI the package ships adapters as optional extras (0.3.6+); for the
-others, copy the snippet.
+this for a plain function; the adapters in `witness_log.integrations` do it
+through each framework's own hook, and record a handoff where the framework
+has one.
 
-| framework | install | adapter |
-|---|---|---|
-| LangChain / LangGraph | `pip install "witness-log[langchain]"` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` |
-| OpenAI Agents SDK | `pip install "witness-log[openai-agents]"` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
-| CrewAI | `pip install "witness-log[crewai]"` | `witness_log.integrations.crewai.witness_crewai` |
-| MCP hosts | `pip install "witness-log[mcp]"` | `witness-log-mcp` ([MCP integration](MCP-Integration)) |
+| framework | install | adapter | handoff |
+|---|---|---|---|
+| OpenAI Agents SDK | `pip install "witness-log[openai-agents]"` | `witness_log.integrations.openai_agents.WitnessLogAudit` / `WitnessLogHooks` | `on_handoff` |
+| LangGraph | `pip install "witness-log[langgraph]"` | `witness_log.integrations.langgraph.WitnessLogGraphHandler` | `Command(goto=...)` |
+| LangChain | `pip install "witness-log[langchain]"` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` | – |
+| Google ADK | `pip install "witness-log[google-adk]"` | `witness_log.integrations.google_adk.WitnessLogPlugin` | `transfer_to_agent` |
+| pydantic-ai | `pip install "witness-log[pydantic-ai]"` | `witness_log.integrations.pydantic_ai.WitnessLogToolset` | – |
+| AutoGen AgentChat | `pip install "witness-log[autogen]"` | `witness_log.integrations.autogen.WitnessLogAutoGen` | `HandoffMessage` |
+| LlamaIndex | `pip install "witness-log[llamaindex]"` | `witness_log.integrations.llamaindex.WitnessLogLlamaIndex` / `WitnessLogSpanHandler` | `handoff` tool |
+| CrewAI | `pip install "witness-log[crewai]"` | `witness_log.integrations.crewai.witness_crewai` | – |
+| MCP hosts | `pip install "witness-log[mcp]"` | `witness-log-mcp` ([MCP integration](MCP-Integration)) | – |
 
-Each adapter is under 100 lines, pairs calls by the framework's own call
-id (so parallel calls of one tool are recorded correctly), commits the same
-payload shapes as `step` (`{"tool", "args", "t"}` then `{"tool",
-"intent_index", "outcome", "value"}`), and never raises into the framework
-unless you pass `raise_on_error=True`; append failures are kept in
-`.errors`. `record_output=False` keeps return values out of the result leaf.
-Each is tested in CI by running the framework's own tool-calling loop with
-a fake model and verifying the dossier (`tests/test_integrations.py`).
+`pip install "witness-log[all-frameworks]"` installs every extra except
+`crewai` (its `mcp<2` pin conflicts with the `mcp` extra; give it its own
+environment).
 
-To get witnessed while the agent runs, add a background
-[`Witnesser`](Quickstart-Python) next to any of them:
+What is common to all of them:
+
+- **Pairing by the framework's call id.** Two parallel calls of one tool
+  are two intents and two results, each result's `intent_index` pointing
+  at its own intent. Nothing is keyed by tool name.
+- **Payload shapes match `step`**: the intent commits to `{"tool", "args",
+  "t", "call_id", "agent", ...}`, the result to `{"tool", "intent_index",
+  "outcome", "value", ...}` with `outcome` `"ok"` or `"error"`. A tool
+  that raises is recorded as `"error"` whether the framework re-raises it,
+  swallows it into a message for the model, or asks for a retry.
+- **Never raises into the framework** unless you pass
+  `raise_on_error=True`; append failures are kept in `.errors`.
+  `record_output=False` keeps return values out of the result leaf
+  (errors are still recorded).
+- **One log or one journal per agent.** Every adapter takes either a
+  `JournaledLog` (the whole run in one journal) or an
+  `AgentJournals` (one journal per agent name under a directory). With
+  journals a handoff writes a `HandoffAttestation` `Sent` leaf in the
+  source agent's journal and `Received` in the target's, over the same
+  state bytes, so [`witness-log bind`](Tutorial-Multi-Agent-Handoff) (or
+  `witness_log.profiles.ap2.bind_dossiers` in Python) proves the two
+  journals agree on who handed what to whom. With one log the handoff is
+  the handoff tool's own intent / result pair, annotated `handoff_to`.
+- **Payloads are kept for disclosure.** The adapter's `Recorder` keeps the
+  exact bytes it appended (`.recorder.payloads`, or
+  `journals.recorder(name).payloads`), so a leaf can later be disclosed as
+  leaf + payload + salt (`AgentJournals.disclose(i)`,
+  `witness_log.profiles.ap2.dispute_export`) or erased
+  (`AgentJournals.forget(i)`).
+- **Tested against the real framework, nightly.** Each adapter has a test
+  that imports the installed framework and runs its own tool-calling loop
+  with a scripted model; the [`frameworks-live` workflow](Framework-Adapters-CI)
+  installs the latest release of each framework from PyPI and fails if the
+  test is skipped or breaks.
+
+```python
+# one journal per agent, sealed identities from your KMS; every adapter takes `journals` in place of a log
+from agents import Runner
+from witness_log.integrations import AgentJournals
+from witness_log.integrations.openai_agents import WitnessLogHooks
+
+journals = AgentJournals("audit/", seed_for=kms.seed_for, sealed=True)
+await Runner.run(triage_agent, "bill me", hooks=WitnessLogHooks(journals))
+journals.export_dossiers()                 # audit/<agent>.dossier.json, one per agent
+journals.disclose(0, agent="triage")       # {"leaf", "payload", "salt", "verified": True}
+journals.forget(0, agent="triage")         # right to be forgotten; the dossier still verifies
+```
+
+`journals.witness("trusted.json")` runs one witnessing round per journal
+against your trusted directory and rewrites each dossier with the
+cosignatures it collected.
+
+To get witnessed *while* the agent runs, add a background
+[`Witnesser`](Quickstart-Python) next to any single log:
 `w = witness_log.Witnesser(log, "trusted.json", "agent.jsonl")`, then
 `w.request()` whenever you like and `w.flush(timeout)` at the end.
 
-## LangChain / LangGraph (Python)
+## OpenAI Agents SDK
 
 ```python
 import witness_log
-from witness_log.integrations.langchain import WitnessLogCallbackHandler
+from agents import Runner, add_trace_processor
+from witness_log.integrations.openai_agents import WitnessLogAudit
 
-log = witness_log.open("agent.jsonl")
-handler = WitnessLogCallbackHandler(log)
-
-agent.invoke({"messages": [...]}, config={"callbacks": [handler]})   # create_agent / AgentExecutor
-graph.invoke(state, config={"callbacks": [handler]})                 # LangGraph: same config
+audit = WitnessLogAudit("audit/", seed_for=kms.seed_for, sealed=True)   # one journal per agent.name
+add_trace_processor(audit.processor())                                 # completes tools that raise through
+result = await Runner.run(triage_agent, "bill me", hooks=audit.hooks)
+audit.export_dossiers()                                                # audit/triage.dossier.json, audit/billing.dossier.json
 ```
 
-Without the extra, the handler is `on_tool_start` / `on_tool_end` /
-`on_tool_error` keyed by `run_id`; the 0.3.5 version of this page recorded
-every result under the name `"tool"`, which the adapter fixes.
+For one journal shared by the run, `WitnessLogHooks(witness_log.open("agent.jsonl"))`
+as `hooks=`. No `context=` is required.
 
-## OpenAI Agents SDK (Python)
+What the adapter handles in this SDK specifically (tested against
+`openai-agents` 0.23 with its `agents.testing.ScriptedModel`):
 
-```python
-import witness_log
-from agents import Runner
-from witness_log.integrations.openai_agents import WitnessLogHooks
+- Calls are keyed by `ToolContext.tool_call_id` and the arguments come
+  from `ToolContext.tool_arguments` (the model's raw JSON, parsed). The
+  0.3.5 wiki snippet keyed by tool name and raised `KeyError` when one
+  tool was called twice in parallel.
+- A tool that raises is replaced, before `on_tool_end` sees it, by the
+  string *"An error occurred while running the tool. Please try again."*;
+  the real exception goes only to the trace span as *"Error running tool
+  (non-fatal)"*. The adapter reads the span error (or recognises the
+  default text when tracing is off) and records `outcome: "error"`.
+- A tool declared with `failure_error_function=None` raises through the
+  run and never reaches `on_tool_end`; `audit.processor()` is a
+  `TracingProcessor` that writes that result leaf when the function span
+  ends. Nothing is exported anywhere by it.
+- `on_handoff` writes `Sent` in the source agent's journal, `Received` in
+  the target's, and an intent / result pair named `handoff` in the source.
 
-log = witness_log.open("agent.jsonl")
-await Runner.run(agent, "...", hooks=WitnessLogHooks(log))
-```
-
-The hooks key each call by `ToolContext.tool_call_id` and record
-`ToolContext.tool_arguments`. The 0.3.5 snippet on this page keyed by tool
-name and recorded no arguments; when the model called one tool twice in
-parallel it raised `KeyError` inside the run. Alternatively decorate the
-tool itself, arguments included:
+Alternatively decorate the tool itself, arguments included:
 
 ```python
 from agents import function_tool
@@ -70,6 +125,132 @@ from agents import function_tool
 def get_balance(account: str) -> dict:
     return {"account": account, "balance": 42}
 ```
+
+## LangGraph
+
+```python
+import witness_log
+from witness_log.integrations.langgraph import WitnessLogGraphHandler
+
+handler = WitnessLogGraphHandler(witness_log.open("graph.jsonl"))
+out = graph.invoke({"messages": [("user", "hi")]}, config={"callbacks": [handler]})
+```
+
+LangGraph runs tools through LangChain's callbacks, so this is the
+LangChain handler keyed by `run_id` with two additions: the node a tool
+runs in (`langgraph_node` in the callback metadata) is recorded as the
+agent and, with `AgentJournals`, selects the journal; and a tool or node
+that returns `Command(goto="other_node")` (the `create_handoff_tool` /
+supervisor pattern) is a handoff from the current node to `goto`. Tool
+errors are recorded as `"error"` whether `ToolNode(handle_tool_errors=True)`
+turns them into a message or they propagate.
+
+## LangChain
+
+```python
+import witness_log
+from witness_log.integrations.langchain import WitnessLogCallbackHandler
+
+handler = WitnessLogCallbackHandler(witness_log.open("agent.jsonl"))
+agent.invoke({"messages": [("user", "balances?")]}, config={"callbacks": [handler]})   # create_agent / AgentExecutor
+```
+
+`on_tool_start` / `on_tool_end` / `on_tool_error` keyed by `run_id`. Use
+the LangGraph handler above when the agent is a graph with several nodes.
+
+## Google ADK
+
+```python
+import witness_log
+from google.adk.apps import App
+from google.adk.runners import InMemoryRunner
+from witness_log.integrations.google_adk import WitnessLogPlugin
+
+plugin = WitnessLogPlugin(witness_log.open("agent.jsonl"))
+runner = InMemoryRunner(app=App(name="app", root_agent=root_agent, plugins=[plugin]))
+```
+
+A plugin applies to every agent under the runner (per-agent
+`before_tool_callback` / `after_tool_callback` do not). Calls are keyed by
+`ToolContext.function_call_id`, the agent is `ToolContext.agent_name`, a
+tool that raises reaches `on_tool_error_callback` and is recorded as
+`"error"` (the plugin returns `None` there, so ADK's own error handling is
+unchanged). When a tool sets `tool_context.actions.transfer_to_agent`
+(the built-in `transfer_to_agent`, which ADK adds for `sub_agents`), the
+result leaf carries `handoff_to` and, with `AgentJournals`, the two
+attestations are written. Tested against `google-adk` 2.11.
+
+## pydantic-ai
+
+```python
+import witness_log
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import FunctionToolset
+from witness_log.integrations.pydantic_ai import WitnessLogToolset
+
+tools = FunctionToolset([get_balance, send_invoice])
+agent = Agent(model, name="billing", toolsets=[WitnessLogToolset(tools, witness_log.open("agent.jsonl"))])  # model: "openai:gpt-4o", ...
+agent.run_sync("bill account a")
+```
+
+`WitnessLogToolset(wrapped, target)` is a `WrapperToolset`, so it takes
+the wrapped toolset first as pydantic-ai's own wrappers do. Calls are
+keyed by `RunContext.tool_call_id` and the recorded arguments are the
+validated ones. `ModelRetry` is recorded as `"error"` with `retry: true`;
+any other exception is recorded and re-raised unchanged. Tested against
+`pydantic-ai-slim` 2.55.
+
+## AutoGen AgentChat
+
+```python
+import witness_log
+from witness_log.integrations.autogen import WitnessLogAutoGen
+
+audit = WitnessLogAutoGen(witness_log.open("team.jsonl"))
+result = await audit.run(team, task="bill me")          # in place of await team.run(task=...)
+```
+
+AgentChat has no per-tool hook; what agents do is the event stream, so the
+adapter reads it. `ToolCallRequestEvent` is one intent per `FunctionCall`
+(keyed by its `id`), `ToolCallExecutionEvent` one result per
+`FunctionExecutionResult` (`outcome` from `is_error`), a `HandoffMessage` a
+handoff from `source` to `target`. To keep your own loop:
+
+```python
+async for event in audit.record(team.run_stream(task="bill me")):
+    ...                                                  # events pass through unchanged (Console works)
+```
+
+Tested against `autogen-agentchat` 0.7 with `autogen-ext`'s
+`ReplayChatCompletionClient`.
+
+## LlamaIndex
+
+```python
+import witness_log
+from witness_log.integrations.llamaindex import WitnessLogLlamaIndex
+
+audit = WitnessLogLlamaIndex(witness_log.open("agent.jsonl"))
+result = await audit.run(workflow, user_msg="bill me")   # in place of await workflow.run(user_msg=...)
+```
+
+`AgentWorkflow` / `FunctionAgent` / `ReActAgent` emit a `ToolCall` and a
+`ToolCallResult` (`tool_output.is_error`) per call with the model's
+`tool_id`; the current agent comes from the surrounding `AgentInput` /
+`AgentOutput` events. The built-in `handoff` tool (`can_handoff_to`) is
+recorded as a handoff to `to_agent`. For tools called outside an agent
+workflow, hook the instrumentation instead:
+
+```python
+from llama_index.core.instrumentation import get_dispatcher
+from witness_log.integrations.llamaindex import WitnessLogSpanHandler
+
+get_dispatcher().add_span_handler(WitnessLogSpanHandler(witness_log.open("tools.jsonl")))
+```
+
+That records the `FunctionTool.call` / `acall` spans: intent when the
+span opens, result when it exits or is dropped with an exception. Use one
+mechanism per log, not both. Tested against `llama-index-core` 0.14.
 
 ## CrewAI
 
@@ -97,7 +278,7 @@ def search(query: str) -> str:
 crewai pins `mcp<2`, so install the `crewai` and `mcp` extras in separate
 environments.
 
-## A shared helper for the other frameworks
+## A shared helper for anything else
 
 ```python
 # wl_audit.py
@@ -109,63 +290,17 @@ rec = Recorder(log)                               # rec.intent(tool, args) -> in
 intent, result = rec.intent, rec.result
 ```
 
-## AutoGen (AG2 / autogen-agentchat)
-
-Register decorated functions as tools; every invocation is recorded.
-
-```python
-import witness_log, wl_audit
-
-@witness_log.step(wl_audit.log)
-def run_sql(query: str) -> str:
-    return db.execute(query)
-
-assistant.register_for_llm(name="run_sql", description="Run SQL")(run_sql)
-user_proxy.register_for_execution(name="run_sql")(run_sql)
-```
-
-## Google ADK
-
-`before_tool_callback` / `after_tool_callback` on the agent.
-
-```python
-import wl_audit
-pending = {}
-
-def before_tool(tool, args, tool_context):
-    pending[tool_context.invocation_id] = wl_audit.intent(tool.name, args)
-def after_tool(tool, args, tool_context, tool_response):
-    wl_audit.result(tool.name, pending.pop(tool_context.invocation_id), tool_response)
-
-agent = LlmAgent(name="ops", model="gemini-2.5-pro", tools=[...],
-                 before_tool_callback=before_tool, after_tool_callback=after_tool)
-```
-
-## LlamaIndex
-
-Wrap `FunctionTool` callables with `@witness_log.step`, or use the
-instrumentation span handler for `FunctionTool.call` spans.
-
-```python
-from llama_index.core.tools import FunctionTool
-import witness_log, wl_audit
-
-@witness_log.step(wl_audit.log)
-def fetch_doc(doc_id: str) -> str: ...
-tools = [FunctionTool.from_defaults(fn=fetch_doc)]
-```
-
-## Anthropic / Claude API tool loop (hand-rolled)
+### Anthropic / Claude API tool loop (hand-rolled)
 
 ```python
 for block in response.content:
     if block.type == "tool_use":
-        i = wl_audit.intent(block.name, block.input)
+        i = wl_audit.intent(block.name, block.input, call_id=block.id)
         out = TOOLS[block.name](**block.input)
-        wl_audit.result(block.name, i, out)
+        wl_audit.result(block.name, i, out, call_id=block.id)
 ```
 
-## Claude Code hook (records every tool call the model makes)
+### Claude Code hook (records every tool call the model makes)
 
 `.claude/settings.json`:
 
@@ -193,10 +328,12 @@ call `append_audit_step`.
 
 ## After the run: checkpoint, witness, verify
 
-Whatever framework: `log.sync()`, then either a background
-`witness_log.Witnesser(log, "trusted.json", "agent.jsonl")` with
-`w.flush(timeout)` ([Quickstart: Python](Quickstart-Python) §5), or
+Whatever framework: `log.sync()` (or `journals.sync()`), then either a
+background `witness_log.Witnesser(log, "trusted.json", "agent.jsonl")` with
+`w.flush(timeout)` ([Quickstart: Python](Quickstart-Python) §5),
+`journals.witness("trusted.json")` for a set of journals, or
 `witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json`,
 then `witness-log verify dossier.json --identity <key> --directory trusted.json --min-witnesses N`
 with `N` no larger than the number of witnesses that can cosign (two local
-witnesses: `--min-witnesses 2`).
+witnesses: `--min-witnesses 2`). Two agents' dossiers that handed work to
+each other: `witness-log bind a.json b.json`.

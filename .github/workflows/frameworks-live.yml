@@ -1,0 +1,101 @@
+name: Framework adapters (live)
+
+# Each adapter in witness_log.integrations is run against the LATEST
+# release of its framework from PyPI, not the floor pinned in
+# pyproject.toml, with the framework's own tool-calling loop (a scripted
+# model, no network). An adapter that imports fine but crashes once the
+# real SDK calls it is exactly what this catches; the ordinary CI job
+# installs the pinned floors and stays green when a framework ships a
+# breaking release. Runs nightly, on demand, and on pull requests that
+# touch the adapters.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/witness-log-python/python/witness_log/integrations/**"
+      - "crates/witness-log-python/tests/test_*_live.py"
+      - "crates/witness-log-python/tests/test_integrations.py"
+      - "crates/witness-log-python/pyproject.toml"
+      - ".github/workflows/frameworks-live.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  adapter:
+    name: ${{ matrix.adapter }} (latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One framework's bad week must not hide the others' results.
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: openai-agents
+            packages: openai-agents
+            tests: tests/test_openai_agents_live.py tests/test_integrations.py::test_openai_agents_runner
+          - adapter: langchain
+            packages: langchain-core langchain
+            tests: tests/test_integrations.py::test_langchain_agent_loop
+          - adapter: langgraph
+            packages: langgraph langchain-core
+            tests: tests/test_langgraph_live.py
+          - adapter: google-adk
+            packages: google-adk
+            tests: tests/test_google_adk_live.py
+          - adapter: pydantic-ai
+            packages: pydantic-ai-slim
+            tests: tests/test_pydantic_ai_live.py
+          - adapter: autogen
+            packages: autogen-agentchat autogen-core autogen-ext
+            tests: tests/test_autogen_live.py
+          - adapter: llamaindex
+            packages: llama-index-core
+            tests: tests/test_llamaindex_live.py
+          - adapter: crewai
+            # crewai pins mcp<2; it gets this job's own environment anyway.
+            packages: crewai
+            tests: tests/test_integrations.py::test_crewai_crew
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel
+        working-directory: crates/witness-log-python
+        run: |
+          pip install --upgrade pip maturin pytest
+          maturin build --release
+      - name: Install the wheel and the latest ${{ matrix.adapter }} from PyPI
+        working-directory: crates/witness-log-python
+        run: |
+          pip install target/wheels/*.whl
+          pip install --upgrade ${{ matrix.packages }}
+          pip check
+      - name: Record the framework version under test
+        run: |
+          for p in ${{ matrix.packages }}; do
+            v=$(pip show "$p" 2>/dev/null | awk '/^Version:/ {print $2}')
+            echo "::notice title=${p}::${p} ${v}"
+            echo "${p}==${v}" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Adapter tests (a skip is a failure here)
+        working-directory: crates/witness-log-python
+        run: |
+          set -o pipefail
+          pytest -q -rs -p no:cacheprovider ${{ matrix.tests }} 2>&1 | tee out.txt
+          if grep -qE "^SKIPPED| skipped" out.txt; then
+            echo "::error title=${{ matrix.adapter }}::a test was skipped: the framework did not import, so the adapter was not exercised"
+            exit 1
+          fi
+      - name: Keep the output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frameworks-live-${{ matrix.adapter }}
+          path: crates/witness-log-python/out.txt
+          if-no-files-found: ignore

@@ -11,6 +11,7 @@
 - [Quickstart: CLI](Quickstart-CLI)
 - [MCP integration](MCP-Integration)
 - [Framework guides](Framework-Guides)
+  - [Adapters: nightly live run](Framework-Adapters-CI)
 - [Other languages](Other-Languages)
 
 **Tutorials**
