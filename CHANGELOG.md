@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+Findings from a 100,000-agent swarm run against 0.4.0 (`examples/swarm/outside_0_4.py`,
+37 personas covering every surface shipped in 0.4.0), each fixed with a
+regression test. No wire-format, leaf-encoding or verdict change.
+
+### Fixed
+
+- **Python: `verify_handoff_binding` and `verify_authorization_binding` return
+  `bool`.** They returned `None` for success and the reason for failure, so
+  the natural `if witness_log.verify_handoff_binding(...)` read a bound pair
+  as false. The reason is now `handoff_binding_error` /
+  `authorization_binding_error` (`None` when bound). Breaking for code that
+  tested `is None`.
+- **Node: `canonicalJson` is RFC 8785.** It escaped every non-ASCII character
+  as `\uXXXX`, so a payload with a non-ASCII key or value hashed differently
+  in Node and in Python; it now emits literal UTF-8 and the same `"nan"` /
+  `"inf"` strings for non-finite numbers. Tests pin the bytes to the Python
+  package's output.
+- **Python: `log.witnessed_dossier_json()`.** `to_dossier_json()` never holds
+  receipts, so an export taken after a successful `submit` (the MCP proxy's
+  `audit__export`, the hook daemon's `export`) came out CONSISTENT-UNWITNESSED.
+  `submit` and the `Witnesser` now save the round's responses in
+  `<journal>.witnesses.json` (`last_round`; the CLI ignores the field) and
+  `witnessed_dossier_json()` rebuilds the dossier with its cosignatures. The
+  proxy and the daemon witness the current head before exporting and export
+  that dossier.
+- **`witness-log-hookd` releases the journal before removing its socket**, so
+  a client that waits for the socket to disappear and then opens the journal
+  no longer races the lock.
+- `@witness-log/node` and the proxy/hook docs updated accordingly.
+
 ## 0.4.0 — 2026-10-12
 
 Driven by two outside evaluations of 0.3.6: a newcomer could not get from

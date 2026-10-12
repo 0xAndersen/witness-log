@@ -385,12 +385,14 @@ def test_cross_agent_leaves_and_bindings_from_python(tmp_path):
     lb = b.append_authorization_event("granted_to_me", scope, ia)
     leaf_a = json.dumps(json.loads(a.leaves_json())[la])
     leaf_b = json.dumps(json.loads(b.leaves_json())[lb])
-    assert witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_b) is None
+    assert witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_b) is True
+    assert witness_log.authorization_binding_error(ia, leaf_a, ib, leaf_b) is None
     wider = b.append_authorization_event(
         "granted_to_me", witness_log.canonical_json({"mandate_hash": "ab" * 32, "max_usd": 5000}), ia
     )
     leaf_w = json.dumps(json.loads(b.leaves_json())[wider])
-    assert "scope hashes do not match" in witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_w)
+    assert witness_log.verify_authorization_binding(ia, leaf_a, ib, leaf_w) is False
+    assert "scope hashes do not match" in witness_log.authorization_binding_error(ia, leaf_a, ib, leaf_w)
     with pytest.raises(ValueError):
         a.append_authorization_event("granted", scope, ib)
 
@@ -399,8 +401,10 @@ def test_cross_agent_leaves_and_bindings_from_python(tmp_path):
     hb = b.append_handoff_received(state, ia)
     sa = json.dumps(json.loads(a.leaves_json())[ha])
     sb = json.dumps(json.loads(b.leaves_json())[hb])
-    assert witness_log.verify_handoff_binding(ia, sa, ib, sb) is None
-    assert witness_log.verify_handoff_binding(ib, sb, ia, sa) is not None  # roles swapped
+    assert witness_log.verify_handoff_binding(ia, sa, ib, sb) is True
+    assert witness_log.handoff_binding_error(ia, sa, ib, sb) is None
+    assert witness_log.verify_handoff_binding(ib, sb, ia, sa) is False  # roles swapped
+    assert witness_log.handoff_binding_error(ib, sb, ia, sa)
 
     # An anchor's proof JSON is bound to its hash in the leaf.
     i = a.append_external_anchor("https://rekor.sigstore.dev/api/v1/log/entries/x", '{"logIndex":1}')

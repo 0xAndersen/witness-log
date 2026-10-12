@@ -258,7 +258,7 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
             hit = None
             reasons = []
             for r in recv:
-                err = _core.verify_handoff_binding(sid, json.dumps(s), rid, json.dumps(r))
+                err = _core.handoff_binding_error(sid, json.dumps(s), rid, json.dumps(r))
                 if err is None:
                     hit = r
                     break
@@ -276,7 +276,7 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
         hit = None
         reasons = []
         for lb in auth_b:
-            err = _core.verify_authorization_binding(ia, json.dumps(la), ib, json.dumps(lb))
+            err = _core.authorization_binding_error(ia, json.dumps(la), ib, json.dumps(lb))
             if err is None:
                 hit = lb
                 break

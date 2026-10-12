@@ -95,10 +95,14 @@ def load_state(path: str) -> Dict[str, Any]:
         sizes = raw["sizes"]
     else:  # legacy MCP format
         sizes = {k: v for k, v in raw.items() if isinstance(v, int) and len(k) == 64}
+    last = raw.get("last_round")
+    if not (isinstance(last, dict) and isinstance(last.get("size"), int) and isinstance(last.get("responses"), list)):
+        last = None
     return {
         "sizes": {str(k).lower(): int(v) for k, v in sizes.items() if isinstance(v, int) and v >= 0},
         "cosigned_size": int(raw.get("cosigned_size") or 0) if isinstance(raw.get("cosigned_size", 0), int) else 0,
         "cosigned_root": str(raw.get("cosigned_root") or ""),
+        "last_round": last,
     }
 
 
@@ -106,14 +110,17 @@ def save_state(path: str, state: Dict[str, Any]) -> None:
     """Atomic write (temp file, fsync, rename), mode 0600."""
     d = os.path.dirname(os.path.abspath(path))
     tmp = os.path.join(d, f".{os.path.basename(path)}.{os.getpid()}.{threading.get_ident()}.tmp")
-    data = json.dumps(
-        {
-            "sizes": dict(sorted(state["sizes"].items())),
-            "cosigned_size": state["cosigned_size"],
-            "cosigned_root": state["cosigned_root"],
-        },
-        indent=2,
-    ).encode()
+    doc: Dict[str, Any] = {
+        "sizes": dict(sorted(state["sizes"].items())),
+        "cosigned_size": state["cosigned_size"],
+        "cosigned_root": state["cosigned_root"],
+    }
+    if state.get("last_round"):
+        # The raw witness responses of the latest successful round, so a
+        # dossier with its cosignatures can be rebuilt later (``witnessed_dossier``)
+        # without another round. The CLI ignores this field.
+        doc["last_round"] = state["last_round"]
+    data = json.dumps(doc, indent=2).encode()
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, data)
@@ -250,12 +257,43 @@ def submit_round(
     if n > 0 and size >= state["cosigned_size"]:
         state["cosigned_size"] = size
         state["cosigned_root"] = log.root_hex_at(size) or ""
+        state["last_round"] = {"size": size, "responses": [[pk, body] for pk, body in responses], "directory": directory}
     try:
         save_state(state_path, state)
     except OSError as e:
         outcomes.append({"witness": None, "status": 0, "error": f"could not save {state_path}: {e}"})
     doc["witness_directory"] = directory
     return RoundResult(size, n, len(picks), outcomes, json.dumps(doc))
+
+
+def witnessed_dossier(log: Any, state_path: Optional[str] = None) -> Optional[str]:
+    """The dossier for the latest head this log got cosigned, rebuilt from
+    the responses ``submit``/``Witnesser`` saved in ``<journal>.witnesses.json``,
+    with the cosignatures and the directory of that round. ``None`` when no
+    round has succeeded. The head may be older than the current tree size:
+    that dossier still verifies WITNESSED for what it covers.
+
+    ``to_dossier_json()`` alone never carries receipts (the Rust log does
+    not hold them), which is how exports taken after a successful submit
+    came out CONSISTENT-UNWITNESSED in a 100,000-agent run."""
+    if state_path is None:
+        path = getattr(log, "path", None)
+        if path is None:
+            return None
+        state_path = f"{path()}.witnesses.json"
+    last = load_state(state_path).get("last_round")
+    if not last:
+        return None
+    try:
+        dossier_json, n = log.dossier_from_responses_at(int(last["size"]), [(pk, body) for pk, body in last["responses"]])
+    except Exception:  # noqa: BLE001 -- the journal was rewritten or truncated; nothing to rebuild
+        return None
+    if n == 0:
+        return None
+    doc = json.loads(dossier_json)
+    if last.get("directory") is not None:
+        doc["witness_directory"] = last["directory"]
+    return json.dumps(doc)
 
 
 # -------------------------------------------------------------- Witnesser

@@ -94,23 +94,29 @@ function wrapNative<T>(fn: () => T): T {
 export type Payload = Uint8Array | string | number | boolean | null | object;
 
 /**
- * Deterministic JSON bytes: sorted keys, no whitespace, non-ASCII escaped
- * as `\uXXXX`. Matches the Python package's `canonical_json` for strings,
- * integers, booleans, null, arrays and objects (floats may format
- * differently between the two languages). Never throws: `undefined` and
- * functions become null, bigint becomes a string, cycles become "<cycle>".
+ * RFC 8785 (JCS) bytes: object keys sorted by UTF-16 code units, no
+ * whitespace, numbers as ECMAScript `Number::toString`, only `"`, `\` and
+ * control characters escaped, everything else literal UTF-8. Byte-identical
+ * to the Python package's `canonical_json` (and any JCS implementation) for
+ * the same JSON value, which is what lets a disclosed payload's hash be
+ * recomputed in another language. Never throws: `undefined` and functions
+ * become null, NaN and infinities become the strings "nan", "inf", "-inf"
+ * (JCS has no spelling for them; the Python package does the same), bigint
+ * beyond 2^53 is formatted as the nearest double, cycles become "<cycle>".
  */
 export function canonicalJson(value: unknown): Uint8Array {
-  const out = stringifyCanonical(value, new Set());
-  return new TextEncoder().encode(out.replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
+  return new TextEncoder().encode(stringifyCanonical(value, new Set()));
 }
 
 function stringifyCanonical(v: unknown, seen: Set<unknown>): string {
   if (v === null || v === undefined || typeof v === "function" || typeof v === "symbol") return "null";
   if (typeof v === "string") return JSON.stringify(v);
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "bigint") return JSON.stringify(v.toString());
-  if (typeof v === "number") return Number.isFinite(v) ? JSON.stringify(v) : JSON.stringify(String(v));
+  if (typeof v === "bigint") return JSON.stringify(Number(v));
+  if (typeof v === "number") {
+    if (Number.isFinite(v)) return JSON.stringify(v);
+    return JSON.stringify(Number.isNaN(v) ? "nan" : v > 0 ? "inf" : "-inf");
+  }
   if (v instanceof Uint8Array) return JSON.stringify({ $bytes: Buffer.from(v).toString("base64") });
   if (v instanceof Date) return JSON.stringify(v.toISOString());
   if (typeof v === "object") {

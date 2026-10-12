@@ -240,9 +240,12 @@ def test_periodic_witnessing(tmp_path):
             time.sleep(0.05)
         assert st["last_verdict"] == "witnessed", st
         assert st["witnessed"] is True
-        c.call("tools/call", {"name": "echo", "arguments": {"n": 3}})  # one more; submitted on close
-        ex = c.call("tools/call", {"name": "audit__export"})["result"]["structuredContent"]
-        assert ex["verdict"] == "consistent_unwitnessed"  # head moved past the witnessed one
+        c.call("tools/call", {"name": "echo", "arguments": {"n": 3}})  # one more, not yet witnessed
+        # The export is what gets handed on, so it witnesses the current head
+        # first (a 100,000-agent run exported CONSISTENT-UNWITNESSED heads
+        # whenever the call count was not a multiple of --submit-every).
+        ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
+        assert ex["verdict"] == "witnessed", ex
     finally:
         assert c.close() == 0
         for httpd, _ in ws:

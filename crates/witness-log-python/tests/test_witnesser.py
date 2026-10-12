@@ -184,3 +184,31 @@ def test_asyncio_flush(tmp_path, witnesses):
 
     ok, dossier = asyncio.run(main())
     assert ok and _verify(dossier, log.identity_pubkey_hex(), d) == "witnessed"
+
+
+def test_witnessed_dossier_json_rebuilds_the_last_round(tmp_path, witnesses):
+    """`to_dossier_json()` never carries receipts (the Rust log does not hold
+    them), so an export taken after `submit` was CONSISTENT-UNWITNESSED in
+    the 100,000-agent run. The round's responses are now saved with the
+    client state and `witnessed_dossier_json()` rebuilds the dossier."""
+    d = {"witnesses": [w.entry for w in witnesses]}
+    p = str(tmp_path / "agent.jsonl")
+    log = wl.open(p)
+    assert log.witnessed_dossier_json() is None
+    log.append_intent(b"a")
+    log.sync()
+    r = log.submit(d, 2, 2)
+    assert r["verdict"] == "witnessed"
+    assert json.loads(log.to_dossier_json())["witness_receipts"] == []  # the plain export
+    wd = log.witnessed_dossier_json()
+    assert wd is not None and _verify(wd, log.identity_pubkey_hex(), d) == "witnessed"
+    # The head moves on: the rebuilt dossier is still the witnessed one, at its size.
+    log.append_intent(b"b")
+    log.sync()
+    wd2 = json.loads(log.witnessed_dossier_json())
+    assert wd2["checkpoint"]["tree_size"] == 1 and _verify(json.dumps(wd2), log.identity_pubkey_hex(), d) == "witnessed"
+    # A fresh open reads the same state from disk.
+    log.close()
+    again = wl.open(p)
+    assert json.loads(again.witnessed_dossier_json())["checkpoint"]["tree_size"] == 1
+    again.close()

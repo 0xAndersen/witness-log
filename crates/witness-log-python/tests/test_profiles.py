@@ -75,7 +75,7 @@ def test_record_grant_pair_binds(tmp_path):
     la = json.loads(a.leaves_json())[0]
     lb = json.loads(b.leaves_json())[0]
     assert la["authorization_scope_hash"] == lb["authorization_scope_hash"] == ap2.mandate_hash(MANDATE)
-    assert wl.verify_authorization_binding(A, json.dumps(la), B, json.dumps(lb)) is None
+    assert wl.verify_authorization_binding(A, json.dumps(la), B, json.dumps(lb)) is True
 
 
 def test_record_grant_validates_scope_and_counterparty(tmp_path):

@@ -79,7 +79,7 @@ class Hookd:
         self.directory = directory
         self.submit_every = submit_every
         self.log = open_journal(journal)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._since_submit = 0
         self.last_verdict: Optional[str] = None
         self._stop = threading.Event()
@@ -118,7 +118,13 @@ class Hookd:
         if op == "export":
             with self._lock:
                 self.log.sync()
-                data = self.log.to_dossier_json().encode()
+                if self.directory is not None and self._since_submit > 0:
+                    self._submit()  # the export is what gets handed on; witness the head first
+                dossier = self.log.to_dossier_json()
+                witnessed = self.log.witnessed_dossier_json()
+                if witnessed and json.loads(witnessed).get("checkpoint", {}).get("tree_size") == self.log.tree_size():
+                    dossier = witnessed
+                data = dossier.encode()
             path = self.log.path() + ".dossier.json"
             tmp = path + ".tmp"
             with open(tmp, "wb") as f:
@@ -237,6 +243,9 @@ class Hookd:
         self._stop.set()
 
     def close(self) -> None:
+        """Stop accepting, release the journal, then remove the socket file.
+        The order matters: a client that waits for the socket to disappear
+        and then opens the journal must not find the lock still held."""
         self._stop.set()
         if self._sock is not None:
             try:
@@ -244,15 +253,15 @@ class Hookd:
             except OSError:
                 pass
             self._sock = None
-            try:
-                os.unlink(self.socket_path)
-            except OSError:
-                pass
         try:
             if self.directory is not None and self._since_submit > 0:
                 self._submit()
             self.log.sync()
             self.log.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self.socket_path)
         except OSError:
             pass
 

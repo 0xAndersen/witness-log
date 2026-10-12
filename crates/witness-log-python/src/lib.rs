@@ -564,7 +564,7 @@ fn parse_auth_kind(kind: &str) -> PyResult<witness_log_core::leaf::Authorization
 /// objects from `leaves_json()` or a dossier's `leaves`. Returns None when
 /// they bind, else the reason they do not.
 #[pyfunction]
-fn verify_handoff_binding(
+fn handoff_binding_error(
     sender_identity_hex: &str,
     sender_leaf_json: &str,
     receiver_identity_hex: &str,
@@ -586,7 +586,7 @@ fn verify_handoff_binding(
 /// Match an AuthorizationEvent pair across two logs (SPEC §3.2). Returns
 /// None when they bind, else the reason.
 #[pyfunction]
-fn verify_authorization_binding(
+fn authorization_binding_error(
     party_a_identity_hex: &str,
     party_a_leaf_json: &str,
     party_b_identity_hex: &str,
@@ -603,6 +603,43 @@ fn verify_authorization_binding(
         &b,
     )
     .err())
+}
+
+/// True when a HandoffAttestation pair binds (SPEC §3.1). Until 0.4.0 this
+/// returned `None` for success and the reason for failure, which read as
+/// false in an `if`; the reason is now `handoff_binding_error`.
+#[pyfunction]
+fn verify_handoff_binding(
+    sender_identity_hex: &str,
+    sender_leaf_json: &str,
+    receiver_identity_hex: &str,
+    receiver_leaf_json: &str,
+) -> PyResult<bool> {
+    Ok(handoff_binding_error(
+        sender_identity_hex,
+        sender_leaf_json,
+        receiver_identity_hex,
+        receiver_leaf_json,
+    )?
+    .is_none())
+}
+
+/// True when an AuthorizationEvent pair binds (SPEC §3.2); the reason for a
+/// failure is `authorization_binding_error`.
+#[pyfunction]
+fn verify_authorization_binding(
+    party_a_identity_hex: &str,
+    party_a_leaf_json: &str,
+    party_b_identity_hex: &str,
+    party_b_leaf_json: &str,
+) -> PyResult<bool> {
+    Ok(authorization_binding_error(
+        party_a_identity_hex,
+        party_a_leaf_json,
+        party_b_identity_hex,
+        party_b_leaf_json,
+    )?
+    .is_none())
 }
 
 fn verify_error_to_py(e: VerifyError) -> PyErr {
@@ -1782,6 +1819,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(payload_hash, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_handoff_binding, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(handoff_binding_error, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(authorization_binding_error, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_authorization_binding, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_diverse_witnesses, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_witnesses, m)?)?;

@@ -166,7 +166,7 @@ def test_audit_one_journal_per_agent_with_handoff(tmp_path):
     # billing: Received attestation, then the tool pair.
     assert [l["leaf_type"] for l in b_leaves] == [5, 1, 2]
     assert b_leaves[0]["handoff_direction"] == "Received" and b_leaves[0]["counterparty_pubkey"] == tl.identity_pubkey_hex()
-    assert wl.verify_handoff_binding(tl.identity_pubkey_hex(), json.dumps(t_leaves[1]), bl.identity_pubkey_hex(), json.dumps(b_leaves[0])) is None
+    assert wl.verify_handoff_binding(tl.identity_pubkey_hex(), json.dumps(t_leaves[1]), bl.identity_pubkey_hex(), json.dumps(b_leaves[0])) is True
     tp = _payloads(audit.journals.recorder("triage"))
     assert tp[0]["tool"] == "handoff" and tp[0]["args"] == {"from": "triage", "to": "billing"}
     assert tp[2]["handoff_to"] == "billing" and tp[2]["sent_leaf"] == 1 and tp[2]["received_leaf"] == 0

@@ -121,7 +121,7 @@ def test_journals_per_node_with_handoff_attestations(tmp_path):
     assert [l["leaf_type"] for l in billing_leaves] == [5] and billing_leaves[0]["handoff_direction"] == "Received"
     sent = [l for l in tools_leaves if l["leaf_type"] == 5]
     assert len(sent) == 1 and sent[0]["handoff_direction"] == "Sent"
-    assert wl.verify_handoff_binding(j.identity("tools"), json.dumps(sent[0]), j.identity("billing"), json.dumps(billing_leaves[0])) is None
+    assert wl.verify_handoff_binding(j.identity("tools"), json.dumps(sent[0]), j.identity("billing"), json.dumps(billing_leaves[0])) is True
     hr = [v for v in _payloads(j.recorder("tools")).values() if v.get("tool") == "transfer_to_billing" and "outcome" in v][0]
     assert hr["handoff_leaves"] == [{"to": "billing", "sent_leaf": sent[0]["index"], "received_leaf": 0}]
     docs = j.export_dossiers()

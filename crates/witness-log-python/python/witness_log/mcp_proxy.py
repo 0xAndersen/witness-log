@@ -226,14 +226,16 @@ class Proxy:
 
     # -- injected tools -----------------------------------------------------------
 
-    def _status(self) -> Dict[str, Any]:
-        witnessed = False
+    def _witnessed_head(self) -> bool:
         try:
             st = json.loads(open(self.log.path() + ".witnesses.json", encoding="utf-8").read())  # noqa: SIM115
             size = int(st.get("cosigned_size") or 0)
-            witnessed = size == self.log.tree_size() and self.log.root_hex_at(size) == str(st.get("cosigned_root", "")).lower()
+            return size == self.log.tree_size() and self.log.root_hex_at(size) == str(st.get("cosigned_root", "")).lower()
         except (OSError, ValueError, TypeError):
-            pass
+            return False
+
+    def _status(self) -> Dict[str, Any]:
+        witnessed = self._witnessed_head()
         with self._state:
             return {
                 "server": self.name,
@@ -251,7 +253,24 @@ class Proxy:
         from . import _core
 
         self.log.sync()
+        if self.directory is not None:
+            # The export is what gets handed on: witness the current head
+            # first (synchronously, once, bounded by the round's timeout)
+            # instead of exporting whatever the last periodic round covered.
+            with self._state:
+                pending = self._since_submit > 0 or not self._witnessed_head()
+                if pending and not self._submitting:
+                    self._submitting = True
+                    self._since_submit = 0
+                else:
+                    pending = False
+            if pending:
+                self._submit()
         dossier = self.log.to_dossier_json()
+        if self.directory is not None:
+            witnessed = self.log.witnessed_dossier_json()
+            if witnessed and json.loads(witnessed).get("checkpoint", {}).get("tree_size") == self.log.tree_size():
+                dossier = witnessed
         data = dossier.encode()
         path = self.log.path() + ".dossier.json"
         tmp = path + ".tmp"

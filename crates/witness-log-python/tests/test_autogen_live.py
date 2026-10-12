@@ -103,7 +103,7 @@ def test_handoff_between_journals(tmp_path):
     # get_balance pair, transfer_to_billing tool pair, then handoff intent / Sent / result
     assert [l["leaf_type"] for l in t] == [1, 2, 1, 2, 1, 5, 2]
     assert [l["leaf_type"] for l in b] == [5] and b[0]["handoff_direction"] == "Received"
-    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(t[5]), j.identity("billing"), json.dumps(b[0])) is None
+    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(t[5]), j.identity("billing"), json.dumps(b[0])) is True
     tp = _payloads(j.recorder("triage"))
     assert tp[4]["tool"] == "handoff" and tp[6]["handoff_to"] == "billing" and tp[6]["sent_leaf"] == 5 and tp[6]["received_leaf"] == 0
     docs = j.export_dossiers(write=False)

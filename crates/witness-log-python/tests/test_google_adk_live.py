@@ -136,7 +136,7 @@ def test_transfer_to_agent_is_a_handoff_between_journals(tmp_path):
     assert tp[2]["handoff_to"] == "billing" and tp[2]["sent_leaf"] == 1 and tp[2]["received_leaf"] == 0
     # billing: Received, then its own tool pair
     assert [l["leaf_type"] for l in b] == [5, 1, 2]
-    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(t[1]), j.identity("billing"), json.dumps(b[0])) is None
+    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(t[1]), j.identity("billing"), json.dumps(b[0])) is True
     bp = _payloads(j.recorder("billing"))
     assert bp[1]["tool"] == "get_balance" and bp[1]["agent"] == "billing" and bp[2]["outcome"] == "ok"
 

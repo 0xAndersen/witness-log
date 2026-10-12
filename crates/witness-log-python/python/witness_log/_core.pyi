@@ -134,6 +134,9 @@ class JournaledLog:
     # Attached by ``witness_log/__init__.py`` (Python, not Rust); listed
     # here because they are methods of this class at runtime.
     def disclose(self, index: int) -> dict[str, Any]: ...
+    def witnessed_dossier_json(self, state_path: Optional[str] = None) -> Optional[str]:
+        """Dossier for the latest cosigned head, with its receipts, rebuilt
+        from ``<journal>.witnesses.json`` (attached in ``__init__``)."""
     def submit(
         self,
         directory: Any,
@@ -193,10 +196,22 @@ def payload_hash(payload: bytes, salt: bytes, index: int) -> str:
     """SPEC §8: ``SHA256(bucket_pad(payload) || salt || index)``, hex."""
 def verify_handoff_binding(
     sender_identity_hex: str, sender_leaf_json: str, receiver_identity_hex: str, receiver_leaf_json: str
-) -> Optional[str]: ...
+) -> bool:
+    """True when the Sent/Received pair binds (SPEC §3.1). The reason for a
+    failure is ``handoff_binding_error``. Until 0.4.0 this returned ``None``
+    on success and the reason on failure."""
+def handoff_binding_error(
+    sender_identity_hex: str, sender_leaf_json: str, receiver_identity_hex: str, receiver_leaf_json: str
+) -> Optional[str]:
+    """``None`` when the pair binds, else why not."""
 def verify_authorization_binding(
     party_a_identity_hex: str, party_a_leaf_json: str, party_b_identity_hex: str, party_b_leaf_json: str
-) -> Optional[str]: ...
+) -> bool:
+    """True when the AuthorizationEvent pair binds (SPEC §3.2)."""
+def authorization_binding_error(
+    party_a_identity_hex: str, party_a_leaf_json: str, party_b_identity_hex: str, party_b_leaf_json: str
+) -> Optional[str]:
+    """``None`` when the pair binds, else why not."""
 def select_diverse_witnesses(
     directory_json: str, subject_pubkey_hex: str, want: int, include_project_operated: bool = False
 ) -> str: ...

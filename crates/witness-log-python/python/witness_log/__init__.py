@@ -54,6 +54,9 @@ __all__ = [
     "verify_inclusion",
     "verify_handoff_binding",
     "verify_authorization_binding",
+    "handoff_binding_error",
+    "witnessed_dossier",
+    "authorization_binding_error",
     "select_diverse_witnesses",
     "select_witnesses",
     "witness_entry_independent",
@@ -80,7 +83,7 @@ __all__ = [
 __version__ = "0.4.0"
 
 from . import _core  # noqa: E402
-from .witnessing import Witnesser, WitnessStatus, submit_round  # noqa: E402
+from .witnessing import Witnesser, WitnessStatus, submit_round, witnessed_dossier  # noqa: E402
 
 #: The environment variable that names the environment variable holding
 #: the identity seed (32 bytes as 64 hex characters). Indirection so the
@@ -450,6 +453,16 @@ async def _asubmit(self: Any, directory: Any, want: Optional[int] = None, min: O
 JournaledLog.disclose = _disclose  # type: ignore[attr-defined]
 JournaledLog.submit = _submit  # type: ignore[attr-defined]
 JournaledLog.asubmit = _asubmit  # type: ignore[attr-defined]
+
+
+def _witnessed_dossier_json(self: Any, state_path: Optional[str] = None) -> Optional[str]:
+    """The dossier for the latest head witnesses cosigned, with those
+    cosignatures (rebuilt from ``<journal>.witnesses.json``); ``None`` before
+    the first successful ``submit``. See :func:`witnessed_dossier`."""
+    return witnessed_dossier(self, state_path)
+
+
+JournaledLog.witnessed_dossier_json = _witnessed_dossier_json  # type: ignore[attr-defined]
 WitnessLog.submit = _submit  # type: ignore[attr-defined]
 WitnessLog.asubmit = _asubmit  # type: ignore[attr-defined]
 

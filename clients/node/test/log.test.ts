@@ -262,3 +262,26 @@ describe("openLog, append, export, verify", () => {
     assert.throws(() => openLog(tempJournalPath(), { identitySeed: new Uint8Array(31) }), (e: unknown) => e instanceof WitnessLogError && e.code === "invalid");
   });
 });
+
+describe("canonicalJson is RFC 8785, byte-identical to the Python package", () => {
+  // Expected strings were produced by `witness_log.canonical_json` in Python.
+  const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+  it("UTF-16 key order, literal UTF-8, ES6 number formatting", () => {
+    assert.equal(
+      dec(canonicalJson({ "é": 1, z: 2, "😀": 3, A: [1.5, "\u0007", 1e21, 1e-7, 10.0, -0] })),
+      '{"A":[1.5,"\\u0007",1e+21,1e-7,10,0],"z":2,"é":1,"😀":3}',
+    );
+  });
+  it("only quote, backslash and control characters are escaped", () => {
+    assert.equal(
+      dec(canonicalJson({ k: 'quote " backslash \\ nl \n tab \t del \x7f' })),
+      '{"k":"quote \\" backslash \\\\ nl \\n tab \\t del \x7f"}',
+    );
+  });
+  it("literals and safe integers", () => {
+    assert.equal(dec(canonicalJson({ b: [null, true, false, 0, -1, 2 ** 53 - 1] })), '{"b":[null,true,false,0,-1,9007199254740991]}');
+  });
+  it("non-finite numbers become the same strings as in Python", () => {
+    assert.equal(dec(canonicalJson({ nan: NaN, inf: Infinity })), '{"inf":"inf","nan":"nan"}');
+  });
+});

@@ -87,7 +87,7 @@ def test_uppercase_counterparty_binds(tmp_path):
     sb = b.append_handoff_received(b"task", ia.upper())
     la = json.loads(a.leaves_json())[sa]
     lb = json.loads(b.leaves_json())[sb]
-    assert wl.verify_handoff_binding(ia, json.dumps(la), ib, json.dumps(lb)) is None
+    assert wl.verify_handoff_binding(ia, json.dumps(la), ib, json.dumps(lb)) is True
 
 
 def test_ttl_expiry_rotates_session_instead_of_diverging():

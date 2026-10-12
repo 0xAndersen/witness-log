@@ -116,7 +116,7 @@ def test_handoff_between_journals(tmp_path):
     assert [l["leaf_type"] for l in t][-3:] == [1, 5, 2] and len(t) == 9
     assert [l["leaf_type"] for l in b] == [5] and b[0]["handoff_direction"] == "Received"
     sent = t[-2]
-    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(sent), j.identity("billing"), json.dumps(b[0])) is None
+    assert wl.verify_handoff_binding(j.identity("triage"), json.dumps(sent), j.identity("billing"), json.dumps(b[0])) is True
     tp = _payloads(j.recorder("triage"))
     res = tp[t[-1]["index"]]
     assert res["tool"] == "handoff" and res["handoff_to"] == "billing" and res["sent_leaf"] == sent["index"] and res["received_leaf"] == 0

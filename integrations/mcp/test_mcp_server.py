@@ -262,8 +262,7 @@ async def test_every_tool_over_stdio(tmp_path):
             assert (
                 wl.verify_handoff_binding(
                     da["identity_pubkey"], json.dumps(sent), db["identity_pubkey"], json.dumps(recv)
-                )
-                is None
+                ) is True
             )
     finally:
         for httpd, _ in witnesses:

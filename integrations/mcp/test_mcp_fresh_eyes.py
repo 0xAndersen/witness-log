@@ -142,8 +142,10 @@ async def test_witnessed_dossier_is_kept_and_state_is_cli_compatible(tmp_path):
             assert exp["witnessed_size"] == 1 and len(exp["witnessed_dossier"]["witness_receipts"]) == 2
             assert len(exp["dossier"]["leaves"]) == 2
         state = json.loads((home / "a" / "journal.jsonl.witnesses.json").read_text())
-        # The CLI's format: `witness-log witness submit` reads and keeps it.
-        assert state["cosigned_size"] == 1 and set(state) == {"sizes", "cosigned_size", "cosigned_root"}
+        # The CLI's format: `witness-log witness submit` reads it (and ignores
+        # `last_round`, the saved responses `witnessed_dossier_json` rebuilds from).
+        assert state["cosigned_size"] == 1 and set(state) == {"sizes", "cosigned_size", "cosigned_root", "last_round"}
+        assert state["last_round"]["size"] == 1 and len(state["last_round"]["responses"]) == 2
         assert len(state["sizes"]) == 2
         assert init["identity_pubkey"]
     finally:

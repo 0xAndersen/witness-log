@@ -120,8 +120,9 @@ witness-log bind orch.json worker.json
 ```
 
 Or in Python, `witness_log.verify_handoff_binding(sender_id, sender_leaf_json,
-receiver_id, receiver_leaf_json)` returns `None` when they bind and the
-reason otherwise. By hand, the match is:
+receiver_id, receiver_leaf_json)` returns `True` when they bind;
+`witness_log.handoff_binding_error(...)` returns the reason when they do
+not (`None` when they bind). By hand, the match is:
 
 ```python
 import json
