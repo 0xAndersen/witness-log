@@ -167,6 +167,13 @@ So:
 - Back up `witness.key`, `witness.json` and `logs/` **together, atomically**
   (filesystem snapshot, or stop the service, copy, start).
 - Restore all three from the **same** snapshot, or none.
+- A consistent snapshot can still be **stale**: if the witness cosigned
+  anything after the snapshot was taken, the restored copy has forgotten
+  those heads and could cosign a fork between the remembered size and the
+  forgotten one. Restore only a snapshot taken after the last cosignature
+  (for example after a clean stop); if the witness served after the newest
+  snapshot you have, retire the key as below. Automatic VM or volume
+  snapshots (daily, hourly) are a reason to retire, not to restore.
 - If `logs/` is lost for good, retire the key: generate a new witness with
   `init` in a fresh directory, publish the new entry, and ask verifiers to
   drop the old one. Do not reuse the key.
