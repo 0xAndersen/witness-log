@@ -12,7 +12,7 @@ keywords = ["transparency-log", "witness", "c2sp", "ai-agents", "audit"]
 categories = ["cryptography"]
 
 [dependencies]
-witness-log-core = { version = "0.4.0", path = "../witness-log-core" }
+witness-log-core = { version = "0.4.1", path = "../witness-log-core" }
 ed25519-dalek = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

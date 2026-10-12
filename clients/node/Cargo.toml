@@ -13,8 +13,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-witness-log-core = { version = "0.4.0", path = "../../crates/witness-log-core" }
-witness-log-network = { version = "0.4.0", path = "../../crates/witness-log-network" }
+witness-log-core = { version = "0.4.1", path = "../../crates/witness-log-core" }
+witness-log-network = { version = "0.4.1", path = "../../crates/witness-log-network" }
 napi = { version = "3", default-features = false, features = ["napi8"] }
 napi-derive = "3"
 ed25519-dalek = "2.1.1"

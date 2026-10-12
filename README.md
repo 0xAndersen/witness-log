@@ -206,6 +206,7 @@ ten scenarios, 100 scenarios against the released CLI and wheel, and a 200-agent
 | [1,000 agents, before fixes](examples/swarm/reports/outside-1000-before-fixes.md) | 3 design defects found and fixed |
 | [1,000 agents after fixes](examples/swarm/reports/outside-1000.md) | 92,301 operations, 0 failures |
 | [3,000 agents, 100 witnesses](examples/swarm/reports/outside-3000.md) | 325,708 operations, 0 failures |
+| [100,000 agents, 37 personas, every 0.4.0 surface](examples/swarm/reports/outside-100k.md) | 4,644,419 operations; 5 defects found, fixed in 0.4.1 |
 | [same-key rewrite](examples/rewrite-attack/run.py) | refused with evidence (`422`), `diff` flags equivocation |
 
 Two outside evaluations ran witness-log and its competitors on the same workloads; every defect they found is
@@ -227,6 +228,6 @@ deploy/witness/   Dockerfile, compose, systemd, cloud-init, fleet.py, OPERATORS.
 registry/         the public witness list (CI-validated) and directory builder
 ```
 
-Pre-1.0 (v0.4.0). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
+Pre-1.0 (v0.4.1). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
 [`docs/rfcs/`](docs/rfcs) and `GOVERNANCE.md`; vulnerability disclosure in `SECURITY.md`;
 [Contributing](docs/wiki/Contributing.md).

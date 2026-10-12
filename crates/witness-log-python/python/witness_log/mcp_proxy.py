@@ -284,7 +284,13 @@ class Proxy:
                     td = f.read()
             except OSError:
                 td = None
-        verdict = json.loads(_core.verify_dossier_json(dossier, 0.66, self.log.identity_pubkey_hex(), td)).get("verdict")
+        # Gate on a cosignature count, the same gate `submit` used (its
+        # default of 2 from two operators), not on a fraction of the whole
+        # directory: against a 20-witness directory the fraction gate turned
+        # every WITNESSED export into CONSISTENT-UNWITNESSED.
+        verdict = json.loads(
+            _core.verify_dossier_json(dossier, 0.66, self.log.identity_pubkey_hex(), td, 2 if td else None)
+        ).get("verdict")
         return {"path": path, "sha256": _sha256(data), "bytes": len(data), "verdict": verdict}
 
     def _answer_local(self, msg_id: Any, tool: str) -> None:

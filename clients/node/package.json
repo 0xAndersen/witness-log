@@ -1,6 +1,6 @@
 {
   "name": "@witness-log/node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "witness-log for Node.js: append-only, witnessed Merkle audit logs for AI agents, with the Rust core as a prebuilt native addon. openLog, append, forget, disclose, exportDossier, submit to witnesses, verify offline.",
   "license": "Apache-2.0",
   "type": "module",
@@ -73,10 +73,10 @@
     "@witness-log/client": "^0.2.0"
   },
   "optionalDependencies": {
-    "@witness-log/node-linux-x64-gnu": "0.1.0",
-    "@witness-log/node-linux-arm64-gnu": "0.1.0",
-    "@witness-log/node-darwin-x64": "0.1.0",
-    "@witness-log/node-darwin-arm64": "0.1.0",
-    "@witness-log/node-win32-x64-msvc": "0.1.0"
+    "@witness-log/node-linux-x64-gnu": "0.1.1",
+    "@witness-log/node-linux-arm64-gnu": "0.1.1",
+    "@witness-log/node-darwin-x64": "0.1.1",
+    "@witness-log/node-darwin-arm64": "0.1.1",
+    "@witness-log/node-win32-x64-msvc": "0.1.1"
   }
 }

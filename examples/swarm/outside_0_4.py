@@ -324,48 +324,62 @@ def p_submitter(a: Agent):
     log.close()
 
 
+def _sealed_child(journal: str, seed_hex: str) -> None:
+    """Runs in its own process: WITNESS_LOG_IDENTITY_SEED_ENV is process-wide,
+    and a sibling thread's seedless open() must not inherit this seed."""
+    import witness_log as wl
+    notes = []
+    env_name = "WL_SEED"
+    os.environ[env_name] = seed_hex
+    os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"] = env_name
+    log = wl.open(journal)
+    for _ in range(4):
+        log.append_intent(b"sealed")
+    log.sync()
+    ident = log.identity_pubkey_hex()
+    log.close()
+    header = open(journal).readline()
+    if seed_hex in header:
+        notes.append("sealed journal header contains the seed")
+    if ident not in header:
+        notes.append("sealed journal header lacks the identity pubkey")
+    del os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"]
+    try:
+        wl.open(journal)
+        notes.append("sealed journal resumed without a seed")
+    except Exception:
+        pass
+    try:
+        wl.open(journal, hashlib.sha256(b"wrong" + bytes.fromhex(seed_hex)).digest())
+        notes.append("sealed journal resumed with the wrong seed")
+    except Exception:
+        pass
+    log = wl.open(journal, bytes.fromhex(seed_hex))
+    if log.identity_pubkey_hex() != ident:
+        notes.append("identity changed across a sealed resume")
+    log.append_intent(b"after")
+    rep = json.loads(wl.verify_dossier_json(log.to_dossier_json(), 0.66, ident))
+    log.close()
+    print(json.dumps({"notes": notes, "verdict": rep["verdict"], "ident": ident}))
+
+
 def p_sealed(a: Agent):
     """Sealed from the environment: no seed in the header, resume needs the seed, wrong seed refused."""
-    import witness_log as wl
-    env_name = f"WL_SEED_{a.idx}"
-    os.environ[env_name] = a.seed.hex()
-    os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"] = env_name
-    try:
-        log = a.op("open.sealed_env", wl.open, a.journal)
-        for i in range(4):
-            a.op("append_intent", log.append_intent, b"sealed")
-        a.op("sync", log.sync)
-        ident = log.identity_pubkey_hex()
-        log.close()
-        header = open(a.journal).readline()
-        if a.seed.hex() in header:
-            a.notes.append("sealed journal header contains the seed")
-        if ident not in header:
-            a.notes.append("sealed journal header lacks the identity pubkey")
-    finally:
-        del os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"]
-    try:
-        wl.open(a.journal)
-        a.notes.append("sealed journal resumed without a seed")
-    except Exception:
-        pass
-    try:
-        wl.open(a.journal, hashlib.sha256(b"wrong" + a.seed).digest())
-        a.notes.append("sealed journal resumed with the wrong seed")
-    except Exception:
-        pass
-    log = a.op("resume_with_identity", wl.open, a.journal, a.seed)
-    if log.identity_pubkey_hex() != ident:
-        a.notes.append("identity changed across a sealed resume")
-    a.op("append_intent", log.append_intent, b"after")
-    dossier = log.to_dossier_json()
-    verify_py(a, dossier, ident, None)
-    log.close()
-    code, so, se = a.op("cli.log.info.seed_env", lambda: (lambda r: (r.returncode, r.stdout, r.stderr))(
-        subprocess.run([a.cfg["cli"], "log", "info", a.journal, "--identity-seed-env", env_name], capture_output=True, text=True, timeout=60)))
+    r = subprocess.run([sys.executable, "-c", f"import sys; sys.path.insert(0, {HERE!r}); import outside_0_4 as m; m._sealed_child(sys.argv[1], sys.argv[2])", a.journal, a.seed.hex()],
+                       capture_output=True, text=True, timeout=120)
+    a.ops.append({"op": "sealed.child", "ms": 0, "ok": r.returncode == 0, **({} if r.returncode == 0 else {"error": r.stderr[-300:]})})
+    if r.returncode != 0:
+        return
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    a.notes += out["notes"]
+    a.verdicts.append(out["verdict"])
+    env = {**os.environ, "WL_SEED_FILE_UNUSED": "1"}
+    seed_file = os.path.join(a.dir, "seed.hex")
+    open(seed_file, "w").write(a.seed.hex())
+    code, so, se = a.op("cli.log.info.seed_file", lambda: (lambda x: (x.returncode, x.stdout, x.stderr))(
+        subprocess.run([a.cfg["cli"], "log", "info", a.journal, "--identity-seed-file", seed_file], capture_output=True, text=True, timeout=60, env=env)))
     if code != 0:
-        a.notes.append(f"CLI log info --identity-seed-env on a Python-sealed journal: exit {code} {se[-120:]}")
-    del os.environ[env_name]
+        a.notes.append(f"CLI log info --identity-seed-file on a Python-sealed journal: exit {code} {se[-120:]}")
 
 
 def p_jcs_user(a: Agent):

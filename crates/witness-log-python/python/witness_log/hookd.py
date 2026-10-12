@@ -185,15 +185,26 @@ class Hookd:
             finally:
                 probe.close()
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        old = os.umask(0o177)
+        # Bind inside a private 0700 directory, set the mode, then move the
+        # socket into place: no moment where it is reachable with a wider
+        # mode, and no umask change (umask is process-wide; the in-process
+        # daemon of a 100,000-agent run made sibling threads' CLI output 0600).
+        import tempfile
+
+        private = tempfile.mkdtemp(prefix=".hookd-", dir=os.path.dirname(os.path.abspath(self.socket_path)) or ".")
+        staged = os.path.join(private, "s")
         try:
-            s.bind(self.socket_path)
-        finally:
-            os.umask(old)
-        try:
-            os.chmod(self.socket_path, 0o600)
+            s.bind(staged)
+            os.chmod(staged, 0o600)
+            os.rename(staged, self.socket_path)
         except OSError:
-            pass
+            s.close()
+            raise
+        finally:
+            try:
+                os.rmdir(private)
+            except OSError:
+                pass
         s.listen(64)
         s.settimeout(0.5)
         self._sock = s

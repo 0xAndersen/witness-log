@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-10-12
 
 Findings from a 100,000-agent swarm run against 0.4.0 (`examples/swarm/outside_0_4.py`,
 37 personas covering every surface shipped in 0.4.0), each fixed with a
@@ -30,7 +30,15 @@ regression test. No wire-format, leaf-encoding or verdict change.
 - **`witness-log-hookd` releases the journal before removing its socket**, so
   a client that waits for the socket to disappear and then opens the journal
   no longer races the lock.
-- `@witness-log/node` and the proxy/hook docs updated accordingly.
+- **MCP proxy `audit__export`** witnesses the current head before exporting
+  and gates its verdict on the cosignature count `submit` used instead of
+  0.66 of the directory (against a 20-witness directory no export could be
+  WITNESSED). Same count gate in the hook daemon.
+- **`witness-log-hookd` no longer changes the process umask** around its
+  socket bind (it bound in a private directory and moves the socket into
+  place); an in-process daemon had made sibling threads' CLI output 0600.
+- `@witness-log/node` and the proxy/hook docs updated accordingly. Report:
+  `examples/swarm/reports/outside-100k.md`.
 
 ## 0.4.0 — 2026-10-12
 

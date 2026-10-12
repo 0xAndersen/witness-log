@@ -225,7 +225,15 @@ def _witness(i):
 
 def test_periodic_witnessing(tmp_path):
     ws = [_witness(i) for i in range(2)]
-    directory = {"witnesses": [e for _, e in ws]}
+    # Two live witnesses in a directory of eight: the export's verdict must
+    # gate on the cosignature count submit used, not on 0.66 of the
+    # directory (a 20-witness directory turned every export into
+    # CONSISTENT-UNWITNESSED in the 100,000-agent run).
+    dead = [
+        json.loads(wl.witness_entry_independent(f"dead{i}.test/px", f"Dead Org {i}", f"http://127.0.0.1:1/{i}", "%064x" % (i + 1)))
+        for i in range(6)
+    ]
+    directory = {"witnesses": [e for _, e in ws] + dead}
     dpath = tmp_path / "trusted.json"
     dpath.write_text(json.dumps(directory))
     c = ProxyClient(tmp_path, "--directory", str(dpath), "--submit-every", "2")
