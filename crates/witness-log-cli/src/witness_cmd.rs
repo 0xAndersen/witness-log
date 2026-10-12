@@ -48,7 +48,8 @@ use witness_log_network::tlog_witness::{
 use witness_log_network::{Dossier, WitnessDirectory, WitnessEntry, WitnessReceipt};
 
 const USAGE: &str = "usage:
-  witness-log witness init <dir> --name <key-name> [--org <operator>] [--url <public-url>] [--compute <provider>]
+  witness-log witness init <dir> --name <key-name> [--org <operator>] [--url <public-url>] [--compute <provider>] [--json]
+      --json  print one JSON object (identity hex, c2sp vkey, org, data dir) and nothing else on stdout
   witness-log witness serve <dir> [--listen 127.0.0.1:7380] [--open-enrollment]
                                   [--max-logs 100000] [--max-conns 256] [--max-conns-per-ip 16]
                                   [--enroll-rate 600]
@@ -57,7 +58,13 @@ const USAGE: &str = "usage:
   witness-log witness add-log <dir> <origin> <log-vkey>
   witness-log witness info <http://witness-url>
   witness-log witness submit <journal> --directory <witnesses.json> [--out dossier.json]
-                                  [--state <client-state.json>] [--min <n>]
+                                  [--state <client-state.json>] [--min <n>] [--allow-partial]
+                                  [--identity-seed-env NAME | --identity-seed-file F]
+      Fail-closed: --min defaults to max(2, N/2+1) for a directory of N witnesses, and
+      any witness answering 422 (your history contradicts what it cosigned) makes the
+      exit status 20. --allow-partial instead verifies the dossier it wrote against the
+      directory and exits by verdict (0 WITNESSED, 10 CONSISTENT-UNWITNESSED, ...).
+      A sealed journal needs its seed: --identity-seed-env NAME or --identity-seed-file F.
   witness-log witness verify-evidence <evidence.json>
       Check an equivocation proof a witness recorded under evidence/:
       exit 0 if it proves two signed roots for one size, 30 if not.";
@@ -174,8 +181,23 @@ fn valid_key_name(n: &str) -> bool {
 }
 
 /// Write `data` to `path` atomically and durably: temp file, fsync,
-/// rename, fsync the directory. Mode 0600 on Unix.
-fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+/// rename, fsync the directory. Mode 0600 on Unix: for keys, state and
+/// anything else only this user should read.
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    atomic_write_mode(path, data, 0o600)
+}
+
+/// `atomic_write` for files meant to be handed on: dossiers, directories,
+/// notes. Mode 0644 on Unix. Until 0.3.6 dossiers were written 0600, so a
+/// dossier produced under one account could not be read by the service
+/// account or CI step meant to verify it.
+pub(crate) fn atomic_write_shared(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    atomic_write_mode(path, data, 0o644)
+}
+
+fn atomic_write_mode(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
+    #[cfg(not(unix))]
+    let _ = mode;
     // `Path::new("dossier.json").parent()` is `Some("")`, not `None`;
     // opening "" to fsync it fails with ENOENT after the rename already
     // succeeded, which made `submit --out dossier.json` in the current
@@ -195,7 +217,7 @@ fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
+            opts.mode(mode);
         }
         let mut f = opts.open(&tmp)?;
         f.write_all(data)?;
@@ -369,14 +391,29 @@ fn cmd_init(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     let entry = directory_entry(&cfg, &key);
+    let vkey = VerifierKey::for_cosignature(&cfg.key_name, &key.verifying_key()).encode();
+    if args.iter().any(|a| a == "--json") {
+        // One object, nothing else on stdout: a script reads it with one
+        // JSON parse. `entry` is the directory entry other tools accept.
+        let doc = serde_json::json!({
+            "identity": hex::encode(key.verifying_key().to_bytes()),
+            "vkey": vkey,
+            "org": cfg.operator_org,
+            "name": cfg.key_name,
+            "url": cfg.public_url,
+            "data_dir": dir.display().to_string(),
+            "entry": entry,
+        });
+        println!("{}", serde_json::to_string(&doc).unwrap_or_default());
+        return ExitCode::SUCCESS;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&entry).unwrap_or_default()
     );
     eprintln!(
-        "\nwitness initialised in {}\n  vkey: {}\n  The JSON above is this witness's directory entry. Publish it;\n  verifiers add it to the directory they trust.",
+        "\nwitness initialised in {}\n  vkey: {vkey}\n  The JSON above is this witness's directory entry. Publish it;\n  verifiers add it to the directory they trust.",
         dir.display(),
-        VerifierKey::for_cosignature(&cfg.key_name, &key.verifying_key()).encode()
     );
     ExitCode::SUCCESS
 }
@@ -973,63 +1010,69 @@ struct ClientState {
 
 struct Outcome {
     name: String,
-    result: Result<(WitnessReceipt, u64), String>,
+    result: Result<(WitnessReceipt, u64), SubmitError>,
 }
 
-fn cmd_submit(args: &[String]) -> ExitCode {
-    let Some(journal) = args.first().filter(|a| !a.starts_with("--")) else {
-        return usage_err("witness submit: missing <journal>");
-    };
-    // Every other argument is a known flag followed by its value. 0.3.5
-    // ignored anything else, so `--mni 2` silently meant `--min 1`.
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--directory" | "--out" | "--state" | "--min" => i += 2,
-            other => {
-                return usage_err(&format!(
-                    "witness submit: unexpected argument {other:?} \
-                     (flags: --directory, --out, --state, --min)"
-                ))
-            }
-        }
-    }
-    let Some(dir_path) = flag(args, "--directory") else {
-        return usage_err("witness submit: --directory <witnesses.json> is required");
-    };
-    let out_path = flag(args, "--out").unwrap_or_else(|| "dossier.json".into());
-    let state_path = flag(args, "--state").unwrap_or_else(|| format!("{journal}.witnesses.json"));
-    let min: usize = match flag(args, "--min").map(|v| v.parse()) {
-        None => 1,
-        Some(Ok(n)) => n,
-        Some(Err(_)) => return usage_err("--min: expected an integer"),
-    };
+/// Why one witness did not cosign.
+#[derive(Debug, Clone)]
+pub(crate) enum SubmitError {
+    /// HTTP 422: the witness holds a cosigned head this history does not
+    /// extend. Either a fork or a corrupted journal; never safe to ignore.
+    Refused(String),
+    Other(String),
+}
 
-    let (log, report) = match witness_log_core::journal::LeafJournal::replay(journal) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("{journal}: {e}");
-            return ExitCode::from(2);
+impl std::fmt::Display for SubmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(t) => write!(
+                f,
+                "REFUSED (422): not consistent with what this witness already cosigned for \
+                 this identity -- a forked history or a corrupted journal. {t}"
+            ),
+            Self::Other(t) => f.write_str(t),
         }
-    };
-    if report.dropped_trailing_lines > 0 {
-        eprintln!(
-            "note: {journal} has a partially written last line (agent mid-write?); \
-             submitting the {} complete leaves",
-            log.tree_size()
-        );
     }
-    let directory: WitnessDirectory = match crate::read_input(&dir_path)
-        .map_err(|e| e.to_string())
-        .and_then(|s| crate::parse_directory(&s))
-    {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{dir_path}: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    let mut state: ClientState = fs::read_to_string(&state_path)
+}
+
+impl From<String> for SubmitError {
+    fn from(s: String) -> Self {
+        Self::Other(s)
+    }
+}
+
+/// The default `--min`: a strict majority of the directory, and never
+/// fewer than the two independent operators WITNESSED needs. A directory
+/// of one witness therefore cannot pass without an explicit `--min 1`.
+pub(crate) fn default_min(directory_size: usize) -> usize {
+    (directory_size / 2 + 1).max(2)
+}
+
+/// What one submission round produced.
+pub(crate) struct SubmitReport {
+    pub dossier: Dossier,
+    pub cosigned: usize,
+    pub refused_422: usize,
+    /// One line per witness, as printed to stderr: `✓ name cosigned size N`
+    /// or `✗ name <reason>`.
+    pub lines: Vec<String>,
+    pub origin: String,
+}
+
+/// Submit `log`'s head to `contact` (a subset of `directory`, or all of
+/// it), persist client state to `state_path`, and return the dossier.
+/// Shared by `witness submit` and `journal serve`'s POST /submit.
+///
+/// `Err` is a problem with the inputs or a refusal to proceed (the
+/// journal contradicts a head witnesses already cosigned); a witness that
+/// declined is reported in the `SubmitReport`, not as `Err`.
+pub(crate) fn submit_log(
+    log: &witness_log_core::log::WitnessLog,
+    directory: &WitnessDirectory,
+    contact: &[WitnessEntry],
+    state_path: &str,
+) -> Result<SubmitReport, String> {
+    let mut state: ClientState = fs::read_to_string(state_path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -1064,35 +1107,35 @@ fn cmd_submit(args: &[String]) -> ExitCode {
                 .unwrap_or(false),
         };
         if !consistent {
-            eprintln!(
+            return Err(format!(
                 "REFUSING TO SUBMIT: witnesses already cosigned size {} for this identity, and \
-                 {journal} (size {}) does not extend it. Submitting would get this identity \
+                 this journal (size {}) does not extend it. Submitting would get this identity \
                  recorded as equivocating. Restore the journal that was witnessed. \
                  (State: {state_path})",
                 state.cosigned_size, checkpoint.tree_size
-            );
-            return ExitCode::from(1);
+            ));
         }
     }
-    let note = match checkpoint.sign(&key) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("could not sign checkpoint: {e}");
-            return ExitCode::from(1);
-        }
-    };
+    let note = checkpoint
+        .sign(&key)
+        .map_err(|e| format!("could not sign checkpoint: {e}"))?;
     let native = log.checkpoint(&key);
-    // WitnessLog is Send but not Sync; proofs are cheap, so share it
-    // behind a mutex rather than precomputing every possible proof.
-    let log = Arc::new(Mutex::new(log));
+    // Each worker needs consistency proofs for whatever `old` size its
+    // witness reports. The leaf hashes are enough for that, and a
+    // MerkleTree is Sync, so rebuild one and share it rather than locking
+    // the log (which `journal serve` holds under its own mutex).
+    let mut tree = witness_log_core::merkle::MerkleTree::new();
+    for l in log.leaves() {
+        tree.append(witness_log_core::merkle::leaf_hash(&l.canonical_bytes()));
+    }
+    let tree = Arc::new(tree);
 
     // Ask every witness in parallel.
-    let handles: Vec<_> = directory
-        .witnesses
+    let handles: Vec<_> = contact
         .iter()
         .map(|w| {
             let w = w.clone();
-            let log = log.clone();
+            let tree = tree.clone();
             let checkpoint = checkpoint.clone();
             let note = note.clone();
             let native = native.clone();
@@ -1103,23 +1146,30 @@ fn cmd_submit(args: &[String]) -> ExitCode {
                 .unwrap_or(0);
             std::thread::spawn(move || Outcome {
                 name: w.name.clone(),
-                result: submit_one(&w, &log, &checkpoint, &note, &native, known),
+                result: submit_one(&w, &tree, &checkpoint, &note, &native, known),
             })
         })
         .collect();
 
     let mut receipts = Vec::new();
+    let mut lines = Vec::new();
+    let mut refused_422 = 0usize;
     for h in handles {
         let Ok(o) = h.join() else { continue };
         match o.result {
             Ok((receipt, size)) => {
-                eprintln!("  ✓ {:<32} cosigned size {size}", o.name);
+                lines.push(format!("  ✓ {:<32} cosigned size {size}", o.name));
                 state
                     .sizes
                     .insert(receipt.witness_pubkey.to_ascii_lowercase(), size);
-                receipts.push(receipt);
+                receipts.push(receipt.with_witness_name(o.name));
             }
-            Err(e) => eprintln!("  ✗ {:<32} {e}", o.name),
+            Err(e) => {
+                if matches!(e, SubmitError::Refused(_)) {
+                    refused_422 += 1;
+                }
+                lines.push(format!("  ✗ {:<32} {e}", o.name));
+            }
         }
     }
     if !receipts.is_empty() && checkpoint.tree_size >= state.cosigned_size {
@@ -1127,64 +1177,185 @@ fn cmd_submit(args: &[String]) -> ExitCode {
         state.cosigned_root = hex::encode(checkpoint.root_hash);
     }
     if let Ok(json) = serde_json::to_vec_pretty(&state) {
-        if let Err(e) = atomic_write(Path::new(&state_path), &json) {
-            eprintln!("warning: could not save {state_path}: {e}");
+        if let Err(e) = atomic_write(Path::new(state_path), &json) {
+            lines.push(format!("warning: could not save {state_path}: {e}"));
         }
     }
 
-    let n = receipts.len();
-    let log = log.lock().unwrap_or_else(|e| e.into_inner());
-    let mut dossier = Dossier::from_log(&log, native).with_receipts(receipts);
-    dossier.witness_directory = directory;
-    let json = match serde_json::to_vec_pretty(&dossier) {
+    let cosigned = receipts.len();
+    let mut dossier = Dossier::from_log(log, native).with_receipts(receipts);
+    dossier.witness_directory = directory.clone();
+    Ok(SubmitReport {
+        dossier,
+        cosigned,
+        refused_422,
+        lines,
+        origin,
+    })
+}
+
+fn cmd_submit(args: &[String]) -> ExitCode {
+    let Some(journal) = args.first().filter(|a| !a.starts_with("--")) else {
+        return usage_err("witness submit: missing <journal>");
+    };
+    // Every other argument is a known flag followed by its value. 0.3.5
+    // ignored anything else, so `--mni 2` silently meant `--min 1`.
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--directory"
+            | "--out"
+            | "--state"
+            | "--min"
+            | "--identity-seed-env"
+            | "--identity-seed-file" => i += 2,
+            "--allow-partial" => i += 1,
+            other => {
+                return usage_err(&format!(
+                    "witness submit: unexpected argument {other:?} \
+                     (flags: --directory, --out, --state, --min, --allow-partial, \
+                     --identity-seed-env, --identity-seed-file)"
+                ))
+            }
+        }
+    }
+    let Some(dir_path) = flag(args, "--directory") else {
+        return usage_err("witness submit: --directory <witnesses.json> is required");
+    };
+    let out_path = flag(args, "--out").unwrap_or_else(|| "dossier.json".into());
+    let state_path = flag(args, "--state").unwrap_or_else(|| format!("{journal}.witnesses.json"));
+    let allow_partial = args.iter().any(|a| a == "--allow-partial");
+    let seed = match crate::identity_seed_from_args(args) {
+        Ok(s) => s,
+        Err(e) => return usage_err(&e),
+    };
+
+    let (log, report) = match crate::replay_journal(journal, seed.as_deref()) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{journal}: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if report.dropped_trailing_lines > 0 {
+        eprintln!(
+            "note: {journal} has a partially written last line (agent mid-write?); \
+             submitting the {} complete leaves",
+            log.tree_size()
+        );
+    }
+    let directory: WitnessDirectory = match crate::read_input(&dir_path)
+        .map_err(|e| e.to_string())
+        .and_then(|s| crate::parse_directory(&s))
+    {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{dir_path}: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let n_dir = directory.witnesses.len();
+    let min: usize = match flag(args, "--min").map(|v| v.parse()) {
+        None => default_min(n_dir),
+        Some(Ok(n)) => n,
+        Some(Err(_)) => return usage_err("--min: expected an integer"),
+    };
+    if min > n_dir {
+        eprintln!(
+            "note: --min {min} cannot be met by a directory of {n_dir} witness{} \
+             (the default is max(2, N/2+1); pass --min explicitly to lower it)",
+            if n_dir == 1 { "" } else { "es" }
+        );
+    }
+
+    let result = match submit_log(&log, &directory, &directory.witnesses, &state_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(1);
+        }
+    };
+    for l in &result.lines {
+        eprintln!("{l}");
+    }
+    let json = match serde_json::to_vec_pretty(&result.dossier) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(1);
         }
     };
-    if let Err(e) = atomic_write(Path::new(&out_path), &json) {
+    if let Err(e) = atomic_write_shared(Path::new(&out_path), &json) {
         eprintln!("{out_path}: {e}");
         return ExitCode::from(1);
     }
+    let n = result.cosigned;
     eprintln!(
-        "{n}/{} witnesses cosigned size {} for {origin}\nwrote {out_path}. Verify with:\n  witness-log verify {out_path} --identity {} --directory <directory YOU trust>",
-        dossier.witness_directory.witnesses.len(),
-        dossier.checkpoint.tree_size,
-        dossier.identity_pubkey
+        "{n}/{} witnesses cosigned size {} for {}\nwrote {out_path}. Verify with:\n  witness-log verify {out_path} --identity {} --directory <directory YOU trust>",
+        n_dir,
+        result.dossier.checkpoint.tree_size,
+        result.origin,
+        result.dossier.identity_pubkey
     );
-    if n >= min {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
+    // The verdict this dossier reaches against the directory it was
+    // submitted to, with the count gate at --min. Printed either way;
+    // with --allow-partial it is also the exit status.
+    let ctx = witness_log_network::VerifyContext {
+        expected_identity_pubkey: Some(&result.dossier.identity_pubkey),
+        trusted_directory: Some(&directory),
+        min_receipts: Some(min),
+    };
+    let verdict = result
+        .dossier
+        .verify(crate::DEFAULT_QUORUM_THRESHOLD, &ctx)
+        .verdict;
+    eprintln!("verdict against {dir_path} with --min {min}: {verdict}");
+    if allow_partial {
+        return crate::exit_code_for(&verdict);
     }
+    if result.refused_422 > 0 {
+        eprintln!(
+            "{} witness{} REFUSED this history (422). Nothing about this is partial: a \
+             refusal means the journal does not extend a head that witness already cosigned. \
+             Exit 20. (--allow-partial exits by verdict instead.)",
+            result.refused_422,
+            if result.refused_422 == 1 { "" } else { "es" }
+        );
+        return ExitCode::from(crate::exit::SUBMIT_REFUSED);
+    }
+    if n < min {
+        eprintln!(
+            "{n} cosignature{} is below --min {min}; exit 20. (--allow-partial exits by verdict instead.)",
+            if n == 1 { "" } else { "s" }
+        );
+        return ExitCode::from(crate::exit::SUBMIT_REFUSED);
+    }
+    ExitCode::SUCCESS
 }
 
 /// Submit to one witness, following at most two 409 corrections.
 fn submit_one(
     w: &WitnessEntry,
-    log: &Mutex<witness_log_core::log::WitnessLog>,
+    tree: &witness_log_core::merkle::MerkleTree,
     checkpoint: &Checkpoint,
     note: &witness_log_core::c2sp::SignedNote,
     native: &witness_log_core::sth::SignedTreeHead,
     known: u64,
-) -> Result<(WitnessReceipt, u64), String> {
+) -> Result<(WitnessReceipt, u64), SubmitError> {
     let url = http::parse_url(&w.url)?;
     let size = checkpoint.tree_size;
     let wpk: [u8; 32] = hex::decode(w.pubkey.trim())
         .ok()
         .and_then(|b| b.try_into().ok())
-        .ok_or("directory entry has a malformed pubkey")?;
+        .ok_or_else(|| "directory entry has a malformed pubkey".to_string())?;
     let wvk = ed25519_dalek::VerifyingKey::from_bytes(&wpk)
-        .map_err(|_| "directory entry pubkey is not a valid key")?;
+        .map_err(|_| "directory entry pubkey is not a valid key".to_string())?;
     let mut old = if known > size { 0 } else { known };
     for _ in 0..5 {
         let proof = if old == 0 || old == size {
             vec![]
         } else {
-            log.lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .consistency_proof(old)
+            tree.consistency_proof(old, size)
                 .ok_or_else(|| format!("cannot prove consistency from size {old}"))?
         };
         let body = AddCheckpointRequest {
@@ -1218,7 +1389,9 @@ fn submit_one(
                         return Ok((c.receipt, size));
                     }
                 }
-                return Err("HTTP 200 but no valid cosignature from the expected key".into());
+                return Err("HTTP 200 but no valid cosignature from the expected key"
+                    .to_string()
+                    .into());
             }
             409 => {
                 let theirs: u64 = text
@@ -1229,7 +1402,8 @@ fn submit_one(
                     return Err(format!(
                         "witness already cosigned size {theirs} but this journal has only {size} \
                          leaves -- truncated journal, or this log was forked"
-                    ));
+                    )
+                    .into());
                 }
                 old = theirs;
             }
@@ -1240,17 +1414,15 @@ fn submit_one(
             429 | 503 if retry_after.is_some_and(|s| s <= 60) => {
                 std::thread::sleep(Duration::from_secs(retry_after.unwrap_or(1)));
             }
-            422 => {
-                return Err(format!(
-                    "REFUSED (422): not consistent with what this witness already cosigned for \
-                     this identity -- a forked history or a corrupted journal. {}",
-                    text.trim()
-                ))
-            }
-            other => return Err(format!("HTTP {other}: {}", text.trim())),
+            422 => return Err(SubmitError::Refused(text.trim().to_string())),
+            other => return Err(format!("HTTP {other}: {}", text.trim()).into()),
         }
     }
-    Err("no cosignature after 5 attempts (size changes or rate limiting)".into())
+    Err(
+        "no cosignature after 5 attempts (size changes or rate limiting)"
+            .to_string()
+            .into(),
+    )
 }
 
 #[cfg(test)]

@@ -30,17 +30,26 @@ pub const DEFAULT_QUORUM_THRESHOLD: f64 = 0.66;
 /// reserved for the strongest verdict specifically so the common
 /// `cmd && next` shell idiom means "proceed only if genuinely witnessed"
 /// — the safe default for anyone who doesn't read the docs.
-mod exit {
+pub(crate) mod exit {
     pub const WITNESSED: u8 = 0;
     pub const CONSISTENT_UNWITNESSED: u8 = 10;
+    /// `verify --strict` only: the verdict was not WITNESSED, or it was
+    /// but by fewer than a majority of the directory. Opt-in; the default
+    /// run still exits by the verdict codes above.
+    pub const STRICT_FAILED: u8 = 11;
     pub const UNANCHORED: u8 = 20;
+    /// `submit`: a witness refused the history (422), or fewer than
+    /// `--min` cosigned. Same number as UNANCHORED on purpose: both mean
+    /// "do not treat this as witnessed", and a script that gates on 0 or
+    /// on `< 20` reads either correctly.
+    pub const SUBMIT_REFUSED: u8 = 20;
     pub const DIVERGED: u8 = 30;
     /// Usage error, unreadable file, unparseable input — a problem with
     /// the invocation, distinct from any verdict about a dossier.
     pub const USAGE: u8 = 2;
 }
 
-fn exit_code_for(verdict: &witness_log_network::Verdict) -> ExitCode {
+pub(crate) fn exit_code_for(verdict: &witness_log_network::Verdict) -> ExitCode {
     ExitCode::from(match verdict {
         witness_log_network::Verdict::Witnessed => exit::WITNESSED,
         witness_log_network::Verdict::ConsistentUnwitnessed => exit::CONSISTENT_UNWITNESSED,
@@ -69,14 +78,21 @@ struct Options {
     /// witness receipts (even if present) cannot be scored and the
     /// verdict is capped at UNANCHORED.
     directory_path: Option<String>,
+    /// Exit 11 unless the verdict is WITNESSED by a majority of the
+    /// directory. For gates that must never pass on anything weaker.
+    strict: bool,
 }
 
 mod bind;
 mod c2sp_cmd;
 mod demo;
 mod diff;
+mod directory_cmd;
 mod explain;
 mod http;
+mod journal_serve;
+mod log_cmd;
+mod testnet;
 mod witness_cmd;
 
 const HELP: &str = "witness-log — verifiable audit trails for autonomous agents
@@ -91,7 +107,7 @@ USAGE:
       --tamper   build a convincing forgery instead, and watch it get caught.
 
   witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain]
-                      [--identity <hex-pubkey>] [--directory <path.json>]
+                      [--identity <hex-pubkey>] [--directory <path.json>] [--strict]
       Verify a dossier fully offline: checkpoint signature, identity
       binding, leaf structural validity, key-binding validity, Merkle
       continuity rebuilt from the leaves, and (when a --directory is
@@ -103,8 +119,47 @@ USAGE:
       --explain    one line under each check: what it does and doesn't prove
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  path to a witness directory YOU trust, obtained out-of-band
+      --strict     exit 11 unless WITNESSED by a majority of the directory
       Omitting --identity and --directory is a legal, meaningful run, but
       the strongest reachable verdict is UNANCHORED — see `explain` below.
+
+  witness-log testnet up [--witnesses 3] [--dir ./.witness-testnet] [--out trusted.json]
+  witness-log testnet status [--dir DIR]
+  witness-log testnet down [--dir DIR]
+      Three local witnesses under distinct operator names, as child
+      processes of this binary on loopback ports, plus the directory file
+      that lists them. Enough to reach WITNESSED on one machine with no
+      code: up, `log append`, `submit`, `verify`, down.
+
+  witness-log log init <journal> [--sealed] [--identity-seed-env NAME | --identity-seed-file F]
+  witness-log log append <journal> --intent|--result|--memory <payload|@file|-> [--outcome ok|error]
+  witness-log log forget <journal> <index>
+  witness-log log export <journal> --out dossier.json
+  witness-log log disclose <journal> <index>
+  witness-log log info <journal>
+      An agent's journal from the shell. `append` takes the payload as an
+      argument, from @file, or from stdin (-). `disclose` prints the leaf,
+      its payload hash and its salt so a verifier can recompute
+      SHA256(bucket_pad(payload) || salt || index) for that one entry.
+      A sealed journal (--sealed) never stores its seed; every command then
+      needs --identity-seed-env NAME or --identity-seed-file F.
+
+  witness-log submit <journal> --directory <trusted.json> [--out dossier.json] [--min N] [--allow-partial]
+      Same as `witness submit`: get the journal's head cosigned and write
+      a dossier. Fail-closed: --min defaults to a majority of the directory
+      (never below 2) and a 422 refusal exits 20.
+
+  witness-log journal serve <journal> [--listen 127.0.0.1:7390] [--directory trusted.json] [--allow-remote]
+      A small HTTP front for one journal, for agents in any language:
+      POST /append {kind,payload,outcome?}, POST /forget {index},
+      POST /submit {directory_path?,want?,min?}, GET /dossier, GET /info.
+      Loopback only unless --allow-remote.
+
+  witness-log directory build [--registry DIR | --url URL] [--include-project] --out trusted.json
+  witness-log directory add <trusted.json> --vkey <c2sp vkey> --org ORG --url URL [--compute P]
+      Build a directory file from registry/witnesses/*.json (the schema
+      registry/build_directory.py produces), or add one witness by its
+      C2SP verifier key.
 
   witness-log diff <a.json> <b.json>
       Compare two dossiers claiming to be the same log. This is the
@@ -123,12 +178,15 @@ USAGE:
       next level. Machine-readable with --json, so an agent that hits an
       unexpected verdict can ask why without a human in the loop.
 
-  witness-log c2sp show <dossier.json> --origin <name>
+  witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]
+  witness-log c2sp export <dossier.json> [--directory trusted.json] --out note.txt
   witness-log c2sp verify <note.txt> --vkey <vkey> [--vkey <vkey>...]
       Transparency-log interoperability (c2sp.org). `show` renders a
       dossier's checkpoint as a C2SP checkpoint body — the artifact an
-      existing CT-ecosystem witness cosigns. `verify` checks a signed
-      note and any cosignatures against verifier keys you supply.
+      existing CT-ecosystem witness cosigns. `export` writes the signed
+      note with the dossier's cosignatures attached, for any C2SP tool.
+      `verify` checks a signed note and any cosignatures against verifier
+      keys you supply; exit 30 when a supplied key does not verify.
       See SPEC.md §9.3.
 
   witness-log witness init <dir> --name <key-name> [--org <operator>] [--url <url>]
@@ -136,13 +194,16 @@ USAGE:
   witness-log witness add-log <dir> <origin> <log-vkey>
   witness-log witness info <http://witness-url>
   witness-log witness submit <journal> --directory <witnesses.json> [--out dossier.json]
+  witness-log witness verify-evidence <evidence.json>
       Run a c2sp.org/tlog-witness witness, or get an agent's journal
       cosigned by the witnesses in a directory. `serve` persists every
       cosigned head (fsync) before replying and refuses forks with 422,
       recording provable equivocation under evidence/. With --open-enrollment it accepts
       any agent whose origin is witness-log/<its identity key> -- the
       origin names the key, so no key exchange is needed. `submit`
-      writes a dossier whose receipts verify offline.
+      writes a dossier whose receipts verify offline. `verify-evidence`
+      checks an equivocation proof a witness recorded (exit 0 proven,
+      30 not).
 
   witness-log conform <candidate-corpus-dir>
       Compare another implementation's generated conformance vectors
@@ -156,9 +217,10 @@ USAGE:
   witness-log --version
 
 EXIT CODES — the verdict IS the exit status, so gating needs no JSON parsing:
-   0  WITNESSED               30  DIVERGED
-  10  CONSISTENT-UNWITNESSED   2  usage / unreadable input
-  20  UNANCHORED
+   0  WITNESSED                        20  UNANCHORED; submit: refused (422) or below --min
+  10  CONSISTENT-UNWITNESSED           30  DIVERGED
+  11  verify --strict: not WITNESSED    2  usage / unreadable input
+      by a directory majority
 ";
 
 /// First value following `flag`, if present. Values that look like
@@ -274,6 +336,19 @@ fn main() -> ExitCode {
             }
         }
         Some("witness") => witness_cmd::run(args.get(2..).unwrap_or(&[])),
+        // `submit` at the top level is the same command as `witness submit`:
+        // the newcomer path is init, append, submit, verify, and the
+        // `witness` prefix read as "run a witness" to people who only wanted
+        // to use one.
+        Some("submit") => {
+            let mut rest = vec!["submit".to_string()];
+            rest.extend(args.get(2..).unwrap_or(&[]).iter().cloned());
+            witness_cmd::run(&rest)
+        }
+        Some("log") => log_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("journal") => journal_serve::run(args.get(2..).unwrap_or(&[])),
+        Some("directory") => directory_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("testnet") => testnet::run(args.get(2..).unwrap_or(&[])),
         Some("explain") => {
             let json = args.iter().any(|a| a == "--json");
             // Skip flags when looking for the topic. Without this,
@@ -290,11 +365,19 @@ fn main() -> ExitCode {
             explain::run_explain(topic, json)
         }
         Some("c2sp") => match args.get(2).map(String::as_str) {
+            Some("export") => c2sp_cmd::run_export(&args[3..]),
             Some("show") => {
                 let rest = &args[3..];
                 let origin = flag_value(rest, "--origin");
                 let sign_with = flag_value(rest, "--sign-with");
                 let raw = rest.iter().any(|a| a == "--raw");
+                let seed = match identity_seed_from_args(rest) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return ExitCode::from(exit::USAGE);
+                    }
+                };
                 // Positional = the dossier path: everything that is neither a
                 // flag nor the value of a value-taking flag.
                 let positional: Vec<&String> = rest
@@ -306,25 +389,41 @@ fn main() -> ExitCode {
                                 i.checked_sub(1)
                                     .and_then(|p| rest.get(p))
                                     .map(String::as_str),
-                                Some("--origin") | Some("--sign-with")
+                                Some("--origin")
+                                    | Some("--sign-with")
+                                    | Some("--identity-seed-env")
+                                    | Some("--identity-seed-file")
                             )
                     })
                     .map(|(_, a)| a)
                     .collect();
                 if let Some(bad) = rest.iter().find(|a| {
                     a.starts_with("--")
-                        && !matches!(a.as_str(), "--origin" | "--sign-with" | "--raw")
+                        && !matches!(
+                            a.as_str(),
+                            "--origin"
+                                | "--sign-with"
+                                | "--raw"
+                                | "--identity-seed-env"
+                                | "--identity-seed-file"
+                        )
                 }) {
                     eprintln!("unrecognized flag for `c2sp show`: {bad}");
-                    eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]");
+                    eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>] [--identity-seed-env NAME | --identity-seed-file F]");
                     return ExitCode::from(exit::USAGE);
                 }
                 match (positional.first(), origin) {
-                    (Some(path), Some(origin)) if positional.len() == 1 => {
-                        c2sp_cmd::run_show(path, &origin, &c2sp_cmd::ShowOptions { raw, sign_with })
-                    }
+                    (Some(path), Some(origin)) if positional.len() == 1 => c2sp_cmd::run_show(
+                        path,
+                        &origin,
+                        &c2sp_cmd::ShowOptions {
+                            raw,
+                            sign_with,
+                            seed,
+                        },
+                    ),
                     _ => {
-                        eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]");
+                        eprintln!("usage: witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>] [--identity-seed-env NAME | --identity-seed-file F]");
                         eprintln!("  --origin     a stable log identifier; use the canonical `witness-log/<identity hex>`");
                         eprintln!("               (printed by `witness submit`) for anything a witness should cosign");
                         eprintln!("  --raw        print only the body or signed note, for piping");
@@ -365,7 +464,7 @@ fn main() -> ExitCode {
                 }
             }
             _ => {
-                eprintln!("usage: witness-log c2sp <show|verify> ...");
+                eprintln!("usage: witness-log c2sp <show|export|verify> ...");
                 eprintln!("  run `witness-log --help` for details");
                 ExitCode::from(exit::USAGE)
             }
@@ -542,13 +641,111 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--identity <hex>] [--directory <path>]
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--identity <hex>] [--directory <path>] [--strict]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --threshold  receipt-count bar as a fraction of the directory (default 0.66)
   --min-witnesses N  receipt-count bar as an absolute number of distinct witnesses; use this
                instead of --threshold when the directory is large (a registry)
-  Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage";
+  --strict     exit 11 unless the verdict is WITNESSED and the cosigning witnesses are a
+               strict majority of the directory (split-view resistant)
+  Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage
+        11 (--strict only) anything weaker than WITNESSED by a directory majority";
+
+/// `--identity-seed-env NAME` / `--identity-seed-file F`: the identity
+/// seed for a sealed journal, 32 bytes as 64 hex characters, from the
+/// named environment variable or file (a file may also hold the raw 32
+/// bytes). Never from the command line itself, where it would land in
+/// shell history and process listings. `Ok(None)` when neither flag is
+/// given.
+pub(crate) fn identity_seed_from_args(
+    args: &[String],
+) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, String> {
+    let from_env = flag_value(args, "--identity-seed-env");
+    let from_file = flag_value(args, "--identity-seed-file");
+    if args.iter().any(|a| a == "--identity-seed-env") && from_env.is_none() {
+        return Err("--identity-seed-env requires the name of an environment variable".into());
+    }
+    if args.iter().any(|a| a == "--identity-seed-file") && from_file.is_none() {
+        return Err("--identity-seed-file requires a path".into());
+    }
+    if from_env.is_some() && from_file.is_some() {
+        return Err("give either --identity-seed-env or --identity-seed-file, not both".into());
+    }
+    let raw: zeroize::Zeroizing<Vec<u8>> = match (from_env, from_file) {
+        (Some(name), _) => {
+            let v = env::var(&name)
+                .map_err(|_| format!("environment variable {name} is not set (or is not UTF-8)"))?;
+            zeroize::Zeroizing::new(v.into_bytes())
+        }
+        (None, Some(path)) => {
+            zeroize::Zeroizing::new(fs::read(&path).map_err(|e| format!("{path}: {e}"))?)
+        }
+        (None, None) => return Ok(None),
+    };
+    parse_seed(&raw).map(Some)
+}
+
+/// A seed as 64 hex characters (surrounding whitespace ignored) or as the
+/// raw 32 bytes.
+pub(crate) fn parse_seed(raw: &[u8]) -> Result<zeroize::Zeroizing<[u8; 32]>, String> {
+    if raw.len() == 32 {
+        let mut out = zeroize::Zeroizing::new([0u8; 32]);
+        out.copy_from_slice(raw);
+        return Ok(out);
+    }
+    let text = std::str::from_utf8(raw).map_err(|_| "seed is neither 32 raw bytes nor hex")?;
+    let decoded = hex::decode(text.trim())
+        .map_err(|_| "seed must be 64 hex characters (32 bytes)".to_string())?;
+    let bytes: [u8; 32] = decoded
+        .try_into()
+        .map_err(|_| "seed must be exactly 32 bytes".to_string())?;
+    Ok(zeroize::Zeroizing::new(bytes))
+}
+
+/// Replay a journal read-only, with the seed when the caller supplied
+/// one (required for a sealed journal; checked against an unsealed one).
+pub(crate) fn replay_journal(
+    path: &str,
+    seed: Option<&[u8; 32]>,
+) -> std::io::Result<(
+    witness_log_core::log::WitnessLog,
+    witness_log_core::journal::ReplayReport,
+)> {
+    match seed {
+        Some(s) => witness_log_core::journal::LeafJournal::replay_with_identity(path, s),
+        None => witness_log_core::journal::LeafJournal::replay(path).map_err(sealed_hint),
+    }
+}
+
+/// The core crate's "sealed journal" error names the library call; the
+/// CLI user needs the flag.
+fn sealed_hint(e: std::io::Error) -> std::io::Error {
+    if e.to_string().contains("sealed") {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "{e}\n  this journal is sealed: pass --identity-seed-env NAME or --identity-seed-file F"
+            ),
+        )
+    } else {
+        e
+    }
+}
+
+/// Open a journal for appends, with the seed when supplied.
+pub(crate) fn resume_journal(
+    path: &str,
+    seed: Option<&[u8; 32]>,
+) -> std::io::Result<(
+    witness_log_core::journal::JournaledLog,
+    witness_log_core::journal::ReplayReport,
+)> {
+    match seed {
+        Some(s) => witness_log_core::journal::JournaledLog::resume_with_identity(path, s),
+        None => witness_log_core::journal::JournaledLog::resume(path).map_err(sealed_hint),
+    }
+}
 
 /// 64 hex characters: a 32-byte key.
 /// Largest input file (dossier, directory, note, evidence) the CLI reads.
@@ -600,6 +797,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut explain = false;
     let mut identity = None;
     let mut directory_path = None;
+    let mut strict = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -636,6 +834,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--explain" => {
                 explain = true;
+                i += 1;
+            }
+            "--strict" => {
+                strict = true;
                 i += 1;
             }
             "--identity" => {
@@ -688,7 +890,24 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         explain,
         identity,
         directory_path,
+        strict,
     })
+}
+
+/// `--strict`: the one exit code a gate that must never pass on anything
+/// weaker can rely on. WITNESSED alone is not enough: a WITNESSED dossier
+/// cosigned by fewer than half the directory can coexist with a
+/// conflicting one (see `QuorumResult::split_view_resistant`).
+fn strict_exit(report: &DossierReport) -> ExitCode {
+    let majority = report
+        .quorum
+        .as_ref()
+        .is_some_and(|q| q.split_view_resistant);
+    if report.verdict == witness_log_network::Verdict::Witnessed && majority {
+        ExitCode::from(exit::WITNESSED)
+    } else {
+        ExitCode::from(exit::STRICT_FAILED)
+    }
 }
 
 fn run_verify(opts: &Options) -> ExitCode {
@@ -760,11 +979,16 @@ fn run_verify(opts: &Options) -> ExitCode {
             "min_witnesses_used": opts.min_witnesses,
             "identity_pinned": opts.identity.is_some(),
             "directory_pinned": opts.directory_path.is_some(),
+            "strict": opts.strict,
             "verdict": report.verdict.to_string(),
             "report": report,
         });
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
-        return exit_code_for(&report.verdict);
+        return if opts.strict {
+            strict_exit(&report)
+        } else {
+            exit_code_for(&report.verdict)
+        };
     }
 
     render_text(&dossier, &report, opts);
@@ -843,6 +1067,22 @@ fn run_verify(opts: &Options) -> ExitCode {
         "Run with --explain for what each check does and doesn't prove, or see THREAT_MODEL.md"
     );
     let _ = overall_ok;
+    if opts.strict {
+        let code = strict_exit(&report);
+        if code != ExitCode::from(exit::WITNESSED) {
+            println!(
+                "--strict: not WITNESSED by a majority of the directory ({}); exit 11",
+                match &report.quorum {
+                    Some(q) => format!(
+                        "verdict {}, {}/{} directory witnesses cosigned",
+                        report.verdict, q.valid_receipts, q.total_directory_witnesses
+                    ),
+                    None => format!("verdict {}", report.verdict),
+                }
+            );
+        }
+        return code;
+    }
     exit_code_for(&report.verdict)
 }
 
