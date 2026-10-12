@@ -143,7 +143,7 @@ fn directory_build_matches_the_registry_script_schema() {
     assert_eq!(code(&out), 1);
     assert!(err(&out).contains("zz-bad.json"), "{}", err(&out));
     std::fs::remove_file(reg.join("zz-bad.json")).unwrap();
-    // A duplicate key fails too (the registry validator's rule).
+    // A duplicate key fails too (the same rule registry/validate.py applies).
     std::fs::write(reg.join("dup.json"), serde_json::to_vec(&a).unwrap()).unwrap();
     let out = wl(
         &root,

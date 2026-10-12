@@ -58,18 +58,41 @@ they are the threat model in miniature.
 
 | command | what it does | when you use it |
 |---|---|---|
-| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
+| `testnet up / status / down` | three local witnesses as child processes, plus the directory file listing them | trying the whole path on one machine |
+| `log init / append / forget / export / disclose / info` | an agent's journal from the shell: create, record, erase, export, disclose one payload | agents without bindings, scripts, CI |
+| `submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory (fail-closed: majority or exit 20) | the step that reaches WITNESSED |
+| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--strict] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
+| `journal serve <journal> --listen 127.0.0.1:7390` | HTTP front for one journal: append, forget, submit, dossier | agents in any language, over loopback |
+| `directory build / add` | build `trusted.json` from `registry/witnesses/*.json`, or add one witness by its vkey | curating the directory you trust |
 | `explain [verdict]` | what each verdict proves and does not, in words | before you gate anything on a verdict |
 | `diff <a.json> <b.json>` | compare two dossiers of one log: honest growth, equivocation, or tampering | "these two copies disagree" |
 | `bind <a.json> <b.json> [--json]` | two different agents' dossiers: prove their handoff / authorization leaves commit to the same bytes and scope | multi-agent audits |
-| `witness submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory | the step that reaches WITNESSED |
 | `witness init / serve / info / add-log / verify-evidence` | run a witness, inspect one, check an equivocation file | operators |
-| `c2sp show / verify` | C2SP checkpoint bodies and signed notes | interop with other transparency tooling |
+| `c2sp show / export / verify` | C2SP checkpoint bodies and signed notes, with the dossier's cosignatures attached | interop with other transparency tooling |
 | `conform <dir>` | check another implementation against the corpus | implementers |
 | `demo [--tamper]` | the walkthrough above | first five minutes |
 
 Every subcommand has `--help`. `verify --explain` prints one line under
-each check saying what it does and does not prove.
+each check saying what it does and does not prove. Every flag and exit
+code is in the [CLI reference](CLI-Reference).
+
+**From install to WITNESSED, no code.** Three local witnesses under three
+operator names are enough to see every verdict on one machine:
+
+```sh
+witness-log testnet up --out trusted.json          # starts 3 witnesses; writes the directory
+witness-log log init agent.jsonl                   # prints {"identity": "<hex>", ...}
+witness-log log append agent.jsonl --intent '{"tool":"transfer_funds","amount_usd":250}'
+witness-log log append agent.jsonl --result '{"status":"ok","tx_id":"tx_7ac31"}' --outcome ok
+witness-log submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log verify dossier.json --identity <hex> --directory trusted.json --strict   # exit 0
+witness-log testnet down
+```
+
+The testnet proves the tooling, not independence: all three witnesses are
+yours. Replace `trusted.json` with a directory of other organisations'
+witnesses ([Getting witnessed](Getting-Witnessed)) and the same commands
+produce a verdict that means something to someone else.
 
 ---
 
@@ -78,7 +101,9 @@ each check saying what it does and does not prove.
 ```
 0   WITNESSED               cryptography sound AND ≥2 independent operators from YOUR directory cosigned
 10  CONSISTENT-UNWITNESSED  cryptography sound; a directory was supplied but coverage fell short of the gate
+11  (verify --strict only)  anything weaker than WITNESSED by a strict majority of the directory
 20  UNANCHORED              internally consistent; no trusted directory supplied, so nothing external was checked
+                            (submit: a witness refused with 422, or fewer than --min cosigned)
 30  DIVERGED                a check failed: altered, fabricated, or signed by an identity you did not pin
 2   usage error / unreadable input
 ```
@@ -115,17 +140,20 @@ the CLI will warn you when the directory is large.
 ## 3. Get a journal witnessed
 
 ```sh
-witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log submit agent.jsonl --directory trusted.json --out dossier.json
 witness-log verify dossier.json --identity $(jq -r .identity_pubkey dossier.json) --directory trusted.json
 ```
+
+(`submit` and `witness submit` are the same command.)
 
 **What `submit` does, step by step.**
 
 1. Opens the journal read-only and signs a checkpoint over its current head.
-2. Contacts every witness in `trusted.json`, in parallel. (The Python `Witnesser` and the MCP server instead pick at most 8 with `select_witnesses`: one per `operator_org` first, then round-robin, spread per identity. For a registry-sized directory, give `submit` a directory trimmed to the witnesses you want to use.)
+2. Contacts every witness in `trusted.json`, in parallel. (The `journal serve` front's `POST /submit` takes `want` to contact a diversity-aware subset instead.) (The Python `Witnesser` and the MCP server instead pick at most 8 with `select_witnesses`: one per `operator_org` first, then round-robin, spread per identity. For a registry-sized directory, give `submit` a directory trimmed to the witnesses you want to use.)
 3. POSTs the checkpoint to each witness's `/add-checkpoint`. A `409` means "I remember an older head of yours"; `submit` resends with a consistency proof from that size. A `429`/`503` with `Retry-After` is honoured up to 60 s.
 4. Collects cosignatures into receipts and writes the dossier.
 5. Records, in `agent.jsonl.witnesses.json`, the last size each witness cosigned.
+6. Exits fail-closed: `--min` defaults to a strict majority of the directory (never below 2), any `422` refusal is exit 20, and `--allow-partial` exits by the verdict instead.
 
 **Why step 5 matters.** If you ever restore a journal from an old backup
 and run `submit`, the cache will show that a witness has already cosigned a

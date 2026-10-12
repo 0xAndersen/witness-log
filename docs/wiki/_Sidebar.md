@@ -9,6 +9,7 @@
 - [Quickstart: Python](Quickstart-Python)
 - [Quickstart: Rust](Quickstart-Rust)
 - [Quickstart: CLI](Quickstart-CLI)
+- [CLI reference](CLI-Reference)
 - [MCP integration](MCP-Integration)
 - [Framework guides](Framework-Guides)
 - [Other languages](Other-Languages)

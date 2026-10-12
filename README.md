@@ -257,17 +257,45 @@ assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 `cargo run -p witness-log-core --example quickstart` is the complete integration in one runnable file.
 [Quickstart: Rust](docs/wiki/Quickstart-Rust.md) explains the crates, the invariants and why the API has its shape.
 
+### Quickstart (CLI)
+
+No Python, no Rust: the binary records, witnesses and verifies on its own. Three local witnesses under three
+operator names are enough to reach WITNESSED on one machine and see what every verdict looks like.
+
+```sh
+cargo install witness-log-cli                                   # or the prebuilt archive from the releases page
+witness-log testnet up --out trusted.json                       # 3 witnesses as child processes; writes the directory
+witness-log log init agent.jsonl                                # {"identity":"<hex>", ...}
+witness-log log append agent.jsonl --intent '{"tool":"transfer_funds","amount_usd":250}'
+witness-log log append agent.jsonl --result '{"status":"ok","tx_id":"tx_7ac31"}' --outcome ok
+witness-log submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log verify dossier.json --identity <hex> --directory trusted.json --strict    # exit 0 = WITNESSED by a majority
+witness-log testnet down
+```
+
+`log forget agent.jsonl 1` erases one entry with every proof intact; `log disclose agent.jsonl 0` hands a
+verifier the salt for exactly one payload. `journal serve agent.jsonl --listen 127.0.0.1:7390` puts the same
+operations behind loopback HTTP (`POST /append`, `/forget`, `/submit`, `GET /dossier`) for an agent in any
+language. The testnet proves the tooling, not independence: all three witnesses are yours. Point `submit` at a
+directory of other organisations' witnesses (`directory build`, or `directory add --vkey`) and the same commands
+produce a verdict someone else can rely on. Every flag and exit code: [CLI reference](docs/wiki/CLI-Reference.md).
+
 ### CLI, from any language
 
 | command | what it does |
 |---|---|
 | `witness-log demo [--tamper]` | the walkthrough in the GIF; no arguments, no files, no network |
-| `witness-log verify <dossier> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--json] [--explain]` | offline verification; exit code is the verdict |
+| `witness-log testnet up / status / down` | local witnesses as child processes, plus the directory file that lists them |
+| `witness-log log init / append / forget / export / disclose / info` | an agent's journal from the shell (sealed journals: `--identity-seed-env` / `--identity-seed-file`) |
+| `witness-log submit <journal> --directory <dir.json> [--min N] [--allow-partial]` | get the journal cosigned; fail-closed (a directory majority or exit 20) |
+| `witness-log verify <dossier> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--strict] [--json] [--explain]` | offline verification; exit code is the verdict (`--strict`: 11 unless WITNESSED by a majority) |
+| `witness-log journal serve <journal> --listen 127.0.0.1:7390` | HTTP front for one journal, loopback only by default |
+| `witness-log directory build / add` | the trusted directory file, from the registry or from a witness's vkey |
 | `witness-log diff <a.json> <b.json>` | two copies of one log: honest growth, equivocation, or tampering |
 | `witness-log bind <a.json> <b.json>` | two different agents' logs: prove their handoff / authorization leaves commit to the same bytes and scope |
 | `witness-log explain [verdict]` | what each verdict proves and does not |
 | `witness-log witness init / serve / submit / info / verify-evidence` | run a witness; get a journal cosigned |
-| `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
+| `witness-log c2sp show / export / verify` | C2SP checkpoint bodies and signed notes, with cosignatures attached |
 | `witness-log conform <dir>` | check another implementation against the corpus |
 
 TypeScript: [`clients/typescript`](clients/typescript) (`@witness-log/client`) gives typed verdicts from the CLI
@@ -304,13 +332,15 @@ there is no registration and nothing to trust on first use. Then, as an agent:
 
 ```sh
 jq -s '{witnesses: .}' w1.json w2.json > trusted.json       # `witness init` prints each entry as JSON on stdout
-witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log submit agent.jsonl --directory trusted.json --out dossier.json
 witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json      # exit 0 = WITNESSED
 ```
 
+(`witness-log directory add trusted.json --vkey <vkey> --org ... --url ...` builds the same file without `jq`.)
 `submit` handles `409` resyncs and `Retry-After`, and refuses to publish a journal that contradicts what
 witnesses already cosigned, so a journal restored from an old backup cannot get your identity recorded as
-equivocating by accident.
+equivocating by accident. It is fail-closed: `--min` defaults to a strict majority of the directory and any
+`422` refusal is exit 20 (`--allow-partial` exits by the verdict instead).
 
 WITNESSED needs two distinct organisations in *your* directory. A fleet of a hundred witnesses under one
 organisation is one voice. [`deploy/witness/`](deploy/witness) has the Dockerfile, compose with TLS, systemd

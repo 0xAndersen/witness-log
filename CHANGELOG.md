@@ -1,5 +1,90 @@
 # Changelog
 
+## Unreleased
+
+Driven by an outside evaluation of 0.3.6 that found a newcomer could not
+get from `cargo install` to a WITNESSED dossier without writing Python or
+Rust: the CLI could verify and run witnesses but could not create a
+journal, append to it, or stand up witnesses to submit to. No wire-format,
+leaf-encoding or verdict change; the two-operator rule is unchanged.
+
+### Added
+
+- **`witness-log testnet up|status|down`.** N local witnesses (default 3)
+  as child processes of the binary, each with its own key, operator name
+  (`testnet-a`, `testnet-b`, ...) and loopback port, plus the directory
+  file listing them (`--out`). `down` stops them by pid file (SIGTERM then
+  SIGKILL; `taskkill` on Windows); keys and state are kept. Linux, macOS
+  and Windows CI.
+- **`witness-log log init|append|forget|export|disclose|info`.** A journal
+  from the shell: `append` takes `--intent|--result|--memory` with the
+  payload as an argument, `@file` or `-` (stdin), and `--outcome ok|error`
+  for results; `disclose <index>` prints the leaf, its payload hash and
+  its salt so a verifier recomputes `SHA256(bucket_pad(payload) || salt
+  || index)` for that one entry; `export` writes an unwitnessed dossier.
+  `--sealed` journals never hold their seed.
+- **`witness-log submit`** as a top-level alias of `witness submit`.
+- **`witness-log journal serve <journal> --listen 127.0.0.1:7390`.** An
+  HTTP front for one journal: `POST /append {kind,payload,outcome?}`,
+  `POST /forget {index}`, `POST /submit {directory_path?,want?,min?}`,
+  `GET /dossier`, `GET /info`. Loopback only unless `--allow-remote`.
+- **`witness-log directory build [--registry DIR | --url URL]
+  [--include-project] --out trusted.json`** reads one entry per file,
+  the layout and output schema of `registry/build_directory.py`, and
+  **`directory add <trusted.json> --vkey <c2sp vkey> --org --url
+  [--compute]`** adds a witness by its verifier key.
+- **`--identity-seed-env NAME` / `--identity-seed-file F`** on `submit`,
+  every `log` command, `journal serve`, `c2sp show` and `c2sp export`:
+  sealed journals are first-class from the CLI, and the seed is never a
+  command-line argument.
+- **`verify --strict`**: exit **11** unless the verdict is WITNESSED and
+  the cosigning witnesses are a strict majority of the directory. Opt-in;
+  without the flag every exit code is as before.
+- **`witness init --json`** prints one JSON object (`identity`, `vkey`,
+  `org`, `name`, `url`, `data_dir`, `entry`) and nothing else on stdout.
+- **`c2sp export <dossier.json> [--directory trusted.json] [--sign-with
+  <journal>] --out note.txt`** writes the C2SP signed note with the
+  dossier's cosignatures attached (and the log's own signature with
+  `--sign-with`).
+- `WitnessReceipt.witness_name` (network): the directory name of the
+  witness that issued a receipt, written by `submit`. Display only, never
+  signed, never consulted by `verify`; absent from and ignored in older
+  dossiers, which verify unchanged (tested against
+  `examples/sample-dossier.json`).
+- Core: `SaltStore::salt_for(index)` (default `None`; implemented by the
+  file and in-memory stores), `WitnessLog::salt_for`,
+  `redaction::payload_hash(payload, salt, index)` and
+  `redaction::verify_disclosure(leaf, payload, salt)`.
+- `docs/wiki/CLI-Reference.md`: every subcommand, flag and exit code.
+
+### Changed
+
+- **`submit` is fail-closed.** `--min` defaults to `max(2, N/2 + 1)` for a
+  directory of N witnesses instead of 1, so a dossier that would not
+  verify WITNESSED is not a success. Any witness answering **422** (the
+  history does not extend what it cosigned) makes the exit status **20**,
+  whatever `--min` says; fewer than `--min` cosignatures is exit 20 too.
+  `--allow-partial` restores the old behaviour's spirit: it verifies the
+  dossier just written against the directory with the count gate at
+  `--min` and exits by that verdict (0/10/20/30). A one-witness directory
+  now needs an explicit `--min 1`. CI scripts that relied on exit 1 for
+  "below min" should check for 20 (or for non-zero).
+- **`WitnessLog::evidence_window` returns `Result`.** A window that runs
+  past the tree or has `start > end` is `Err(EvidenceWindowError)`
+  instead of being clamped silently, so a request for leaves 100..200 of
+  a 150-leaf log is refused rather than answered with 50 entries that
+  look complete. Callers that passed `0..u64::MAX` for "everything"
+  should pass `0..log.tree_size()`.
+- `c2sp verify`'s exit status now covers every key supplied: a note whose
+  cosignatures all verify passes with witness keys alone (it exited 30),
+  and a run in which none of the supplied keys verifies any signature is
+  a rejection (exit 30).
+- Dossiers, directory files and notes written by the CLI (`submit`, `log
+  export`, `directory`, `testnet up`, `c2sp export`) are mode 0644 on
+  Unix instead of 0600: they are meant to be handed on. Keys, journals,
+  salt sidecars and client state stay 0600.
+- `witness verify-evidence` is listed in `witness-log --help`.
+
 ## 0.3.6 — 2026-10-12
 
 Driven by a fresh-eyes evaluation of the published 0.3.5 packages
