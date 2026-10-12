@@ -25,8 +25,12 @@ langchain = ["langchain-core>=1.0"]
 crewai = ["crewai>=1.0"]
 openai-agents = ["openai-agents>=0.20"]
 
+# witness-log-mcp needs the `mcp` extra; the other three are stdlib-only.
 [project.scripts]
 witness-log-mcp = "witness_log.mcp_server:main"
+witness-log-mcp-proxy = "witness_log.mcp_proxy:main"
+witness-log-hook = "witness_log.hook:main"
+witness-log-hookd = "witness_log.hookd:main"
 
 [project.urls]
 Homepage = "https://github.com/0xAndersen/witness-log"

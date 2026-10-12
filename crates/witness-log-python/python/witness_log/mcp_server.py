@@ -28,22 +28,34 @@ Configure in a client (Claude Desktop / Claude Code / any MCP host)::
 
 State: ``$WITNESS_LOG_HOME`` (default ``~/.witness-log/mcp``), one directory
 per session holding ``journal.jsonl`` (the log; identity seed in its
-header, mode 0600), ``journal.jsonl.witnesses.json`` (what each witness
-last cosigned; the same file and format ``witness-log witness submit``
-uses) and ``journal.jsonl.witnessed.json`` (the latest witnessed dossier).
-An optional ``$WITNESS_LOG_HOME/witnesses.json`` is the directory of
-witnesses ``submit_to_witnesses`` uses by default.
+header, mode 0600, unless sealed), ``journal.jsonl.witnesses.json`` (what
+each witness last cosigned; the same file and format ``witness-log
+witness submit`` uses), ``journal.jsonl.witnessed.json`` (the latest
+witnessed dossier) and ``dossier.json`` (the last export). An optional
+``$WITNESS_LOG_HOME/witnesses.json`` is the directory of witnesses
+``submit_to_witnesses`` uses by default.
+
+Identity: set ``WITNESS_LOG_IDENTITY_SEED_ENV`` to the name of an
+environment variable holding a 32-byte hex seed and every session's
+journal is sealed (public key only in the header; the seed stays in the
+environment). All sessions then share one identity; without it each
+session id gets its own identity, stored in its journal header.
+
+Each journal is opened once per server process, on first use, and kept
+open: a tool call costs an append and an fsync, not a resume (a resume
+mints a new session key and appends a key binding, about 1.4 ms).
 """
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Literal, Optional, Union
 
 import witness_log as wl
 
@@ -82,6 +94,27 @@ server = _Server(
 _sessions: Dict[str, wl.JournaledLog] = {}
 _locks: Dict[str, asyncio.Lock] = {}
 _registry_lock = asyncio.Lock()
+# The verdict of the last submit_to_witnesses per session, for
+# audit_this_session. In memory: a restart answers None until the next
+# submit, which is honest about what this process has seen.
+_last_verdict: Dict[str, Optional[str]] = {}
+
+AUTHORIZATION_KINDS = (
+    "granted_by_me",
+    "granted_to_me",
+    "revoked_by_me",
+    "revoked_to_me",
+    "scope_changed_by_me",
+    "scope_changed_to_me",
+)
+AuthorizationKind = Literal[
+    "granted_by_me",
+    "granted_to_me",
+    "revoked_by_me",
+    "revoked_to_me",
+    "scope_changed_by_me",
+    "scope_changed_to_me",
+]
 
 
 def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -118,6 +151,21 @@ def _witnessed_path(session_id: str) -> Path:
     return _session_dir(session_id) / "journal.jsonl.witnessed.json"
 
 
+def _export_path(session_id: str) -> Path:
+    return _session_dir(session_id) / "dossier.json"
+
+
+def _write_export(path: Path, doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Write ``doc`` to ``path`` atomically (temp file, rename) and return
+    ``{"path", "sha256", "bytes"}`` so the caller can hand the file to a
+    verifier and check it arrived intact."""
+    data = json.dumps(doc, separators=(",", ":"), sort_keys=True).encode()
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+
 async def _get(session_id: str) -> "tuple[wl.JournaledLog, asyncio.Lock]":
     """The open log for a session, resuming it from disk if this process
     has not touched it yet. Raises if it was never initialised."""
@@ -135,7 +183,7 @@ async def _get(session_id: str) -> "tuple[wl.JournaledLog, asyncio.Lock]":
 
 def _open_existing(p: Path) -> wl.JournaledLog:
     try:
-        log, _dropped = wl.JournaledLog.resume(str(p))
+        log = wl.open(str(p))  # honours WITNESS_LOG_IDENTITY_SEED_ENV
     except OSError as e:
         msg = str(e)
         if "already open" in msg:
@@ -235,7 +283,7 @@ async def initialize_witness_chain(session_id: str, metadata: Optional[Dict[str,
                 os.chmod(p.parent, 0o700)
             except OSError:
                 pass
-            log = wl.JournaledLog.create_ephemeral(str(p))
+            log = wl.open(str(p))  # sealed when WITNESS_LOG_IDENTITY_SEED_ENV is set
             if metadata is not None:
                 log.append_memory(_payload_bytes({"kind": "session_metadata", **metadata}))
             await asyncio.to_thread(log.sync)
@@ -381,9 +429,9 @@ async def record_handoff(
 @_tool
 async def record_authorization(
     session_id: str,
-    kind: str,
+    kind: AuthorizationKind,
     counterparty_identity_pubkey: str,
-    scope: Dict[str, Any],
+    scope: Union[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Record that a delegation or authorization change happened between
     this agent and another (SPEC §3.2). Logging only: witness-log never
@@ -392,13 +440,22 @@ async def record_authorization(
 
     `kind` is one of granted_by_me, granted_to_me, revoked_by_me,
     revoked_to_me, scope_changed_by_me, scope_changed_to_me. `scope` is
-    the scope description as a JSON object: an AP2 mandate (put its
-    mandate hash in a field), a UCAN, a policy document, a spending limit.
-    Both sides commit to the unsalted SHA-256 of its canonical JSON;
-    `witness-log bind` matches them afterwards.
+    the scope description: a JSON object (an AP2 mandate with its mandate
+    hash in a field, a UCAN, a policy document, a spending limit), which
+    is committed as RFC 8785 canonical JSON, or a string (a serialized
+    token, a mandate hash), committed as its UTF-8 bytes. Both sides
+    commit to the unsalted SHA-256 of those bytes; `witness-log bind`
+    matches them afterwards, so both sides must pass the same form.
     """
+    if kind not in AUTHORIZATION_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(AUTHORIZATION_KINDS)}; got {kind!r}")
     log, lock = await _get(session_id)
-    payload = _payload_bytes(scope)
+    if isinstance(scope, str):
+        payload = scope.encode("utf-8")
+        if len(payload) > MAX_PAYLOAD_BYTES:
+            raise ValueError(f"scope is {len(payload)} bytes; the limit is {MAX_PAYLOAD_BYTES}")
+    else:
+        payload = _payload_bytes(scope)
     async with lock:
         idx = log.append_authorization_event(kind, payload, counterparty_identity_pubkey)
         await asyncio.to_thread(log.sync)
@@ -528,6 +585,11 @@ async def export_dossier(session_id: str) -> Dict[str, Any]:
     last submit_to_witnesses when nothing was appended since. When the
     chain has grown, `witnessed_dossier` is the latest witnessed head
     (a prefix of the current one) with its cosignatures.
+
+    The returned `dossier` is also written to `<session dir>/dossier.json`;
+    `path`, `sha256` (of the file's bytes) and `bytes` describe that
+    file, so a host can pass the file along and the recipient can check
+    it arrived intact.
     """
     log, lock = await _get(session_id)
     async with lock:
@@ -544,6 +606,35 @@ async def export_dossier(session_id: str) -> Dict[str, Any]:
         else:
             out["witnessed_dossier"] = witnessed
         out["witnessed_size"] = witnessed["checkpoint"]["tree_size"]
+    out.update(await asyncio.to_thread(_write_export, _export_path(session_id), out["dossier"]))
+    return out
+
+
+@_tool
+async def audit_this_session(session_id: str) -> Dict[str, Any]:
+    """Where this session's audit trail stands, in one call: how many
+    leaves, the current root, the identity, whether the current head is
+    witnessed (cosignatures from submit_to_witnesses cover it), and the
+    verdict the last submit_to_witnesses in this server process reached
+    (None if there was none). Cheap and side-effect free; call it to
+    decide whether to submit before ending the session.
+
+    Returns: {leaf_count, root, identity, witnessed, last_verdict,
+    witnessed_size, journal}.
+    """
+    log, lock = await _get(session_id)
+    async with lock:
+        size = log.tree_size()
+        witnessed = _load_witnessed(session_id, log)
+        out = {
+            "leaf_count": size,
+            "root": log.root_hex(),
+            "identity": log.identity_pubkey_hex(),
+            "witnessed": witnessed is not None and witnessed["checkpoint"]["tree_size"] == size,
+            "last_verdict": _last_verdict.get(session_id),
+            "witnessed_size": witnessed["checkpoint"]["tree_size"] if witnessed is not None else 0,
+            "journal": str(_journal_path(session_id)),
+        }
     return out
 
 
@@ -600,6 +691,7 @@ async def submit_to_witnesses(
     report = json.loads(
         wl.verify_dossier_json(json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory), min_witnesses)
     )
+    _last_verdict[session_id] = report.get("verdict")
     if r.cosignatures > 0:
         try:
             wp = _witnessed_path(session_id)

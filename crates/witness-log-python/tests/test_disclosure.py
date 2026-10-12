@@ -16,7 +16,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-
 import witness_log as wl
 
 CORPUS = pathlib.Path(__file__).resolve().parents[3] / "corpus" / "11_payload_hash.json"
