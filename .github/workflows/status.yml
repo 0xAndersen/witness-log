@@ -1,0 +1,63 @@
+name: status
+
+# Every 10 minutes: probe every witness in registry/witnesses/ and publish
+# STATUS.md, status.json and history.jsonl to the orphan branch `status`.
+# The branch is rewritten as a single commit on every run (force push), so
+# it never grows beyond one copy of three small files; history.jsonl keeps
+# 7 days of samples. Nothing is ever pushed to main.
+#
+#   https://github.com/0xAndersen/witness-log/blob/status/STATUS.md
+#   https://raw.githubusercontent.com/0xAndersen/witness-log/status/status.json
+#
+# GitHub may delay or skip scheduled runs under load, and disables
+# schedules in a public repository after 60 days without activity; the
+# sample counts in STATUS.md make any gap visible.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: status
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: src
+      - name: previous history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cd src
+          if git fetch --depth=1 origin status 2>/dev/null; then
+            git show FETCH_HEAD:history.jsonl > ../out/history.jsonl 2>/dev/null || true
+          fi
+          echo "previous samples: $(wc -l < ../out/history.jsonl 2>/dev/null || echo 0)"
+      - name: probe
+        run: python3 src/registry/status.py --registry-dir src/registry/witnesses --out-dir out --timeout 8 --keep-days 7
+      - name: publish to the status branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd out
+          git init -q -b status
+          git config user.name "0xAndersen"
+          git config user.email "321999970+0xAndersen@users.noreply.github.com"
+          git add STATUS.md status.json history.jsonl
+          git commit -q -m "status $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/status
+      - name: summary
+        run: cat out/STATUS.md >> "$GITHUB_STEP_SUMMARY"
