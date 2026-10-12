@@ -175,6 +175,11 @@ jobs:
       - name: Publish @witness-log/node
         working-directory: clients/node
         run: npm publish --provenance --access public
+        env:
+          # First publish: an npm automation token in the `npm` environment (secret NPM_TOKEN).
+          # Once the package exists and trusted publishing is configured, delete the secret;
+          # an empty value falls back to OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-ai-sdk:
     name: Publish @witness-log/ai-sdk
@@ -209,6 +214,11 @@ jobs:
       - name: Publish
         working-directory: clients/ai-sdk
         run: npm publish --provenance --access public
+        env:
+          # First publish: an npm automation token in the `npm` environment (secret NPM_TOKEN).
+          # Once the package exists and trusted publishing is configured, delete the secret;
+          # an empty value falls back to OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-create:
     name: Publish create-witness-log
@@ -237,3 +247,8 @@ jobs:
       - name: Publish
         working-directory: clients/create-witness-log
         run: npm publish --provenance --access public
+        env:
+          # First publish: an npm automation token in the `npm` environment (secret NPM_TOKEN).
+          # Once the package exists and trusted publishing is configured, delete the secret;
+          # an empty value falls back to OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

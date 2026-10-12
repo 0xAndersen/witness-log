@@ -99,3 +99,8 @@ jobs:
       - name: Publish
         working-directory: clients/typescript
         run: npm publish --provenance --access public
+        env:
+          # First publish: an npm automation token in the `npm` environment (secret NPM_TOKEN).
+          # Once the package exists and trusted publishing is configured, delete the secret;
+          # an empty value falls back to OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

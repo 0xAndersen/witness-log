@@ -1,0 +1,50 @@
+name: image is publicly pullable
+
+# The docker workflow pushes ghcr.io/0xandersen/witness-log, but package
+# visibility is a one-time setting in the package's GitHub settings that
+# no workflow token can change. This job answers "can a stranger pull it?"
+# with no credentials at all, so the README's one-liner is known to work
+# before anyone is pointed at it. Green once the owner has made the package
+# public; red (with the exact fix) until then. Issue #2.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 6 * * 1"
+
+permissions: {}
+
+jobs:
+  anonymous-pull:
+    runs-on: ubuntu-latest
+    steps:
+      - name: anonymous token for the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o token.json -w '%{http_code}' "https://ghcr.io/token?scope=repository:0xandersen/witness-log:pull")
+          if [ "$code" != 200 ]; then
+            echo "::error::ghcr.io refused an anonymous pull token (HTTP $code). Make the package public: github.com/users/0xAndersen/packages/container/witness-log/settings -> Danger Zone -> Change visibility -> Public."
+            exit 1
+          fi
+          tok=$(jq -r .token token.json)
+          code=$(curl -s -o tags.json -w '%{http_code}' -H "Authorization: Bearer $tok" "https://ghcr.io/v2/0xandersen/witness-log/tags/list")
+          if [ "$code" != 200 ]; then
+            echo "::error::anonymous tag list failed (HTTP $code): $(head -c 300 tags.json). The package is not public yet."
+            exit 1
+          fi
+          echo "public; tags: $(jq -r '.tags | join(", ")' tags.json)"
+      - name: pull and answer /health with no login
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker pull ghcr.io/0xandersen/witness-log:latest
+          docker run -d --name w -p 7380:7380 -e WITNESS_ORG="Public Pull Check" ghcr.io/0xandersen/witness-log:latest
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7380/health >/dev/null 2>&1; then echo "healthy"; exit 0; fi
+            sleep 1
+          done
+          docker logs w | tail -20
+          echo "::error::the container did not answer /health within 30 s"
+          exit 1

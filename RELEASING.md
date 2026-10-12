@@ -14,7 +14,21 @@ on the exact commit being released.
 2. **crates.io.** Log in with GitHub at crates.io, create an API token
    scoped to *publish-new* and *publish-update*, and run `cargo login`
    locally.
-3. **Branch protection** on `main`: require the `ci` workflow to pass.
+3. **npm.** Create the `witness-log` organisation on npmjs.com, make a
+   granular automation token (publish, packages `@witness-log/*` and
+   `create-witness-log`, 2FA bypass), and store it as the secret
+   `NPM_TOKEN` in a GitHub environment named `npm`. The `npm.yml` and
+   `npm-node.yml` workflows use it for the first publish of each package
+   when the tags are pushed (`ts-v0.2.0`, `node-v0.1.1`, `ai-sdk-v0.1.0`,
+   `create-witness-log-v0.1.0`). Afterwards configure Trusted Publishing
+   on each package (GitHub Actions, repo `0xAndersen/witness-log`,
+   workflow `npm.yml` or `npm-node.yml`, environment `npm`) and delete the
+   secret; an empty token falls back to OIDC.
+4. **Container image.** The `docker` workflow pushes
+   `ghcr.io/0xandersen/witness-log`; make the package public once in its
+   GitHub settings. `image-public-check.yml` confirms an anonymous pull
+   and `/health` from a clean runner.
+5. **Branch protection** on `main`: require the `ci` workflow to pass.
 
 ## Every release
 
