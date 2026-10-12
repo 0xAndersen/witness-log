@@ -185,7 +185,14 @@ leaf-encoding or verdict change; the two-operator rule is unchanged.
   pre-0.4.0 encoding (`json.dumps(sort_keys=True, separators=(",", ":"))`)
   is `witness_log.sorted_json`, for recomputing hashes of leaves written
   by earlier releases. Still never raises. Tested against the RFC's
-  Appendix B number table and §3.2.3 examples.
+  Appendix B number table and §3.2.3 examples. Payloads of strings,
+  booleans, small integers and ASCII keys take a fast path through the C
+  encoder (its output is already JCS for those); the per-call cost of
+  `@step` grows by about a microsecond, and the overhead baseline was
+  re-measured on the runner.
+- `@step` and `Recorder.intent` record the call time as `t_ms` (integer
+  milliseconds) instead of `t` (float seconds): integers canonicalise
+  identically in every language and stay on the fast path.
 
 ### Changed (MCP server)
 

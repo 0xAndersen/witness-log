@@ -25,7 +25,7 @@ CAL_ITERS = 20_000
 
 
 def calibration_ns() -> float:
-    d = {"tool": "transfer_funds", "args": [250], "kwargs": {}, "t": 1700000000.0}
+    d = {"tool": "transfer_funds", "args": [250], "kwargs": {}, "t_ms": 1700000000000}
     t = time.perf_counter_ns()
     for _ in range(CAL_ITERS):
         json.dumps(d, sort_keys=True, separators=(",", ":"))

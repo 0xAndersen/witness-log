@@ -101,7 +101,7 @@ print(log.tree_size(), log.root_hex())    # 2 <64 hex chars>
 
 **What just happened.** The decorator appended **two leaves**:
 
-1. an **intent** leaf *before* the function ran, committing to `{"args":[250],"kwargs":{},"t":<unix time>,"tool":"transfer_funds"}` (positional and keyword arguments are kept apart, exactly as the call was made);
+1. an **intent** leaf *before* the function ran, committing to `{"args":[250],"kwargs":{},"t_ms":<unix time, ms>,"tool":"transfer_funds"}` (positional and keyword arguments are kept apart, exactly as the call was made);
 2. a **result** leaf *after* it returned: the return value, or the exception (which is re-raised, so your error handling is unchanged).
 
 Two leaves, not one, is the point. An audit trail that only records

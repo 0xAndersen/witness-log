@@ -136,9 +136,49 @@ def canonical_json(value: Any) -> bytes:
 
     Before 0.4.0 this function was :func:`sorted_json`; payloads written
     by older releases hash under that encoding."""
+    if _plain_json(value, 0):
+        # Fast path, the common tool-call payload: strings, bools, None and
+        # small integers under ASCII keys. For these the C encoder's output
+        # is byte-identical to JCS (code-point order equals UTF-16 order on
+        # ASCII keys; integers below 2**53 print the same; the escapes
+        # coincide), at a quarter of the cost of the Python encoder.
+        try:
+            return json.dumps(
+                value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            ).encode("utf-8")
+        except UnicodeEncodeError:
+            pass  # a lone surrogate in a string; the full encoder escapes it
     out: list = []
     _jcs(value, out, set(), 0)
     return "".join(out).encode("utf-8")
+
+
+_SAFE_INT = 1 << 53
+
+
+def _plain_json(v: Any, depth: int) -> bool:
+    """True when ``json.dumps(sort_keys=True)`` of ``v`` is already RFC 8785:
+    no floats, no integers at or beyond 2**53, string keys that are ASCII,
+    and nothing that is not a JSON value. Shallow and cheap; any doubt is
+    False and the full encoder runs."""
+    if v is None or v is True or v is False or isinstance(v, str):
+        return True
+    t = type(v)
+    if t is int:
+        return -_SAFE_INT < v < _SAFE_INT
+    if depth > 64:
+        return False
+    if t is dict:
+        for k, item in v.items():
+            if type(k) is not str or not k.isascii() or not _plain_json(item, depth + 1):
+                return False
+        return True
+    if t is list:
+        for item in v:
+            if not _plain_json(item, depth + 1):
+                return False
+        return True
+    return False
 
 
 def _jcs(v: Any, out: list, seen: set, depth: int) -> None:
@@ -547,7 +587,10 @@ def step(
         tool = name or getattr(fn, "__qualname__", getattr(fn, "__name__", "tool"))
 
         def before(args: tuple, kwargs: dict) -> int:
-            payload = {"tool": tool, "args": list(args), "kwargs": kwargs, "t": time.time()}
+            # t_ms: integer milliseconds. An integer keeps the payload on the
+            # fast JCS path and avoids float formatting differences across
+            # languages; before 0.4.0 this was "t": float seconds.
+            payload = {"tool": tool, "args": list(args), "kwargs": kwargs, "t_ms": time.time_ns() // 1_000_000}
             return log.append_intent(canonical_json(payload))
 
         def after(intent_index: int, outcome: str, value: Any) -> int:

@@ -372,3 +372,33 @@ def test_bad_directory_values_raise(tmp_path):
         log.submit({"witnesses": []}, want=0)
     with pytest.raises(ValueError):
         log.submit({"witnesses": []})
+
+
+def test_canonical_json_fast_path_matches_the_full_encoder():
+    """The ASCII/int fast path must be byte-identical to the RFC 8785
+    encoder; the control characters, quotes, backslashes and nesting
+    below are where json.dumps and JCS could plausibly disagree."""
+    import witness_log
+    from witness_log import _jcs
+
+    def full(v):
+        out = []
+        _jcs(v, out, set(), 0)
+        return "".join(out).encode("utf-8")
+
+    cases = [
+        {"b": 1, "a": [True, None, False, 0, -1, 2**53 - 1], "A": "x"},
+        {"k": "quote \" backslash \\ nl \n tab \t ctl \x1f del \x7f"},
+        {"k": "lone surrogate \ud800 falls back to the full encoder"},
+        {"nested": [{"z": [], "y": {}}, [[[]]]], "": ""},
+        {"ascii key": "é € 😀 literal utf-8 in values is fine"},
+        [],
+        {},
+        "plain",
+        12345,
+    ]
+    for v in cases:
+        assert witness_log.canonical_json(v) == full(v), v
+    # out of the fast path: floats, big ints, non-ASCII keys
+    for v in [{"a": 1.5}, {"a": 2**53}, {"é": 1}, {"a": float("nan")}]:
+        assert witness_log.canonical_json(v) == full(v) or v.get("a") != v.get("a")

@@ -84,7 +84,7 @@ class Recorder:
             return None
 
     def intent(self, tool: str, args: Any, **extra: Any) -> Optional[int]:
-        return self._append("intent", {"tool": tool, "args": args, "t": time.time(), **extra})
+        return self._append("intent", {"tool": tool, "args": args, "t_ms": time.time_ns() // 1_000_000, **extra})
 
     def result(self, tool: str, intent_index: Optional[int], value: Any, outcome: str = "ok", **extra: Any) -> Optional[int]:
         payload = {"tool": tool, "intent_index": intent_index, "outcome": outcome, **extra}
