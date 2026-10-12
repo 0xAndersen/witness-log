@@ -3,92 +3,111 @@
 Every framework below exposes a hook that fires before and after a tool
 call. The pattern is always the same: *intent leaf before, result leaf
 after, on one journal per agent identity*. `witness_log.step` does exactly
-this for a plain function; the snippets below wire it to each framework's
-hook. All of them use only the public `witness_log` API documented in
-[Quickstart: Python](Quickstart-Python). Adapter packages for these are
-on the [Roadmap](Roadmap); until then, copy the snippet.
+this for a plain function. For LangChain/LangGraph, the OpenAI Agents SDK
+and CrewAI the package ships adapters as optional extras (0.3.6+); for the
+others, copy the snippet.
 
-A shared helper used by every snippet:
+| framework | install | adapter |
+|---|---|---|
+| LangChain / LangGraph | `pip install "witness-log[langchain]"` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` |
+| OpenAI Agents SDK | `pip install "witness-log[openai-agents]"` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
+| CrewAI | `pip install "witness-log[crewai]"` | `witness_log.integrations.crewai.witness_crewai` |
+| MCP hosts | `pip install "witness-log[mcp]"` | `witness-log-mcp` ([MCP integration](MCP-Integration)) |
 
-```python
-# wl_audit.py
-import json, witness_log
-log = witness_log.open("agent.jsonl")           # one identity per agent
+Each adapter is under 100 lines, pairs calls by the framework's own call
+id (so parallel calls of one tool are recorded correctly), commits the same
+payload shapes as `step` (`{"tool", "args", "t"}` then `{"tool",
+"intent_index", "outcome", "value"}`), and never raises into the framework
+unless you pass `raise_on_error=True`; append failures are kept in
+`.errors`. `record_output=False` keeps return values out of the result leaf.
+Each is tested in CI by running the framework's own tool-calling loop with
+a fake model and verifying the dossier (`tests/test_integrations.py`).
 
-def intent(tool: str, args) -> int:
-    return log.append_intent(witness_log.canonical_json({"tool": tool, "args": args}))
-
-def result(tool: str, intent_index: int, value, outcome: str = "ok") -> int:
-    return log.append_result(witness_log.canonical_json(
-        {"tool": tool, "intent_index": intent_index, "outcome": outcome, "value": value}))
-```
+To get witnessed while the agent runs, add a background
+[`Witnesser`](Quickstart-Python) next to any of them:
+`w = witness_log.Witnesser(log, "trusted.json", "agent.jsonl")`, then
+`w.request()` whenever you like and `w.flush(timeout)` at the end.
 
 ## LangChain / LangGraph (Python)
 
-A callback handler receives every tool start and end.
-
 ```python
-from langchain_core.callbacks import BaseCallbackHandler
-import wl_audit
+import witness_log
+from witness_log.integrations.langchain import WitnessLogCallbackHandler
 
-class WitnessLogHandler(BaseCallbackHandler):
-    def __init__(self):
-        self._pending = {}
-    def on_tool_start(self, serialized, input_str, *, run_id, **kw):
-        self._pending[run_id] = wl_audit.intent(serialized.get("name", "tool"), input_str)
-    def on_tool_end(self, output, *, run_id, **kw):
-        i = self._pending.pop(run_id, None)
-        if i is not None:
-            wl_audit.result("tool", i, str(output))
-    def on_tool_error(self, error, *, run_id, **kw):
-        i = self._pending.pop(run_id, None)
-        if i is not None:
-            wl_audit.result("tool", i, repr(error), outcome="error")
+log = witness_log.open("agent.jsonl")
+handler = WitnessLogCallbackHandler(log)
 
-# agent_executor.invoke({"input": ...}, config={"callbacks": [WitnessLogHandler()]})
-# graph.invoke(state, config={"callbacks": [WitnessLogHandler()]})   # LangGraph: same config
+agent.invoke({"messages": [...]}, config={"callbacks": [handler]})   # create_agent / AgentExecutor
+graph.invoke(state, config={"callbacks": [handler]})                 # LangGraph: same config
 ```
+
+Without the extra, the handler is `on_tool_start` / `on_tool_end` /
+`on_tool_error` keyed by `run_id`; the 0.3.5 version of this page recorded
+every result under the name `"tool"`, which the adapter fixes.
 
 ## OpenAI Agents SDK (Python)
 
-`RunHooks` fires on tool start/end; or decorate the tool functions.
+```python
+import witness_log
+from agents import Runner
+from witness_log.integrations.openai_agents import WitnessLogHooks
+
+log = witness_log.open("agent.jsonl")
+await Runner.run(agent, "...", hooks=WitnessLogHooks(log))
+```
+
+The hooks key each call by `ToolContext.tool_call_id` and record
+`ToolContext.tool_arguments`. The 0.3.5 snippet on this page keyed by tool
+name and recorded no arguments; when the model called one tool twice in
+parallel it raised `KeyError` inside the run. Alternatively decorate the
+tool itself, arguments included:
 
 ```python
-from agents import Agent, Runner, RunHooks, function_tool
-import witness_log, wl_audit
+from agents import function_tool
 
-class WitnessHooks(RunHooks):
-    async def on_tool_start(self, context, agent, tool):
-        context.context.setdefault("wl", {})[tool.name] = wl_audit.intent(tool.name, None)
-    async def on_tool_end(self, context, agent, tool, result):
-        wl_audit.result(tool.name, context.context["wl"].pop(tool.name), result)
-
-# Simpler: decorate the tool itself, arguments included.
 @function_tool
-@witness_log.step(wl_audit.log)
+@witness_log.step(log)
 def get_balance(account: str) -> dict:
     return {"account": account, "balance": 42}
-
-await Runner.run(agent, "...", hooks=WitnessHooks(), context={})
 ```
 
 ## CrewAI
 
-Tools are plain callables; decorate them.
+```python
+import witness_log
+from witness_log.integrations.crewai import witness_crewai
+
+log = witness_log.open("agent.jsonl")
+with witness_crewai(log):                 # CrewAI's global before/after tool-call hooks
+    crew.kickoff()
+```
+
+Or decorate individual tools (works with any CrewAI version):
 
 ```python
 from crewai.tools import tool
-import witness_log, wl_audit
 
 @tool("search")
-@witness_log.step(wl_audit.log, name="search")
+@witness_log.step(log, name="search")
 def search(query: str) -> str:
     """Search the web."""
     return do_search(query)
 ```
 
-`Crew(step_callback=...)` can additionally append a memory leaf per agent
-step (`wl_audit.log.append_memory(witness_log.canonical_json(step))`).
+crewai pins `mcp<2`, so install the `crewai` and `mcp` extras in separate
+environments.
+
+## A shared helper for the other frameworks
+
+```python
+# wl_audit.py
+import witness_log
+from witness_log.integrations import Recorder
+
+log = witness_log.open("agent.jsonl")             # one identity per agent
+rec = Recorder(log)                               # rec.intent(tool, args) -> index; rec.result(tool, index, value, outcome)
+intent, result = rec.intent, rec.result
+```
 
 ## AutoGen (AG2 / autogen-agentchat)
 
@@ -166,12 +185,18 @@ payload = witness_log.canonical_json({k: ev.get(k) for k in ("tool_name", "tool_
 log.close()
 ```
 
-One journal is opened per hook invocation here; for high tool-call rates,
-run the MCP server instead and let the agent call `append_audit_step`.
+One journal is opened per hook invocation here. The journal admits one
+writer at a time, so if two hooks run at once (parallel tool calls) the
+second `open` raises `OSError` and that event is not recorded; for parallel
+tool use or high call rates, run the MCP server instead and let the agent
+call `append_audit_step`.
 
 ## After the run: checkpoint, witness, verify
 
-Whatever framework: `wl_audit.log.sync()`, then either
-`witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json`
-or the Python submission loop in [Quickstart: Python](Quickstart-Python),
-then `witness-log verify dossier.json --identity <key> --directory trusted.json --min-witnesses 3`.
+Whatever framework: `log.sync()`, then either a background
+`witness_log.Witnesser(log, "trusted.json", "agent.jsonl")` with
+`w.flush(timeout)` ([Quickstart: Python](Quickstart-Python) §5), or
+`witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json`,
+then `witness-log verify dossier.json --identity <key> --directory trusted.json --min-witnesses N`
+with `N` no larger than the number of witnesses that can cosign (two local
+witnesses: `--min-witnesses 2`).

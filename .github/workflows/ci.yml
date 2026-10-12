@@ -124,6 +124,8 @@ jobs:
       - name: Install wheel
         working-directory: crates/witness-log-python
         run: pip install target/wheels/*.whl
+      - name: Build the CLI (the Witnesser tests start real witnesses from it)
+        run: cargo build --release -p witness-log-cli
       - name: Run pytest suite
         # Real coverage (exception hierarchy, dossier verification,
         # snapshot round-trip, file permissions) rather than one inline
@@ -137,8 +139,6 @@ jobs:
         run: |
           pip install "mcp>=2" anyio
           pytest -q integrations/mcp -p anyio
-      - name: Build the CLI for the live scenarios
-        run: cargo build --release -p witness-log-cli
       - name: Live witness network (10 scenarios, 10 witnesses)
         run: python examples/live-network/scenarios.py
       - name: Swarm (100 scenarios, 12 witnesses, 25 agents)
@@ -166,6 +166,45 @@ jobs:
             swarm-report/REPORT.md
             swarm-report/results.json
             swarm-report/outside/REPORT.md
+
+  integrations:
+    # The framework adapters (witness_log.integrations.*) run each
+    # framework's own tool-calling loop with a fake model. Kept out of the
+    # gating jobs: these frameworks release weekly, and an upstream break
+    # should show up here without blocking unrelated changes. crewai pins
+    # mcp<2, so it gets its own environment.
+    name: Framework adapters (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [langchain-openai-agents, crewai]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        working-directory: crates/witness-log-python
+        run: pip install maturin pytest && maturin build --release
+      - name: Install wheel with extras
+        working-directory: crates/witness-log-python
+        run: |
+          whl=$(ls target/wheels/*.whl)
+          if [ "${{ matrix.env }}" = crewai ]; then
+            pip install "${whl}[crewai]"
+          else
+            pip install "${whl}[langchain,openai-agents]" langchain
+          fi
+      - name: Adapter tests (none may be skipped here)
+        working-directory: crates/witness-log-python
+        run: |
+          set -o pipefail
+          pytest -q -rs tests/test_integrations.py | tee out.txt
+          if [ "${{ matrix.env }}" = crewai ]; then want=1; else want=2; fi
+          grep -q "${want} passed" out.txt
 
   registry:
     name: Witness registry entries

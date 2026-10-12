@@ -66,15 +66,30 @@ two witnesses with distinct `operator_org` values in the verifier's
 directory must cosign the head:
 
 ```python
-body = log.add_checkpoint_body(old_size=0)   # c2sp.org/tlog-witness request
-# POST body to each witness's /add-checkpoint (urllib, requests, ...).
-# 409 with a number N in the body means: retry with add_checkpoint_body(N).
-dossier, accepted = log.dossier_from_responses([(witness_pubkey_hex, response_body), ...])
-report = witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex(), directory_json)
+w = witness_log.Witnesser(log, "trusted.json", "agent.jsonl")   # background thread
+w.request()                         # never blocks, never raises
+if w.flush(timeout=30):             # bounded wait for the current head
+    report = witness_log.verify_dossier_json(w.dossier(), 0.66, log.identity_pubkey_hex(),
+                                             open("trusted.json").read())
+print(w.status())                   # witnessed_size, cosignatures, last_error (structured)
 ```
 
-`integrations/mcp/witness_mcp_server.py` wraps all of this as MCP tools,
-including `submit_to_witnesses`.
+`Witnesser` follows `409` resyncs, honours `Retry-After`, backs off when
+witnesses are down, keeps its state in `<journal>.witnesses.json` (the
+CLI's file and format) and refuses to submit a journal that contradicts a
+head witnesses already cosigned. `await w.aflush()` in asyncio code;
+`witness_log.submit_round(...)` for one synchronous round. The protocol
+primitives underneath are `add_checkpoint_body(old_size)` and
+`dossier_from_responses(...)` (and their `_at(size, ...)` forms).
+
+## Extras
+
+| extra | gives you |
+|---|---|
+| `witness-log[mcp]` | the MCP server: `witness-log-mcp` (stdio), nine tools including `submit_to_witnesses` |
+| `witness-log[langchain]` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` |
+| `witness-log[openai-agents]` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
+| `witness-log[crewai]` | `witness_log.integrations.crewai.witness_crewai` |
 
 ## Running a witness
 
@@ -101,14 +116,15 @@ Everything is typed in [`python/witness_log/_core.pyi`](python/witness_log/_core
 | `.forget(i)` / `.can_forget(i)` | Redaction; works for leaves from earlier sessions. |
 | `.checkpoint()` / `.to_dossier_json()` / `.leaves_json()` | JSON, SPEC §6 / §9 / §2. |
 | `.inclusion_proof(i)` → `(tree_size, root_hex, path)` | Check offline with `verify_inclusion(...)`. |
-| `.add_checkpoint_body(old_size)` / `.dossier_from_responses(...)` | Witness protocol client. |
+| `.add_checkpoint_body(old_size)` / `.dossier_from_responses(...)` | Witness protocol client; `_at(size, ...)` forms pin an earlier head; `.root_hex_at(size)`. |
+| `Witnesser(log, directory, path)` / `submit_round(log, directory, state_path)` | Background / one-shot witnessing (see above). |
 | `.sync()` / `.close()` / context manager | Durability; releasing the lock. |
 | `JournaledLog.force_unlock(path)` | After a crash, when `resume` cannot tell the holder is gone. |
 | `WitnessLog` | The in-memory core (snapshots, no salt persistence). |
 | `WitnessService` | A `tlog-witness` witness. |
 | `verify_dossier_json(dossier, threshold, identity=None, directory_json=None)` | The CLI's verifier; report JSON with `verdict`, `identity_pinned`, `internally_consistent`, `quorum`. |
 | `verify_inclusion(leaf_hash_hex, index, tree_size, path, root_hex)` | RFC 6962 inclusion check. |
-| `select_diverse_witnesses(directory_json, subject_pubkey, want)` | Pick operator-diverse witnesses from a directory. |
+| `select_diverse_witnesses(directory_json, subject_pubkey, want)` / `select_witnesses(...)` | Pick operator-diverse witnesses from a directory (object or bare list). |
 | `witness_entry_independent(...)` / `witness_entry_project_operated(...)` | Build directory entries. |
 
 Errors: `WitnessLogError` (base), `SignatureError`, `ContinuityError`,
