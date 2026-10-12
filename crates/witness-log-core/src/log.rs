@@ -137,6 +137,21 @@ pub struct ProvenLeaf {
     pub inclusion_proof: Vec<crate::merkle::Hash>,
 }
 
+/// Why `WitnessLog::evidence_window` refused a window.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum EvidenceWindowError {
+    /// `range.end` is past the end of the tree.
+    #[error("window {start}..{end} is outside the tree (tree_size {tree_size})")]
+    OutOfRange {
+        start: u64,
+        end: u64,
+        tree_size: u64,
+    },
+    /// `range.start > range.end`.
+    #[error("window {start}..{end} has start after end")]
+    Inverted { start: u64, end: u64 },
+}
+
 /// A partial, verifiable export: see `WitnessLog::evidence_window`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceWindow {
@@ -257,6 +272,15 @@ impl WitnessLog {
     /// a payload, and its salt is still held by this log's salt store.
     pub fn can_forget(&self, index: u64) -> bool {
         self.salts.has_salt(index)
+    }
+
+    /// The salt committed with leaf `index`, for selective disclosure of
+    /// that one payload: give a verifier the leaf, the payload and this
+    /// salt and they check it with [`crate::redaction::verify_disclosure`]
+    /// without seeing any other salt. `None` after `forget(index)`, for a
+    /// marker leaf, or when the store cannot release salts.
+    pub fn salt_for(&self, index: u64) -> Option<[u8; 32]> {
+        self.salts.salt_for(index)
     }
 
     /// Replace the salt store. Used by `JournaledLog::resume` to attach the
@@ -679,18 +703,35 @@ impl WitnessLog {
     /// over-disclosure. This is the artifact that is both: each leaf is
     /// individually proven against the signed checkpoint, and nothing
     /// outside the window is revealed.
+    ///
+    /// The window must lie inside the tree: `range.start <= range.end <=
+    /// tree_size`. Anything else is an error. Until 0.3.6 an out-of-range
+    /// window was clamped silently, so a caller asking for leaves
+    /// 100..200 of a 150-leaf log got 50 entries and no indication that
+    /// half the request was not met -- an export that looks complete but
+    /// is not. (`0..u64::MAX` as "everything" is an error too; ask for
+    /// `0..log.tree_size()`.)
     pub fn evidence_window(
         &self,
         range: std::ops::Range<u64>,
         identity_signing_key: &SigningKey,
-    ) -> EvidenceWindow {
-        let checkpoint = self.checkpoint(identity_signing_key);
+    ) -> Result<EvidenceWindow, EvidenceWindowError> {
         let size = self.tree.size();
-        // Clamp to the tree before iterating: `0..u64::MAX` must cost one
-        // pass over the leaves, not 2^64 filter calls.
-        let start = range.start.min(size);
-        let end = range.end.min(size);
-        let entries = (start..end)
+        if range.start > range.end {
+            return Err(EvidenceWindowError::Inverted {
+                start: range.start,
+                end: range.end,
+            });
+        }
+        if range.end > size {
+            return Err(EvidenceWindowError::OutOfRange {
+                start: range.start,
+                end: range.end,
+                tree_size: size,
+            });
+        }
+        let checkpoint = self.checkpoint(identity_signing_key);
+        let entries = range
             .filter_map(|i| {
                 let leaf = self.leaves.get(usize::try_from(i).ok()?)?.clone();
                 let proof = self.tree.inclusion_proof(i, size)?;
@@ -700,12 +741,12 @@ impl WitnessLog {
                 })
             })
             .collect();
-        EvidenceWindow {
+        Ok(EvidenceWindow {
             identity_pubkey: self.identity_pubkey_hex(),
             checkpoint,
             entries,
             key_bindings: self.all_bindings(),
-        }
+        })
     }
 
     /// `checkpoint` signed with this log's own stored identity key, so
@@ -1004,18 +1045,17 @@ mod tests {
     use crate::identity::IdentityKeypair;
 
     #[test]
-    fn evidence_window_is_clamped_to_the_tree() {
+    fn evidence_window_refuses_out_of_range_instead_of_clamping() {
         let identity = IdentityKeypair::generate();
         let key = SigningKey::from_bytes(&identity.to_bytes());
         let mut log = WitnessLog::resume(identity, 0);
         for i in 0..5u8 {
             log.append_intent(&[i]);
         }
-        // Found by the release test: `0..u64::MAX` iterated 2^64 times.
-        let all = log.evidence_window(0..u64::MAX, &key);
+        let all = log.evidence_window(0..5, &key).unwrap();
         assert_eq!(all.entries.len(), 5);
         assert!(all.verify().is_ok());
-        let tail = log.evidence_window(3..u64::MAX, &key);
+        let tail = log.evidence_window(3..5, &key).unwrap();
         assert_eq!(
             tail.entries
                 .iter()
@@ -1023,9 +1063,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 4]
         );
-        assert!(log.evidence_window(9..12, &key).entries.is_empty());
+        assert!(log.evidence_window(5..5, &key).unwrap().entries.is_empty());
+        // Before 0.3.7 each of these returned a shorter window with no
+        // indication the request was not met.
+        assert_eq!(
+            log.evidence_window(3..7, &key).unwrap_err(),
+            EvidenceWindowError::OutOfRange {
+                start: 3,
+                end: 7,
+                tree_size: 5
+            }
+        );
+        assert!(matches!(
+            log.evidence_window(0..u64::MAX, &key),
+            Err(EvidenceWindowError::OutOfRange { .. })
+        ));
+        assert!(matches!(
+            log.evidence_window(9..12, &key),
+            Err(EvidenceWindowError::OutOfRange { .. })
+        ));
         let (hi, lo) = (4u64, 2u64);
-        assert!(log.evidence_window(hi..lo, &key).entries.is_empty());
+        assert_eq!(
+            log.evidence_window(hi..lo, &key).unwrap_err(),
+            EvidenceWindowError::Inverted { start: 4, end: 2 }
+        );
     }
 
     #[test]

@@ -174,7 +174,7 @@ index. So:
 let key = ed25519_dalek::SigningKey::from_bytes(&log.log().identity_bytes());
 
 // Leaves 100..199 only, each with its own inclusion proof against one signed checkpoint.
-let window = log.log().evidence_window(100..200, &key);
+let window = log.log().evidence_window(100..200, &key)?;   // Err if the window runs past the tree
 assert!(window.verify().is_ok());
 
 let proof = log.log().inclusion_proof(42);              // leaf 42 is in the current root

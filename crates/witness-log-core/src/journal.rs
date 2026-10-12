@@ -1059,6 +1059,50 @@ mod tests {
             .to_string()
     }
 
+    /// Selective disclosure: the salt a journal persisted for one leaf
+    /// lets a third party recompute that leaf's commitment from the
+    /// payload, with no other salt and no access to the journal. After
+    /// `forget` the salt is gone from both the store and the sidecar.
+    #[test]
+    fn disclosed_salt_verifies_one_payload_and_forget_withdraws_it() {
+        let path = tmp_path("disclose");
+        let mut jl = JournaledLog::create_ephemeral(&path).unwrap();
+        let i0 = jl.append_intent(b"first").unwrap();
+        let i1 = jl.append_result(b"second").unwrap();
+        jl.sync().unwrap();
+        let salt0 = jl.log().salt_for(i0).expect("live leaf has a salt");
+        let leaf0 = jl.log().leaves()[i0 as usize].clone();
+        let leaf1 = jl.log().leaves()[i1 as usize].clone();
+        assert!(crate::redaction::verify_disclosure(
+            &leaf0, b"first", &salt0
+        ));
+        assert!(!crate::redaction::verify_disclosure(
+            &leaf0, b"First", &salt0
+        ));
+        assert!(
+            !crate::redaction::verify_disclosure(&leaf1, b"second", &salt0),
+            "a salt discloses exactly one leaf"
+        );
+        assert_eq!(
+            crate::redaction::payload_hash(b"first", &salt0, i0),
+            crate::redaction::payload_hash_with_salt(b"first", &salt0, i0)
+        );
+        // Survives a restart (the sidecar), then is withdrawn by forget.
+        drop(jl);
+        let (mut jl, _) = JournaledLog::resume(&path).unwrap();
+        assert_eq!(jl.log().salt_for(i0), Some(salt0));
+        assert!(jl.forget(i0).unwrap());
+        assert_eq!(jl.log().salt_for(i0), None);
+        let tombstone = jl.log().leaves().last().unwrap().clone();
+        assert!(
+            !crate::redaction::verify_disclosure(&tombstone, b"", &salt0),
+            "marker leaves have no payload to disclose"
+        );
+        drop(jl);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(JournaledLog::salts_path(&path));
+    }
+
     #[test]
     fn journal_roundtrip_reproduces_exact_root() {
         let path = tmp_path("roundtrip");

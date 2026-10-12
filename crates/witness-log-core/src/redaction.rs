@@ -74,6 +74,16 @@ pub trait SaltStore: Send {
     fn take_error(&mut self) -> Option<std::io::Error> {
         None
     }
+    /// The salt held for `leaf_index`, for selective disclosure: handing
+    /// a verifier the payload, this salt and the leaf lets them recompute
+    /// `payload_hash` without access to the store (see
+    /// [`verify_disclosure`]). `None` once the salt has been forgotten or
+    /// if the leaf never had one. Stores that cannot release salts (an
+    /// HSM) keep the default and simply cannot disclose.
+    fn salt_for(&self, leaf_index: u64) -> Option<[u8; 32]> {
+        let _ = leaf_index;
+        None
+    }
 }
 
 /// Salts persisted as one JSON line each in a sidecar file, 0600 on Unix.
@@ -318,6 +328,9 @@ impl SaltStore for FileSaltStore {
     fn take_error(&mut self) -> Option<std::io::Error> {
         self.error.take()
     }
+    fn salt_for(&self, leaf_index: u64) -> Option<[u8; 32]> {
+        self.salts.get(&leaf_index).copied()
+    }
 }
 
 pub struct SaltManager {
@@ -357,6 +370,11 @@ impl SaltManager {
         let salt = self.salts.get(&leaf_index)?;
         Some(payload_hash(payload, salt, leaf_index))
     }
+
+    /// The salt for `leaf_index`, if still held. See [`SaltStore::salt_for`].
+    pub fn salt_for(&self, leaf_index: u64) -> Option<[u8; 32]> {
+        self.salts.get(&leaf_index).copied()
+    }
 }
 
 impl Default for SaltManager {
@@ -378,6 +396,9 @@ impl SaltStore for SaltManager {
     fn recompute(&self, leaf_index: u64, payload: &[u8]) -> Option<[u8; 32]> {
         SaltManager::recompute(self, leaf_index, payload)
     }
+    fn salt_for(&self, leaf_index: u64) -> Option<[u8; 32]> {
+        SaltManager::salt_for(self, leaf_index)
+    }
 }
 
 /// SPEC §8 `payload_hash`, computable with an explicit salt. Exposed so
@@ -387,7 +408,30 @@ pub fn payload_hash_with_salt(payload: &[u8], salt: &[u8; 32], leaf_index: u64) 
     payload_hash(payload, salt, leaf_index)
 }
 
-fn payload_hash(payload: &[u8], salt: &[u8; 32], leaf_index: u64) -> [u8; 32] {
+/// Check a selective disclosure: that `payload` and `salt` are what `leaf`
+/// committed to. Recomputes `SHA256(bucket_pad(payload) || salt ||
+/// leaf.index)` and compares it with `leaf.payload_hash`. The leaf itself
+/// should separately be proven against a checkpoint (an inclusion proof,
+/// or the whole dossier); this answers only "is this the payload behind
+/// that leaf". Marker leaves (0x03, 0x04) carry no payload and never
+/// verify.
+pub fn verify_disclosure(leaf: &crate::leaf::Leaf, payload: &[u8], salt: &[u8; 32]) -> bool {
+    if matches!(
+        crate::leaf::LeafType::from_tag(leaf.leaf_type),
+        Some(crate::leaf::LeafType::Redaction) | Some(crate::leaf::LeafType::KeyRevocation)
+    ) {
+        return false;
+    }
+    let expected = payload_hash(payload, salt, leaf.index);
+    hex::decode(&leaf.payload_hash)
+        .map(|committed| committed == expected)
+        .unwrap_or(false)
+}
+
+/// SPEC §8 `payload_hash`: `SHA256(bucket_pad(payload) || salt ||
+/// leaf_index as u64 big-endian)`. Same function as
+/// [`payload_hash_with_salt`], under the name the spec uses.
+pub fn payload_hash(payload: &[u8], salt: &[u8; 32], leaf_index: u64) -> [u8; 32] {
     let padded = bucket_pad(payload);
     let mut hasher = Sha256::new();
     hasher.update(&padded);

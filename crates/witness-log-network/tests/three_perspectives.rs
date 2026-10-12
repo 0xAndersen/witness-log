@@ -776,7 +776,9 @@ mod regulator {
         let _cp = log.checkpoint(&SigningKey::from_bytes(&seed));
         // FIXED: a verifiable partial export -- each leaf proven against
         // the signed checkpoint, nothing outside the window disclosed.
-        let w = log.evidence_window(3..7, &SigningKey::from_bytes(&seed));
+        let w = log
+            .evidence_window(3..7, &SigningKey::from_bytes(&seed))
+            .expect("3..7 lies inside a 10-leaf tree");
         assert_eq!(w.entries.len(), 4);
         assert!(
             w.verify().is_ok(),
