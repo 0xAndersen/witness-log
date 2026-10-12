@@ -60,3 +60,17 @@ medians of 21 repetitions: in-memory append 4.4 µs, journaled append
 without fsync 7.6–7.8 µs, verify of a 10,000-leaf dossier 23 ms, a
 `@witness_log.step` call 19 µs in memory and 26 µs journaled. CI's
 baseline (`benches/baseline.json`) records which runner produced it.
+
+## What the large runs and the outside evaluations found
+
+The defects the first large run found (fraction-only quorum, every agent choosing the same eight witnesses,
+clients ignoring `Retry-After`) are fixed in 0.3.3 and the before/after reports are committed. An independent
+three-persona evaluation of 0.3.3 (agent developer, transparency-log engineer, agent-commerce lead; competitors
+run on the same tasks) confirmed every core claim, measured 20–27 µs per call, and found six defects, all fixed
+in 0.3.4: a verifier hang on absurd tree sizes, anchor proofs not bound to their hash, split views passing a
+sub-majority gate silently, `submit` failing on bare paths, cross-agent leaves being Rust-only, and the identity
+seed always on disk. The one test that separated witness-log from every competitor it was run against: when the
+operator rewrote the whole history with its own key, the others accepted it; the witnesses refused (422) and
+produced proof. Reproduce that one in a second: `python3 examples/rewrite-attack/run.py` (two local witnesses,
+the 422, the evidence file verified, `diff` flagging equivocation). `examples/swarm/`
+reproduces all of it; [Testing and evidence](Testing-and-Evidence) explains what each layer checks.

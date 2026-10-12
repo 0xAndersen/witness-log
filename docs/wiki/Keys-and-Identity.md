@@ -160,6 +160,28 @@ An identity key in a KMS: generate the seed there, pass it as
 header will still hold the seed in the reference implementation; embedders
 who need the seed never to touch disk implement the signing hook in Rust.
 
+## Authorization kinds
+
+An `AuthorizationEvent` leaf (0x06) records one side of a delegation between
+two identities. Each side writes its own leaf, in its own log, with its own
+view of the event; `witness-log bind` later matches the pairs. The `kind`
+says which side this is and what happened:
+
+| kind | written by | meaning |
+|---|---|---|
+| `granted_by_me` | the principal's agent | I granted `counterparty` the scope |
+| `granted_to_me` | the receiving agent | `counterparty` granted me the scope |
+| `revoked_by_me` | the principal's agent | I withdrew it |
+| `revoked_to_me` | the receiving agent | it was withdrawn from me |
+| `scope_changed_by_me` | the principal's agent | I replaced the scope (the leaf commits to the new one) |
+| `scope_changed_to_me` | the receiving agent | my scope was replaced |
+
+The pairs mirror: a `granted_by_me` in A's log binds to a `granted_to_me`
+in B's log with the same scope bytes and each naming the other's identity.
+A side that holds an event the other never recorded is how a unilateral
+change shows up in `bind`. The scope is arbitrary bytes; the
+[commerce profiles](Commerce-Profile) use the mandate's RFC 8785 hash.
+
 ## Agent-to-agent identity
 
 `HandoffAttestation` (0x05) and `AuthorizationEvent` (0x06) leaves carry a

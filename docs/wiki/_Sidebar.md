@@ -23,9 +23,11 @@
 - [Audit a payments agent](Tutorial-Audit-a-Payments-Agent)
 - [Multi-agent handoff](Tutorial-Multi-Agent-Handoff)
 - [AP2 mandates](Tutorial-AP2-Mandates)
+- [Commerce profiles](Commerce-Profile)
 
 **Understand it**
 - [Architecture](Architecture)
+- [Design decisions](Design-Decisions)
 - [How a leaf becomes a proof](How-a-Leaf-Becomes-a-Proof)
 - [Witness protocol walkthrough](Witness-Protocol-Walkthrough)
 - [Redaction explained](Redaction-Explained)
