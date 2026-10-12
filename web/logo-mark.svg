@@ -1,0 +1,22 @@
+
+<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5ee7ff"/><stop offset="1" stop-color="#2b7cff"/></linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <!-- Merkle tree: root commits to four leaves; the amber node is the witnessed head -->
+  <g stroke="url(#lg)" stroke-width="3" fill="none" stroke-linecap="round" filter="url(#glow)">
+    <path d="M60 30 L36 58 M60 30 L84 58 M36 58 L24 86 M36 58 L48 86 M84 58 L72 86 M84 58 L96 86"/>
+  </g>
+  <g filter="url(#glow)">
+    <circle cx="24" cy="86" r="5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="48" cy="86" r="5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="72" cy="86" r="5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="96" cy="86" r="5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="36" cy="58" r="5.5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="84" cy="58" r="5.5" fill="#0b0f1a" stroke="#5ee7ff" stroke-width="3"/>
+    <circle cx="60" cy="30" r="9" fill="#ffb347" stroke="#ffd48a" stroke-width="2.5"/>
+  </g>
+  <!-- the witness ring: an independent party around the head -->
+  <circle cx="60" cy="30" r="17" fill="none" stroke="#ffb347" stroke-width="1.6" stroke-dasharray="4 5" opacity=".9"/>
+</svg>

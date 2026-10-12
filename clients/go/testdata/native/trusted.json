@@ -1,0 +1,40 @@
+{
+  "witnesses": [
+    {
+      "name": "example-university-security-lab",
+      "operator_org": "example-university",
+      "url": "https://witness.example-university.edu",
+      "pubkey": "0b457bf1a14e20f110c561ee288d4b98a6025774d723d72c3b26246a759da43f",
+      "runtime": "human",
+      "compute_provider": null,
+      "is_project_operated": false
+    },
+    {
+      "name": "example-infra-co-agent-witness",
+      "operator_org": "example-infra-co",
+      "url": "https://witness.example-infra.co",
+      "pubkey": "d0c4e40fbd819970e202776a3bb8617ff51707bd32a49aacb1ccf30b42775d46",
+      "runtime": "agent",
+      "compute_provider": "example-inference-provider-a",
+      "is_project_operated": false
+    },
+    {
+      "name": "example-nonresponsive-witness",
+      "operator_org": "example-third-org",
+      "url": "https://witness.example-third.org",
+      "pubkey": "8faf4d8cb3c82ac9e460ca4f4a219906556230724b3cf1fc5d0eecc8de33c10e",
+      "runtime": "agent",
+      "compute_provider": "example-inference-provider-b",
+      "is_project_operated": false
+    },
+    {
+      "name": "witness-log-project-bootstrap-witness-01",
+      "operator_org": "witness-log-project",
+      "url": "https://witness-01.witness-log.dev",
+      "pubkey": "02901fc958362cb0c24918ccb349aed2885522a04c6c3618fb44656c1f7fb8b1",
+      "runtime": "agent",
+      "compute_provider": "witness-log-project-infra",
+      "is_project_operated": true
+    }
+  ]
+}

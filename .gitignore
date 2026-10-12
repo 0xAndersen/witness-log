@@ -38,3 +38,8 @@ snapshot*.json
 # declarations and the per-platform .node binaries).
 node_modules/
 clients/node/native/
+
+# browser verifier build output
+web/pkg/
+web/pkg-go/
+web/test/_tampered.json

@@ -129,6 +129,12 @@ leaf-encoding or verdict change; the two-operator rule is unchanged.
 - Docs: `docs/wiki/Quickstart-TypeScript.md`; READMEs for the three new
   packages.
 
+### Go and wasm
+
+- `clients/go`: an independent Go implementation of the verifier (standard library only) — `VerifyDossier`, `Bind`, `VerifyHandoffBinding`, `VerifyAuthorizationBinding`, `VerifyDisclosure`, C2SP note parsing and cosignature verification, RFC 6962 proofs — with every corpus vector as a table-driven test and golden dossiers regenerated from the Rust CLI; `cmd/witness-log-verify` returns the same exit codes as `witness-log verify`. `go.yml` runs vet/test/staticcheck on three OSes and diffs Go reports against the Rust CLI.
+- `crates/witness-log-wasm`: `verify_dossier`, `verify_dossier_with_options`, `verify_disclosure`, `bind` over the canonical Rust verifier for the browser; host-side conformance tests so `cargo test --workspace` covers it.
+- `web/`: a static offline verifier page (drop a dossier and a trusted directory; verdict, receipts, leaves, disclosure check, bind) with two interchangeable engines (Rust wasm, Go wasm) and a Playwright test; `pages.yml` deploys it to GitHub Pages.
+
 ## 0.3.6 — 2026-10-12
 
 Driven by a fresh-eyes evaluation of the published 0.3.5 packages

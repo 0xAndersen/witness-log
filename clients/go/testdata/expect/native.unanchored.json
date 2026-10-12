@@ -1,0 +1,24 @@
+{
+  "directory_pinned": false,
+  "identity_pinned": false,
+  "identity_pubkey": "a33f38a835a2adb85202f1588063bc82c12254c8b0e924b9b9568530d89c1727",
+  "min_witnesses_used": null,
+  "path": "native/dossier.json",
+  "report": {
+    "bindings_asserted": true,
+    "bindings_valid": true,
+    "checkpoint_signature_valid": true,
+    "claimed_tree_size": 6,
+    "externally_anchored": false,
+    "identity_bound": true,
+    "identity_pinned": false,
+    "internally_consistent": true,
+    "leaf_count": 6,
+    "leaves_structurally_valid": true,
+    "merkle_continuity_valid": true,
+    "quorum": null,
+    "verdict": "unanchored"
+  },
+  "threshold_used": 0.66,
+  "verdict": "UNANCHORED"
+}

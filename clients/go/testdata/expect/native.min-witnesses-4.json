@@ -1,0 +1,45 @@
+{
+  "directory_pinned": true,
+  "identity_pinned": false,
+  "identity_pubkey": "a33f38a835a2adb85202f1588063bc82c12254c8b0e924b9b9568530d89c1727",
+  "min_witnesses_used": 4,
+  "path": "native/dossier.json",
+  "report": {
+    "bindings_asserted": true,
+    "bindings_valid": true,
+    "checkpoint_signature_valid": true,
+    "claimed_tree_size": 6,
+    "externally_anchored": true,
+    "identity_bound": true,
+    "identity_pinned": false,
+    "internally_consistent": true,
+    "leaf_count": 6,
+    "leaves_structurally_valid": true,
+    "merkle_continuity_valid": true,
+    "quorum": {
+      "compute_diversity_fraction": 0.75,
+      "count_gate": "count >= 4",
+      "distinct_compute_providers_in_directory": 4,
+      "distinct_compute_providers_represented": 3,
+      "distinct_independent_operators": 2,
+      "distinct_operators_in_directory": 4,
+      "distinct_operators_represented": 3,
+      "diversity_fraction": 0.75,
+      "independent_operators_represented": [
+        "example-infra-co",
+        "example-university"
+      ],
+      "meets_count_threshold": false,
+      "newest_trusted_witness_ms": 1791783733273,
+      "project_operated_receipts": 1,
+      "quorum_fraction": 0.75,
+      "split_view_resistant": true,
+      "total_directory_witnesses": 4,
+      "tree_size": 6,
+      "valid_receipts": 3
+    },
+    "verdict": "consistent_unwitnessed"
+  },
+  "threshold_used": 0.66,
+  "verdict": "CONSISTENT-UNWITNESSED"
+}

@@ -1,0 +1,58 @@
+name: Browser verifier (Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "crates/**"
+      - "clients/go/**"
+      - "corpus/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/go/go.mod
+          cache: false
+      - name: wasm-bindgen-cli (pinned to Cargo.toml)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: build the Rust engine
+        run: sh web/build.sh
+      - name: build the Go engine
+        run: sh web/build-go.sh
+      - name: browser test
+        run: |
+          python3 -m pip install --quiet playwright
+          python3 -m playwright install --with-deps chromium
+          python3 web/test/test_page.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

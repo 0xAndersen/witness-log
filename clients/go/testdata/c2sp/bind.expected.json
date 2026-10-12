@@ -1,0 +1,32 @@
+{
+  "a": {
+    "identity": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+    "path": "c2sp/a.json"
+  },
+  "b": {
+    "identity": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+    "path": "c2sp/b.json"
+  },
+  "bound": [
+    {
+      "kind": "handoff",
+      "receiver": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "receiver_leaf": 0,
+      "sender": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "sender_leaf": 3,
+      "state_hash": "a9d2bd3f18e079673036230ddf2ffded1bd1beaa1de759951c1593a984fac956"
+    },
+    {
+      "a": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "a_event": "granted_by_me",
+      "a_leaf": 4,
+      "b": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "b_event": "granted_to_me",
+      "b_leaf": 1,
+      "kind": "authorization",
+      "scope_hash": "ca41b82403415fd0a932def17248519fe570ded49da33f6a0115558eabd9dbf2"
+    }
+  ],
+  "exit": 0,
+  "failed": []
+}

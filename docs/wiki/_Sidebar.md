@@ -14,6 +14,8 @@
 - [MCP integration](MCP-Integration)
 - [Framework guides](Framework-Guides)
   - [Adapters: nightly live run](Framework-Adapters-CI)
+- [Quickstart: Go](Quickstart-Go)
+- [Browser verifier](Browser-Verifier)
 - [Other languages](Other-Languages)
 
 **Tutorials**

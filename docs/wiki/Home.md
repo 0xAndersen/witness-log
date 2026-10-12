@@ -16,7 +16,9 @@ Python bindings, MCP server, CLI.
 | use it from the terminal or any language | [Quickstart: CLI](Quickstart-CLI) |
 | give Claude Code / Claude Desktop / Cursor / any MCP host an audit trail with zero code | [MCP integration](MCP-Integration) |
 | wire it into LangChain, LangGraph, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex | [Framework guides](Framework-Guides) |
-| use it from Go / Java / anything else | [Other languages](Other-Languages) |
+| verify from Go | [Quickstart: Go](Quickstart-Go) |
+| verify in a browser, nothing installed | [Browser verifier](Browser-Verifier) |
+| use it from Java / anything else | [Other languages](Other-Languages) |
 | follow a complete worked example | [Tutorial: audit a payments agent](Tutorial-Audit-a-Payments-Agent) · [Tutorial: multi-agent handoff](Tutorial-Multi-Agent-Handoff) · [Tutorial: AP2 mandates](Tutorial-AP2-Mandates) |
 | know what WITNESSED actually proves, and read a verify report | [Verification and verdicts](Verification-and-Verdicts) |
 | understand the witness protocol on the wire (200/409/422) | [Witness protocol walkthrough](Witness-Protocol-Walkthrough) |
