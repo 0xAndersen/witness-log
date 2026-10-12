@@ -501,6 +501,22 @@ fn leaf_hash_of(log: &CoreLog, index: u64) -> Option<String> {
     )))
 }
 
+/// SPEC §8: `SHA256(bucket_pad(payload) || salt || index)` as 64 hex
+/// characters, where `bucket_pad(payload) = len(payload) as u64 (8 bytes
+/// big-endian) || payload || zeros` up to `(len/256 + 1) * 256` payload
+/// bytes, `salt` is 32 bytes and `index` is the leaf index as 8 bytes
+/// big-endian. The function a verifier runs over a disclosed payload and
+/// salt; pinned by corpus vector 11.
+#[pyfunction]
+fn payload_hash(payload: &[u8], salt: &[u8], index: u64) -> PyResult<String> {
+    let salt: [u8; 32] = salt
+        .try_into()
+        .map_err(|_| MalformedError::new_err("salt must be exactly 32 bytes"))?;
+    Ok(hex::encode(
+        witness_log_core::redaction::payload_hash_with_salt(payload, &salt, index),
+    ))
+}
+
 /// Verify an inclusion proof offline. All hashes hex. False on any
 /// malformed input rather than raising, so a verifier loop never stops
 /// on a hostile dossier.
@@ -602,10 +618,209 @@ fn verify_error_to_py(e: VerifyError) -> PyErr {
 /// on-disk journal. Use this for anything long-lived: a crash loses at
 /// most the last unsynced write, and `resume` recovers from a torn tail
 /// automatically.
-#[pyclass(name = "JournaledLog")]
+#[pyclass(name = "JournaledLog", weakref)]
 struct PyJournaledLog {
     /// `None` after `close()`: the journal and its lock are released.
     inner: Mutex<Option<witness_log_core::journal::JournaledLog>>,
+    /// The journal path this log was opened with; `<path>.salts` is the
+    /// salt sidecar `disclose` reads.
+    path: String,
+    /// Optional erasable payload sidecar (`witness_log.open(...,
+    /// store_payloads=True)`), so `disclose` can hand out the payload
+    /// along with its salt. `None` unless enabled.
+    payloads: Mutex<Option<PayloadStore>>,
+}
+
+impl PyJournaledLog {
+    fn wrap(path: &str, inner: witness_log_core::journal::JournaledLog) -> Self {
+        Self {
+            inner: Mutex::new(Some(inner)),
+            path: path.to_string(),
+            payloads: Mutex::new(None),
+        }
+    }
+
+    /// Append `payload` to the payload sidecar if one is enabled. Called
+    /// after the leaf exists, so a sidecar failure never loses a leaf;
+    /// it surfaces as an error on this call instead.
+    fn store_payload(&self, index: u64, payload: &[u8]) -> PyResult<()> {
+        if let Some(store) = lock(&self.payloads).as_mut() {
+            store
+                .record(index, payload)
+                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+        }
+        Ok(())
+    }
+}
+
+/// `<journal>.payloads`: one JSON line per leaf, `{"i": index, "p": hex}`,
+/// created 0600. Opt-in, because it holds exactly what the tree was
+/// designed not to hold. `forget` zero-overwrites the old file's bytes,
+/// then replaces it with a copy that lacks the record, so the payload is
+/// gone from the live file, not merely marked.
+struct PayloadStore {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+
+impl PayloadStore {
+    fn open(path: &str) -> std::io::Result<Self> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.append(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(path)?;
+        Ok(Self {
+            path: std::path::PathBuf::from(path),
+            file,
+        })
+    }
+
+    fn record(&mut self, index: u64, payload: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let line = serde_json::json!({"i": index, "p": hex::encode(payload)});
+        writeln!(self.file, "{line}")
+    }
+
+    /// Every record in the file, in order, skipping lines that do not
+    /// parse (a torn tail from a crash).
+    fn records(&self) -> std::io::Result<Vec<(u64, Vec<u8>)>> {
+        use std::io::BufRead;
+        let f = std::fs::File::open(&self.path)?;
+        let mut out = Vec::new();
+        for line in std::io::BufReader::new(f).lines() {
+            let line = line?;
+            let v: serde_json::Value = match serde_json::from_str(line.trim()) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let i = v.get("i").and_then(serde_json::Value::as_u64);
+            let p = v
+                .get("p")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|h| hex::decode(h).ok());
+            if let (Some(i), Some(p)) = (i, p) {
+                out.push((i, p));
+            }
+        }
+        Ok(out)
+    }
+
+    fn get(&self, index: u64) -> std::io::Result<Option<Vec<u8>>> {
+        Ok(self
+            .records()?
+            .into_iter()
+            .rfind(|(i, _)| *i == index)
+            .map(|(_, p)| p))
+    }
+
+    /// Drop every record for an index in `indices`. Returns whether any
+    /// record was removed. Writes the surviving records to a temp sibling
+    /// (0600), fsyncs it, overwrites the old file's bytes with zeros,
+    /// then renames the temp file over it.
+    fn forget(&mut self, indices: &[u64]) -> std::io::Result<bool> {
+        use std::io::{Seek, SeekFrom, Write};
+        let all = self.records()?;
+        let keep: Vec<&(u64, Vec<u8>)> = all.iter().filter(|(i, _)| !indices.contains(i)).collect();
+        if keep.len() == all.len() {
+            return Ok(false);
+        }
+        let dir = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let name = self
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("payloads");
+        let tmp = dir.join(format!(".{name}.tmp-{}", std::process::id()));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let written = (|| -> std::io::Result<()> {
+            let mut f = opts.open(&tmp)?;
+            for (i, p) in keep {
+                writeln!(f, "{}", serde_json::json!({"i": i, "p": hex::encode(p)}))?;
+            }
+            f.sync_all()
+        })();
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        // Zero the old bytes before the rename unlinks them.
+        {
+            let len = self.file.metadata()?.len();
+            let mut old = std::fs::OpenOptions::new().write(true).open(&self.path)?;
+            old.seek(SeekFrom::Start(0))?;
+            let zeros = vec![0u8; 1 << 16];
+            let mut left = len;
+            while left > 0 {
+                let n = std::cmp::min(left, zeros.len() as u64) as usize;
+                old.write_all(&zeros[..n])?;
+                left -= n as u64;
+            }
+            old.sync_all()?;
+        }
+        std::fs::rename(&tmp, &self.path)?;
+        #[cfg(unix)]
+        {
+            if let Ok(d) = std::fs::File::open(&dir) {
+                let _ = d.sync_all();
+            }
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.append(true);
+        self.file = opts.open(&self.path)?;
+        Ok(true)
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        use std::io::Write;
+        self.file.flush()?;
+        self.file.sync_all()
+    }
+}
+
+/// The salt for leaf `index` from the `<journal>.salts` sidecar (SPEC §8
+/// says where salts live is an implementation matter; this is where the
+/// reference implementation keeps them). `None` when the salt was
+/// forgotten or the leaf never had one. Read from the file each time:
+/// the core appends every salt synchronously, and `disclose` is rare.
+fn salt_from_sidecar(journal_path: &str, index: u64) -> std::io::Result<Option<String>> {
+    use std::io::BufRead;
+    let p = witness_log_core::journal::JournaledLog::salts_path(journal_path);
+    let f = match std::fs::File::open(&p) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut found = None;
+    for line in std::io::BufReader::new(f).lines() {
+        let line = line?;
+        let v: serde_json::Value = match serde_json::from_str(line.trim()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("i").and_then(serde_json::Value::as_u64) == Some(index) {
+            if let Some(s) = v.get("s").and_then(serde_json::Value::as_str) {
+                if s.len() == 64 && hex::decode(s).is_ok() {
+                    found = Some(s.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// A borrowed, open journal. Constructed only after the `None` check, so
@@ -649,9 +864,7 @@ impl PyJournaledLog {
     fn create(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
         let identity = parse_identity_seed(identity_seed)?;
         witness_log_core::journal::JournaledLog::create(path, identity)
-            .map(|inner| Self {
-                inner: Mutex::new(Some(inner)),
-            })
+            .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -663,9 +876,7 @@ impl PyJournaledLog {
     fn create_sealed(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
         let identity = parse_identity_seed(identity_seed)?;
         witness_log_core::journal::JournaledLog::create_sealed(path, identity)
-            .map(|inner| Self {
-                inner: Mutex::new(Some(inner)),
-            })
+            .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -677,14 +888,7 @@ impl PyJournaledLog {
             pyo3::exceptions::PyValueError::new_err("identity_seed must be exactly 32 bytes")
         })?;
         witness_log_core::journal::JournaledLog::resume_with_identity(path, &seed)
-            .map(|(inner, report)| {
-                (
-                    Self {
-                        inner: Mutex::new(Some(inner)),
-                    },
-                    report.dropped_trailing_lines,
-                )
-            })
+            .map(|(inner, report)| (Self::wrap(path, inner), report.dropped_trailing_lines))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -693,9 +897,7 @@ impl PyJournaledLog {
     #[staticmethod]
     fn create_ephemeral(path: &str) -> PyResult<Self> {
         witness_log_core::journal::JournaledLog::create_ephemeral(path)
-            .map(|inner| Self {
-                inner: Mutex::new(Some(inner)),
-            })
+            .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
@@ -705,31 +907,33 @@ impl PyJournaledLog {
     #[staticmethod]
     fn resume(path: &str) -> PyResult<(Self, usize)> {
         witness_log_core::journal::JournaledLog::resume(path)
-            .map(|(inner, report)| {
-                (
-                    Self {
-                        inner: Mutex::new(Some(inner)),
-                    },
-                    report.dropped_trailing_lines,
-                )
-            })
+            .map(|(inner, report)| (Self::wrap(path, inner), report.dropped_trailing_lines))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
     fn append_intent(&self, payload: &[u8]) -> PyResult<u64> {
-        self.j()?
+        let idx = self
+            .j()?
             .append_intent(payload)
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        self.store_payload(idx, payload)?;
+        Ok(idx)
     }
     fn append_result(&self, payload: &[u8]) -> PyResult<u64> {
-        self.j()?
+        let idx = self
+            .j()?
             .append_result(payload)
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        self.store_payload(idx, payload)?;
+        Ok(idx)
     }
     fn append_memory(&self, payload: &[u8]) -> PyResult<u64> {
-        self.j()?
+        let idx = self
+            .j()?
             .append_memory(payload)
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        self.store_payload(idx, payload)?;
+        Ok(idx)
     }
     fn append_handoff_sent(&self, state: &[u8], counterparty_pubkey_hex: &str) -> PyResult<u64> {
         self.j()?
@@ -777,9 +981,18 @@ impl PyJournaledLog {
     /// earlier sessions too: salts live in `<path>.salts` next to the
     /// journal and the forgotten salt is removed from that file.
     fn forget(&self, index: u64) -> PyResult<bool> {
-        self.j()?
+        let erased = self
+            .j()?
             .forget(index)
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        // The payload record goes whether or not a salt was left to
+        // forget: a payload with no salt is still a payload.
+        if let Some(store) = lock(&self.payloads).as_mut() {
+            store
+                .forget(&[index])
+                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+        }
+        Ok(erased)
     }
 
     /// True if `forget(index)` would erase something: the leaf exists,
@@ -804,11 +1017,100 @@ impl PyJournaledLog {
     fn sync(&self) -> PyResult<()> {
         self.j()?
             .sync()
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        if let Some(store) = lock(&self.payloads).as_mut() {
+            store
+                .sync()
+                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+        }
+        Ok(())
     }
 
     fn tree_size(&self) -> PyResult<u64> {
         Ok(self.j()?.log().tree_size())
+    }
+
+    /// The journal path this log was opened with.
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+
+    /// One leaf as JSON (the same object `leaves_json()` lists at that
+    /// position), or `None` past the end.
+    fn leaf_json(&self, index: u64) -> PyResult<Option<String>> {
+        let j = self.j()?;
+        let leaf = match j
+            .log()
+            .leaves()
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+        {
+            Some(l) => l,
+            None => return Ok(None),
+        };
+        serde_json::to_string(leaf).map(Some).map_err(malformed_err)
+    }
+
+    /// The redaction salt for leaf `index` as 64 hex characters, read
+    /// from `<path>.salts`, or `None` if it was forgotten or the leaf
+    /// never carried a payload. Handing this out together with the
+    /// payload lets a third party recompute `payload_hash` (SPEC §8) and
+    /// check it against the leaf; see `witness_log.verify_disclosure`.
+    fn salt_hex(&self, index: u64) -> PyResult<Option<String>> {
+        let j = self.j()?;
+        if !j.can_forget(index) {
+            return Ok(None);
+        }
+        drop(j);
+        salt_from_sidecar(&self.path, index).map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
+    /// Keep every payload appended from now on in `<path>.payloads`
+    /// (`path` defaults to that) so `payload(index)` and `disclose` can
+    /// return it. `forget(index)` removes and zero-overwrites its record.
+    /// Records for leaves this journal has already redacted are dropped
+    /// on enable (a crash between `forget` and the sidecar rewrite).
+    #[pyo3(signature = (path = None))]
+    fn enable_payload_store(&self, path: Option<&str>) -> PyResult<()> {
+        let p = path
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}.payloads", self.path));
+        let mut store = PayloadStore::open(&p).map_err(|e| PyIOError::new_err(e.to_string()))?;
+        let forgotten: Vec<u64> = self
+            .j()?
+            .log()
+            .leaves()
+            .iter()
+            .filter(|l| l.leaf_type == witness_log_core::leaf::LeafType::Redaction.tag())
+            .filter_map(|l| l.redacted_index)
+            .collect();
+        if !forgotten.is_empty() {
+            store
+                .forget(&forgotten)
+                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+        }
+        *lock(&self.payloads) = Some(store);
+        Ok(())
+    }
+
+    /// The payload sidecar's path, or `None` when none is enabled.
+    fn payload_store_path(&self) -> Option<String> {
+        lock(&self.payloads)
+            .as_ref()
+            .map(|s| s.path.to_string_lossy().into_owned())
+    }
+
+    /// The payload stored for leaf `index`, or `None` when no sidecar is
+    /// enabled, the leaf was appended without one, or it was forgotten.
+    fn payload<'py>(&self, py: Python<'py>, index: u64) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        let g = lock(&self.payloads);
+        let store = match g.as_ref() {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let got = store
+            .get(index)
+            .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+        Ok(got.map(|p| PyBytes::new(py, &p)))
     }
     fn root_hex(&self) -> PyResult<String> {
         Ok(self.j()?.log().root_hex())
@@ -1478,6 +1780,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWitnessService>()?;
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(payload_hash, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_handoff_binding, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_authorization_binding, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(select_diverse_witnesses, m)?)?;

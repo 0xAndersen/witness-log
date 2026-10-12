@@ -18,7 +18,9 @@ def _stub_surface() -> dict[str, set[str]]:
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             out[node.name] = {
-                n.name for n in node.body if isinstance(n, ast.FunctionDef) and not n.name.startswith("__")
+                n.name
+                for n in node.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("__")
             }
         elif isinstance(node, ast.FunctionDef):
             out[""].add(node.name)
