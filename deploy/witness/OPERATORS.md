@@ -100,9 +100,36 @@ next start removes it itself, with one log line.
 
 ### Docker
 
-`Dockerfile` builds a static-ish image (Debian slim, non-root, read-only
-root filesystem under compose). The volume mounted at `/state` is the
-whole witness. `docker-compose.yml` adds Caddy for TLS.
+One line, any amd64 or arm64 host with Docker:
+
+```sh
+docker run -d --name witness-log --restart unless-stopped -p 7380:7380 \
+  -v witness-log:/state -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
+docker logs witness-log                 # prints the directory entry
+curl -s http://127.0.0.1:7380/health    # ok
+```
+
+On first start with an empty `/state` the image runs `witness init` from
+the environment, writes `/state/entry.json`, prints the entry, then
+serves; every later start serves the existing key. Variables:
+`WITNESS_ORG` (required on first start), `WITNESS_URL` (your public base
+URL; the key name defaults to its host plus `/w1`), `WITNESS_NAME`,
+`WITNESS_COMPUTE`, and `WITNESS_BEHIND_PROXY=1` when a TLS proxy sits in
+front (raises the per-address limits). The volume `witness-log` is the
+whole witness: back it up as one unit (section 3). Arguments replace the
+default and go to the binary: `docker run --rm IMAGE witness info URL`.
+
+The witness is always PID 1 inside a container, so its PID lock file
+cannot tell a killed container's lock from a live one. The entrypoint
+holds an `flock` on `/state/container.lock` for the life of the server: a
+second container on the same volume is refused, and a lock left by a
+killed container is cleared on the next start.
+
+The image is built by `.github/workflows/docker.yml` from the release
+binaries (`Dockerfile.release`, checksum-verified, linux/amd64 and
+linux/arm64). `Dockerfile` builds from source instead (Debian slim,
+non-root, read-only root filesystem under compose); `docker-compose.yml`
+adds Caddy for TLS.
 
 ## 3. Back up: the key and `logs/` are one object
 
