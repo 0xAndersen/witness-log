@@ -28,6 +28,8 @@ def main() -> int:
         print("no engine built: run web/build.sh or web/build-go.sh", file=sys.stderr)
         return 2
     httpd = serve()
+    engines = [p.name for p in (WEB / "pkg", WEB / "pkg-go") if p.exists()]
+    print("engines built:", ", ".join(engines))
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     failures = []
     with sync_playwright() as p:
@@ -74,6 +76,7 @@ def main() -> int:
     httpd.shutdown()
     for f in failures:
         print("FAIL", f, file=sys.stderr)
+        print(f"::error::browser verifier: {f}")
     return 1 if failures else 0
 
 

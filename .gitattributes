@@ -1,0 +1,4 @@
+# Go and shell sources must stay LF on every platform (gofmt on Windows runners).
+*.go text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
