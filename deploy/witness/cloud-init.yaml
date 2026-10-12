@@ -6,16 +6,26 @@
 # `user-data`; Hetzner/DigitalOcean/Vultr: "Cloud config" / "User data").
 #
 # Edit the three values under `write_files` → /etc/witness-log/env before
-# pasting. Everything else is automatic:
+# pasting (the script refuses to start while ORG is the placeholder).
+# Everything else is automatic:
+#   - refuses to run while ORG is still the placeholder below: the label
+#     is what verifiers score independence by, so a default would be worse
+#     than no witness
 #   - installs the witness-log release binary for this CPU, checksum-verified
 #     (if a release has no binary for this CPU, compiles that version from
 #     crates.io instead, which takes several minutes)
 #   - creates a locked-down system user and initialises ONE witness
-#   - serves it under systemd (hardened unit from the repo)
+#   - serves it under systemd (hardened unit fetched from the repo at the
+#     release tag WL_REF, not from a moving branch)
 #   - puts Caddy in front: plain http on :80 for any hostname at once, and
 #     automatic TLS on <public-ip>.sslip.io (or your own HOST) once the
-#     certificate is issued; if Caddy cannot be installed the witness
-#     still runs and the log says so
+#     certificate is issued. Caddy is taken from its GitHub release and
+#     checked against the checksum file that release publishes
+#     (caddy_<ver>_checksums.txt, SHA-512); on a mismatch, or if Caddy
+#     cannot be fetched, the witness still runs on 127.0.0.1:7380 without
+#     TLS and the log says so in capitals
+#   - skips the public-IP lookup when HOST is set (nothing leaves the box
+#     that does not need to)
 #   - opens 80/443 in the host firewall (Oracle images ship iptables rules
 #     that block everything but 22; this handles that)
 #   - writes the directory entry to /var/lib/witness-log/w1/entry.json and
@@ -45,9 +55,10 @@ write_files:
       NAME_BASE="yourorg"            # key name becomes <NAME_BASE>.witness/<HOST>; letters, digits, dashes
       COMPUTE="oracle-cloud"         # where it runs: oracle-cloud, gcp, aws, hetzner, homelab, ...
       # ---- optional ----
-      HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed)
-      WL_VERSION="latest"            # a tag like v0.3.5 to pin, or latest
-      WL_REF="main"                  # repo ref the systemd unit is fetched from
+      HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed; this needs the public-IP lookup)
+      WL_VERSION="latest"            # a tag like v0.3.6 to pin, or latest
+      WL_REF="v0.3.6"                # repo tag the systemd unit is fetched from; keep it a release tag, not a branch
+      CADDY_VERSION="2.11.7"         # Caddy release to install, checked against that release's checksum file
 
   - path: /usr/local/sbin/witness-log-bootstrap
     permissions: "0755"
@@ -55,21 +66,36 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       . /etc/witness-log/env
-      WL_REF="${WL_REF:-main}"
+      WL_REF="${WL_REF:-v0.3.6}"
+      CADDY_VERSION="${CADDY_VERSION:-2.11.7}"
       REPO=0xAndersen/witness-log
       log(){ echo "[witness-log-bootstrap] $*"; }
 
-      # 1. public IP and hostname. The lookup services are a convenience:
-      #    without them (offline, egress-filtered) fall back to the address
-      #    of the interface that holds the default route.
-      IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)
-      if ! [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
-        IP=${IP:-127.0.0.1}
-        log "public IP lookup failed; using interface address $IP (set HOST if this box is behind NAT)"
+      # 0. refuse the placeholder organisation. ORG is the independence
+      #    label verifiers score by; a witness labelled with the default
+      #    would share a bucket with every other unedited paste.
+      if [ -z "${ORG:-}" ] || [ "$ORG" = "Your Organisation" ] || [ "$ORG" = "unspecified" ]; then
+        log "ERROR: ORG in /etc/witness-log/env is still the placeholder (\"${ORG:-}\"). Edit it to the organisation that controls this machine, then run: /usr/local/sbin/witness-log-bootstrap"
+        exit 1
       fi
-      if [ -z "${HOST}" ]; then HOST="${IP}.sslip.io"; fi
-      log "ip $IP, host $HOST"
+
+      # 1. public IP and hostname. Only looked up when HOST is empty: with a
+      #    HOST set nothing needs to leave the box to learn its own address.
+      #    The lookup services are a convenience; without them (offline,
+      #    egress-filtered) fall back to the address of the interface that
+      #    holds the default route.
+      if [ -z "${HOST}" ]; then
+        IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)
+        if ! [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+          IP=${IP:-127.0.0.1}
+          log "public IP lookup failed; using interface address $IP (set HOST if this box is behind NAT)"
+        fi
+        HOST="${IP}.sslip.io"
+        log "ip $IP, host $HOST"
+      else
+        log "host $HOST (set in env; public-IP lookup skipped)"
+      fi
 
       # 2. release binary for this CPU, checksum-verified
       ARCH=$(uname -m)   # x86_64 | aarch64
@@ -108,19 +134,28 @@ write_files:
         log "witness initialised: $(jq -c . /var/lib/witness-log/w1/entry.json)"
       fi
 
-      # 4. systemd unit from the repo (hardened), enabled
-      curl -fsSL -o /etc/systemd/system/witness-log-witness.service \
+      # 4. systemd unit from the repo (hardened), pinned to the release tag
+      #    in WL_REF so a later change to a branch cannot alter what this
+      #    box runs as root. Refuse a download that is not a unit file.
+      curl -fsSL -o /etc/systemd/system/witness-log-witness.service.tmp \
         "https://raw.githubusercontent.com/${REPO}/${WL_REF}/deploy/witness/witness-log-witness.service"
+      grep -q '^\[Service\]' /etc/systemd/system/witness-log-witness.service.tmp
+      grep -q '^ExecStart=.*witness-log' /etc/systemd/system/witness-log-witness.service.tmp
+      mv /etc/systemd/system/witness-log-witness.service.tmp /etc/systemd/system/witness-log-witness.service
+      log "systemd unit from ${REPO}@${WL_REF}"
       systemctl daemon-reload
       systemctl enable --now witness-log-witness
       for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:7380/health >/dev/null 2>&1 && break; sleep 1; done
       log "witness serving on 127.0.0.1:7380: $(curl -s http://127.0.0.1:7380/health)"
 
       # 5. Caddy in front. Not fatal: the witness is already serving, and a
-      #    box without Caddy can still be put behind any other proxy.
+      #    box without Caddy can still be put behind any other proxy. A
+      #    checksum mismatch is reported loudly and leaves the box without
+      #    TLS rather than running an unverified binary as a system service.
       echo "$HOST" > /etc/witness-log/host
-      if ! /usr/local/sbin/witness-log-caddy "$HOST" "$ARCH"; then
-        log "WARNING: Caddy setup failed; the witness runs on 127.0.0.1:7380 without a public proxy"
+      if ! /usr/local/sbin/witness-log-caddy "$HOST" "$ARCH" "$CADDY_VERSION"; then
+        log "WARNING: NO TLS. Caddy was not installed (download failed or its checksum did not match the release's checksum file)."
+        log "WARNING: the witness runs on 127.0.0.1:7380 only; put any reverse proxy in front, or fix the cause and re-run: /usr/local/sbin/witness-log-caddy $HOST $ARCH $CADDY_VERSION"
       fi
 
       # 6. host firewall: Oracle's Ubuntu images reject everything but 22 in
@@ -152,22 +187,31 @@ write_files:
       #!/usr/bin/env bash
       # Caddy in front of the witness: plain http on :80 for any Host (works
       # at once, behind NAT, and before a certificate exists), TLS for $1.
+      # The binary comes from Caddy's GitHub release $3 and is accepted only
+      # if it matches that release's published checksum file. The file Caddy
+      # publishes (caddy_<ver>_checksums.txt) holds SHA-512 digests, so that
+      # is the digest compared. Exit 1 on any mismatch so the caller says so.
       set -euo pipefail
-      HOST=$1; ARCH=$2
+      HOST=$1; ARCH=$2; CV=${3:-2.11.7}
       CADDY_ARCH=$([ "$ARCH" = "aarch64" ] && echo arm64 || echo amd64)
       if ! command -v caddy >/dev/null; then
-        if ! curl -fsSL --max-time 120 -o /usr/local/bin/caddy.tmp "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}"; then
-          # fallback: the GitHub release, checked against its sha512 list
-          CV=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest 2>/dev/null | jq -r .tag_name || true)
-          CV=${CV#v}; CV=${CV:-2.10.2}
-          D=$(mktemp -d)
-          curl -fsSL -o "$D/c.tgz" "https://github.com/caddyserver/caddy/releases/download/v${CV}/caddy_${CV}_linux_${CADDY_ARCH}.tar.gz"
-          curl -fsSL -o "$D/sums" "https://github.com/caddyserver/caddy/releases/download/v${CV}/caddy_${CV}_checksums.txt"
-          echo "$(grep " caddy_${CV}_linux_${CADDY_ARCH}.tar.gz\$" "$D/sums" | cut -d' ' -f1)  $D/c.tgz" | sha512sum -c -
-          tar xzf "$D/c.tgz" -C "$D" caddy
-          install -m 0755 "$D/caddy" /usr/local/bin/caddy.tmp
+        D=$(mktemp -d)
+        BASE="https://github.com/caddyserver/caddy/releases/download/v${CV}"
+        TGZ="caddy_${CV}_linux_${CADDY_ARCH}.tar.gz"
+        curl -fsSL --max-time 180 -o "$D/$TGZ" "$BASE/$TGZ"
+        curl -fsSL --max-time 60 -o "$D/sums" "$BASE/caddy_${CV}_checksums.txt"
+        WANT=$(grep " ${TGZ}\$" "$D/sums" | cut -d' ' -f1)
+        if [ -z "$WANT" ]; then echo "caddy: no entry for $TGZ in caddy_${CV}_checksums.txt" >&2; rm -rf "$D"; exit 1; fi
+        GOT=$(sha512sum "$D/$TGZ" | cut -d' ' -f1)
+        if [ "$WANT" != "$GOT" ]; then
+          echo "caddy: CHECKSUM MISMATCH for $TGZ (checksum file says $WANT, download is $GOT); refusing to install it" >&2
+          rm -rf "$D"
+          exit 1
         fi
-        chmod 0755 /usr/local/bin/caddy.tmp
+        echo "caddy ${CV} ${TGZ}: checksum verified against caddy_${CV}_checksums.txt"
+        tar xzf "$D/$TGZ" -C "$D" caddy
+        install -m 0755 "$D/caddy" /usr/local/bin/caddy.tmp
+        rm -rf "$D"
         /usr/local/bin/caddy.tmp version >/dev/null
         mv /usr/local/bin/caddy.tmp /usr/local/bin/caddy
         setcap cap_net_bind_service=+ep /usr/local/bin/caddy || true

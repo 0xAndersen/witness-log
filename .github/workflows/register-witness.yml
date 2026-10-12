@@ -42,8 +42,8 @@ jobs:
           cp entry.json "registry/witnesses/$slug.json"
           echo "entry for $name -> registry/witnesses/$slug.json"
           cat "registry/witnesses/$slug.json"
-      - name: validate (schema + live key cross-check)
-        run: python3 registry/validate.py
+      - name: validate (schema + live key and operator_org cross-check)
+        run: python3 registry/validate.py --require-live
       - name: commit
         shell: bash
         run: |

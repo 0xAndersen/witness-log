@@ -21,9 +21,15 @@ witness init` printed it (or `GET /` returns under `directory_entry`):
 1. Run a witness: `deploy/witness/OPERATORS.md` (one) or
    `deploy/witness/AGENT_OPERATOR.md` (an agent does it for you).
 2. Open a pull request adding `witnesses/<org>-<name>.json`. CI runs
-   `registry/validate.py`: well-formed, 64-hex key, a real `operator_org`
-   (not `unspecified`), no duplicate key, and the URL answers `GET /` with
-   the same `pubkey_hex` when it is reachable.
+   `registry/validate.py`: well-formed, 64 lowercase hex key, a real
+   `operator_org` (not `unspecified`), an `https://` URL that is not a
+   loopback address, no duplicate key or name, and, when the URL is
+   reachable, that `GET /` serves the same `pubkey_hex` **and** the same
+   `directory_entry.operator_org`. The live check is skipped with a note
+   when the URL cannot be reached from CI (`--offline` skips it entirely;
+   `--require-live` makes unreachable an error, which is what the
+   `register-witness` workflow uses). `python -m pytest registry` runs the
+   validator's own tests.
 3. Keep it running. A verifier who adds your entry and sees cosignatures
    from it is the only thing that makes your witness count.
 
@@ -31,6 +37,19 @@ witness init` printed it (or `GET /` returns under `directory_entry`):
 `operator_org` MUST be the organisation that actually controls the key.
 Mislabelling is the one thing the protocol cannot detect; it is what gets
 an entry removed.
+
+**`operator_org` in the registry is case-sensitive and must match the
+witness exactly.** The label in the registry file must be byte for byte
+what the witness was initialised with (`witness init --org`), which is what
+`GET /` shows under `directory_entry.operator_org`; `validate.py` refuses an
+entry whose label differs from the served one, including by case or
+whitespace. This is a registration rule, not a scoring rule: the verifier
+folds case and collapses whitespace before counting operators (`verify`
+prints labels lowercased, e.g. `example org`), so two spellings of one
+organisation never count as two operators. The exact-match rule exists so
+that what the registry says, what the witness says, and what the operator
+typed are one string, and so a label cannot be quietly edited in a PR. Use
+the same `--org` string on every machine one organisation operates.
 
 ## Use
 
