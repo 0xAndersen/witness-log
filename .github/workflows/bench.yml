@@ -9,8 +9,7 @@ name: Overhead budget
 #
 # Runner: GitHub-hosted ubuntu-latest (x86_64). The committed baseline
 # must come from the same runner type: run this workflow manually with
-# update_baseline=true, download the `bench-baseline` artifact and commit
-# it as benches/baseline.json.
+# update_baseline=true; that run commits benches/baseline.json to main.
 
 on:
   push:
@@ -19,12 +18,12 @@ on:
   workflow_dispatch:
     inputs:
       update_baseline:
-        description: "Produce a new baseline.json artifact instead of checking"
+        description: "Measure a new baseline on this runner and commit it to main instead of checking"
         type: boolean
         default: false
 
 permissions:
-  contents: read
+  contents: write # only the update_baseline run pushes; checks are read-only
 
 jobs:
   bench:
@@ -57,6 +56,16 @@ jobs:
           json.dump(b, open("benches/baseline.json", "w"), indent=2)
           EOF
           python benches/check_budget.py --update target/bench-rust.json target/bench-python.json
+      - name: Commit the new baseline
+        if: ${{ inputs.update_baseline }}
+        run: |
+          git config user.name "0xAndersen"
+          git config user.email "321999970+0xAndersen@users.noreply.github.com"
+          git add benches/baseline.json
+          git diff --cached --quiet && { echo "baseline unchanged"; exit 0; }
+          git commit -m "bench: baseline measured on GitHub-hosted ubuntu-latest"
+          git pull --rebase origin main
+          git push origin HEAD:main
       - uses: actions/upload-artifact@v4
         if: always()
         with:
