@@ -131,6 +131,26 @@ linux/arm64). `Dockerfile` builds from source instead (Debian slim,
 non-root, read-only root filesystem under compose); `docker-compose.yml`
 adds Caddy for TLS.
 
+### cloud-init (paste into a new VM)
+
+`cloud-init.yaml` does install, init, systemd, Caddy and firewall at first
+boot; `AGENT_OPERATOR.md` describes it. What is tested, and how:
+
+- `.github/workflows/cloud-init-test.yml` (manual) boots the file in a real
+  Ubuntu 24.04 cloud image under QEMU/KVM on a GitHub runner and checks,
+  from outside the VM, `/health` through Caddy, the binary version, the
+  unit, `entry.json`, that 7380 is not exposed, a cosignature for a
+  journal submitted from the runner, and the same key after a reboot.
+- What no CI can test: the public certificate (the VM has no inbound
+  internet). The test sets `HOST` to a `.invalid` name so Caddy's TLS
+  step fails and the plain-http path, which must work without it, is what
+  gets checked.
+- Offline tolerance: if the public-IP lookup fails the script uses the
+  default-route interface address; if Caddy cannot be downloaded from
+  caddyserver.com it falls back to Caddy's GitHub release (sha512-checked);
+  if Caddy still fails the witness keeps serving on `127.0.0.1:7380` and the
+  log says so.
+
 ## 3. Back up: the key and `logs/` are one object
 
 **Never restore `witness.key` without the `logs/` directory that goes with

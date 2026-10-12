@@ -26,6 +26,12 @@ answers `ok`. Then register it from the repo: Actions → *register-witness*
 opens the PR in step 6 instead). Manual steps follow for anyone who wants
 to see what it does.
 
+If the release has no Linux binary for the CPU (v0.3.5 ships
+`x86_64-unknown-linux-gnu` only; Oracle's Always Free Ampere VMs are
+`aarch64`), the script compiles the same version from crates.io instead,
+which takes several minutes on first boot. The Docker image
+(`OPERATORS.md`, "Docker") covers arm64 without compiling.
+
 ## 0. Where to run it (free, always-on)
 
 The witness is a 1 MB static binary that needs ~10 MB of RAM, a few MB of
@@ -48,6 +54,7 @@ jobs), serverless/edge functions (no durable fsync before reply).
 
 ```sh
 # pick the asset for your CPU from https://github.com/0xAndersen/witness-log/releases/latest
+# (no aarch64 Linux asset in v0.3.5: on ARM use `cargo install` below or the Docker image)
 ARCH=$(uname -m)            # x86_64 or aarch64
 VER=v0.3.5
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
