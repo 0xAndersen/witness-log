@@ -15,13 +15,21 @@ needs most (WITNESSED requires two distinct operators).
 ## Zero-touch path (no terminal): cloud-init
 
 `cloud-init.yaml` in this directory does steps 1–5 and 7 by itself at the
-VM's first boot: binary (checksum-verified), system user, one witness,
-hardened systemd unit, Caddy with automatic TLS on `<public-ip>.sslip.io`
-(no DNS needed), host firewall. Edit the three values at the top (`ORG`,
-`NAME_BASE`, `COMPUTE`), paste the file into the provider's cloud-init /
-user-data box when creating the VM, open ports 80 and 443 in the
-provider's firewall, and 3–5 minutes later `http://<public-ip>/health`
-answers `ok`. Then register it from the repo: Actions → *register-witness*
+VM's first boot: binary (checksum-verified against the release's
+`SHA256SUMS`), system user, one witness, hardened systemd unit fetched at
+the pinned release tag (`WL_REF`), Caddy from its GitHub release
+(checked against the checksum file that release publishes) with automatic
+TLS on `<public-ip>.sslip.io` (no DNS needed), host firewall. Edit the
+three values at the top (`ORG`, `NAME_BASE`, `COMPUTE`): the script
+refuses to run while `ORG` is still `Your Organisation`. Set `HOST` if you
+have a DNS name; the public-IP lookup is then skipped. Paste the file into
+the provider's cloud-init / user-data box when creating the VM, open ports
+80 and 443 in the provider's firewall, and 3–5 minutes later
+`http://<public-ip>/health` answers `ok`. If the log ends with
+`WARNING: NO TLS`, Caddy was not installed (download or checksum
+failure); the witness is up on `127.0.0.1:7380` and any reverse proxy can
+be put in front, or re-run `/usr/local/sbin/witness-log-caddy` once the
+cause is fixed. Then register it from the repo: Actions → *register-witness*
 → Run workflow → `url = https://<public-ip>.sslip.io` (an outside operator
 opens the PR in step 6 instead). Manual steps follow for anyone who wants
 to see what it does.
@@ -81,13 +89,16 @@ sudo -u witness-log witness-log witness init /var/lib/witness-log/w1 \
 
 Save what it prints: the JSON **directory entry** and the **vkey**. The
 `--org` value is how verifiers tell operators apart. Use the name of the
-organisation (or person) that controls this machine; never leave it out.
+organisation (or person) that controls this machine; never leave it out,
+and use exactly one spelling: the registry compares the file against what
+`GET /` serves byte for byte, and `--url` must be `https://` for a
+registry entry.
 
 ## 3. Run it under systemd
 
 ```sh
 sudo curl -fsSL -o /etc/systemd/system/witness-log-witness.service \
-  https://raw.githubusercontent.com/0xAndersen/witness-log/main/deploy/witness/witness-log-witness.service
+  https://raw.githubusercontent.com/0xAndersen/witness-log/$VER/deploy/witness/witness-log-witness.service   # the release tag, not a branch
 sudo systemctl daemon-reload
 sudo systemctl enable --now witness-log-witness
 curl -s http://127.0.0.1:7380/health      # -> ok
@@ -128,7 +139,9 @@ git commit -m "registry: Your Organisation witness w1" && git push -u origin HEA
 gh pr create --fill          # or open the PR in the browser
 ```
 
-CI validates the entry and cross-checks the key against your URL.
+CI validates the entry and cross-checks the key and the `operator_org`
+label against what your URL serves (`registry/validate.py`). The label in
+the file must equal the served one exactly, including case.
 
 ## 7. Prove it works from outside
 

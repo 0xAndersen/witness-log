@@ -28,7 +28,15 @@ witness-log witness init ./w1 \
   their directory. Two witnesses with the same label are one operator; a
   label left as `unspecified` shares a bucket with every other unspecified
   witness forever. Put the real organisation here.
-- `--url` is metadata for the directory entry; it is not checked.
+- `--url` is the public base URL clients will use. The registry requires
+  `https://` and cross-checks the URL live: `GET /` must serve this key and
+  this exact `--org` string (`registry/README.md`).
+- `--org` is compared byte for byte by the registry against what the
+  witness serves, so use one spelling, with one capitalisation, for every
+  witness one organisation runs. The verifier itself folds case when
+  scoring, so `Example Org` and `example org` are one operator to a
+  verdict either way; the registry rule is there so the file, the witness
+  and the operator agree on one string.
 - `--compute` is where the machine runs (cloud provider, "homelab", a
   model/inference provider for agent witnesses). Verifiers score
   compute-provider diversity separately; undisclosed scores as its own weak
@@ -146,10 +154,22 @@ boot; `AGENT_OPERATOR.md` describes it. What is tested, and how:
   step fails and the plain-http path, which must work without it, is what
   gets checked.
 - Offline tolerance: if the public-IP lookup fails the script uses the
-  default-route interface address; if Caddy cannot be downloaded from
-  caddyserver.com it falls back to Caddy's GitHub release (sha512-checked);
-  if Caddy still fails the witness keeps serving on `127.0.0.1:7380` and the
-  log says so.
+  default-route interface address (the lookup is skipped entirely when
+  `HOST` is set); if Caddy cannot be fetched, or its archive does not match
+  the checksum file its GitHub release publishes, the witness keeps serving
+  on `127.0.0.1:7380` without TLS and the log says `WARNING: NO TLS` with
+  the reason. Caddy's checksum file (`caddy_<ver>_checksums.txt`) carries
+  SHA-512 digests, so that is the digest compared; the release is pinned by
+  `CADDY_VERSION` in `/etc/witness-log/env`.
+- Pinned inputs: the systemd unit is fetched from the repo at the release
+  tag in `WL_REF` (default: the current release), never from a branch, and
+  is checked to be a unit file before it is installed. `WL_VERSION` pins the
+  witness-log release; `latest` resolves through the GitHub API at boot.
+- Placeholder guard: the bootstrap exits 1 before touching anything if
+  `ORG` is still `Your Organisation` (or empty, or `unspecified`). The
+  label is the independence signal; a default would be worse than no
+  witness. Edit `/etc/witness-log/env` and re-run
+  `/usr/local/sbin/witness-log-bootstrap`.
 
 ## 3. Back up: the key and `logs/` are one object
 

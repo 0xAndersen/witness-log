@@ -21,7 +21,12 @@ on the exact commit being released.
 1. Bump `version` in `Cargo.toml` (workspace) and
    `crates/witness-log-python/Cargo.toml`, and the `version = "…"` on the
    inter-crate dependencies in `crates/*/Cargo.toml`. Move the CHANGELOG's
-   top section under the new version and date.
+   top section under the new version and date. Bump the pinned tag in
+   `deploy/witness/cloud-init.yaml` (`WL_REF="vX.Y.Z"`, twice: the env file
+   and the `${WL_REF:-...}` default), the matching replacement string in
+   `.github/workflows/cloud-init-test.yml`, and `VER=` in
+   `deploy/witness/AGENT_OPERATOR.md`; `grep -rn 'v0\.3\.[0-9]' deploy
+   .github/workflows/cloud-init-test.yml` finds them.
 2. Push to `main` and wait for **every** CI job to go green (Linux, macOS,
    Windows, release mode, MSRV, clippy, fmt, corpus, Python 3.9 + 3.13,
    cargo-deny).

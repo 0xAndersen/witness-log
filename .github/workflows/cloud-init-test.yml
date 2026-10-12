@@ -92,7 +92,7 @@ jobs:
                            ('COMPUTE="oracle-cloud"', 'COMPUTE="github-actions-qemu"'),
                            ('HOST=""', 'HOST="witness-ci.invalid"'),
                            ('WL_VERSION="latest"', f'WL_VERSION="{tag}"'),
-                           ('WL_REF="main"', f'WL_REF="{sha}"')]:
+                           ('WL_REF="v0.3.6"', f'WL_REF="{sha}"')]:
               assert old in s, old
               s = s.replace(old, new, 1)
           s += f"\nssh_authorized_keys:\n  - {pub}\n"
@@ -131,6 +131,7 @@ jobs:
           got=$($SSH 'witness-log --version')
           echo "binary: $got (want $want)"; test "$got" = "$want"
           $SSH 'systemctl is-active witness-log-witness caddy'
+          $SSH 'sudo grep -q "checksum verified against caddy_" /var/log/witness-log-bootstrap.log'
           $SSH 'systemctl show witness-log-witness -p User -p ProtectSystem -p NoNewPrivileges'
           $SSH 'sudo test -f /var/lib/witness-log/w1/entry.json && sudo jq . /var/lib/witness-log/w1/entry.json'
           $SSH 'sudo jq -e ".operator_org == \"cloud-init CI\"" /var/lib/witness-log/w1/entry.json'

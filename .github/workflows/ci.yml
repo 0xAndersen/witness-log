@@ -226,6 +226,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest registry -q
       - run: python registry/validate.py --offline
       - run: python registry/build_directory.py > /dev/null
 
