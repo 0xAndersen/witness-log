@@ -231,6 +231,25 @@ is the per-instance systemd template. `AGENT_OPERATOR.md` is the same
 procedure written for a coding agent to execute end to end, including
 registration in `registry/`.
 
+### A fleet on a cloud account, from Actions
+
+`.github/workflows/deploy-fleet.yml` creates N small servers (Hetzner Cloud
+or DigitalOcean) that boot `cloud-init.yaml` with your `ORG`, waits for each
+to answer at `https://<ip>.sslip.io/`, registers the ones that came up and
+commits the entries. The only input besides the form is a cloud API token
+in the repository environment `fleet` (`HCLOUD_TOKEN` or
+`DIGITALOCEAN_TOKEN`); it is read by the job and never printed. Expect
+~15 minutes from dispatch to registered: apt, the release binary, and a
+public certificate per machine. Rerun with a larger `count` to grow it;
+servers carry the label/tag `witness-log` so the account's console lists
+them. Delete a server from the console and its entry from
+`registry/witnesses/` to retire it (`status.yml` marks a dead URL within
+ten minutes either way).
+
+A fleet is one operator. Five project-run witnesses in a directory give
+capacity and availability; the verdict stays CONSISTENT-UNWITNESSED until
+a second organisation's witness cosigns the same checkpoint.
+
 ## 6. What you are promising
 
 By publishing a directory entry you are telling verifiers that this key

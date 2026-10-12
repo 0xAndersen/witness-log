@@ -334,7 +334,8 @@ docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witnes
 ```
 
 Or paste [`deploy/witness/cloud-init.yaml`](deploy/witness/cloud-init.yaml) into a new VM's user-data box and
-it comes up with TLS on its own. Start here: [Operator onboarding](docs/wiki/Operator-Onboarding.md). Live
+it comes up with TLS on its own; the `deploy-fleet` workflow does that for N servers on a Hetzner or DigitalOcean
+account from a token in a repository secret and registers them (`deploy/witness/OPERATORS.md` §5). Start here: [Operator onboarding](docs/wiki/Operator-Onboarding.md). Live
 status of every registered witness: [STATUS.md](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md)
 ([JSON](https://raw.githubusercontent.com/0xAndersen/witness-log/status/status.json)).
 

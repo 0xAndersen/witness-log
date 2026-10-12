@@ -1,0 +1,212 @@
+name: deploy-fleet
+
+# Stand up the project's own witnesses on a cloud account, zero-touch, and
+# register them. Runs entirely in Actions: the cloud API token lives in the
+# `fleet` environment as a secret and never leaves it.
+#
+#   Actions -> deploy-fleet -> Run workflow
+#     provider: hetzner | digitalocean
+#     count:    how many servers (default 5)
+#     org:      the operator label (default witnesslog-project)
+#
+# Each server boots deploy/witness/cloud-init.yaml with ORG/NAME_BASE/COMPUTE
+# filled in, gets a public certificate at <ip>.sslip.io, and starts cosigning.
+# The job then waits for GET / on each, writes registry/witnesses/<name>.json
+# with is_project_operated=true, validates (live key + org cross-check) and
+# commits to main. status.yml picks them up on its next run.
+#
+# One fleet is ONE operator. Verifiers score independence by operator_org, so
+# these servers count as a single bucket toward WITNESSED however many there
+# are; they give capacity and availability while outside organisations bring
+# independence (deploy/witness/AGENT_OPERATOR.md).
+#
+# Secrets (environment `fleet`): HCLOUD_TOKEN (Hetzner Cloud, read+write) or
+# DIGITALOCEAN_TOKEN (write). Nothing else is needed: no SSH key, no DNS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Cloud provider"
+        required: true
+        default: hetzner
+        type: choice
+        options: [hetzner, digitalocean]
+      count:
+        description: "How many witnesses"
+        required: true
+        default: "5"
+        type: string
+      org:
+        description: "operator_org for every server in this fleet"
+        required: true
+        default: "witnesslog-project"
+        type: string
+      name_base:
+        description: "key name prefix: <name_base>.witness/<host>"
+        required: true
+        default: "witnesslog"
+        type: string
+      regions:
+        description: "comma-separated regions, cycled (hetzner: fsn1,nbg1,hel1,ash,hil; digitalocean: nyc3,sfo3,ams3,sgp1,fra1)"
+        required: false
+        default: ""
+        type: string
+      wl_version:
+        description: "release tag to install (latest = newest release)"
+        required: false
+        default: "latest"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fleet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: fleet
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: render cloud-init for this fleet
+        shell: bash
+        run: |
+          set -euo pipefail
+          org='${{ inputs.org }}'
+          case "$org" in ""|"Your Organisation"|unspecified) echo "::error::org must be a real operator label"; exit 1;; esac
+          compute='${{ inputs.provider }}'
+          python3 - "$org" '${{ inputs.name_base }}' "$compute" '${{ inputs.wl_version }}' <<'EOF'
+          import re, sys
+          org, name_base, compute, ver = sys.argv[1:]
+          s = open("deploy/witness/cloud-init.yaml").read()
+          def setvar(s, k, v):
+              new, n = re.subn(rf'^(\s*{k}=)"[^"]*"', lambda m: f'{m.group(1)}"{v}"', s, count=1, flags=re.M)
+              assert n == 1, k
+              return new
+          s = setvar(s, "ORG", org)
+          s = setvar(s, "NAME_BASE", name_base)
+          s = setvar(s, "COMPUTE", compute)
+          s = setvar(s, "WL_VERSION", ver)
+          open("fleet-cloud-init.yaml", "w").write(s)
+          EOF
+          python3 -c "import yaml; yaml.safe_load(open('fleet-cloud-init.yaml'))"
+          grep -n 'ORG=\|NAME_BASE=\|COMPUTE=\|WL_VERSION=' fleet-cloud-init.yaml | head -4
+
+      - name: create servers
+        id: create
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: |
+          set -euo pipefail
+          provider='${{ inputs.provider }}'
+          count='${{ inputs.count }}'
+          [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge 1 ] && [ "$count" -le 20 ] || { echo "::error::count must be 1..20"; exit 1; }
+          regions='${{ inputs.regions }}'
+          stamp=$(date -u +%Y%m%d%H%M)
+          userdata=$(cat fleet-cloud-init.yaml)
+          : > servers.txt
+          if [ "$provider" = hetzner ]; then
+            [ -n "${HCLOUD_TOKEN:-}" ] || { echo "::error::HCLOUD_TOKEN is not set in the fleet environment"; exit 1; }
+            regions=${regions:-fsn1,nbg1,hel1,ash,hil}
+            IFS=, read -ra R <<< "$regions"
+            for i in $(seq 0 $((count-1))); do
+              loc=${R[$((i % ${#R[@]}))]}
+              name="witness-${stamp}-$i"
+              body=$(jq -n --arg n "$name" --arg loc "$loc" --arg ud "$userdata" \
+                '{name:$n, server_type:"cx22", image:"ubuntu-24.04", location:$loc, user_data:$ud, start_after_create:true, public_net:{enable_ipv4:true, enable_ipv6:true}, labels:{"witness-log":"fleet"}}')
+              resp=$(curl -fsS -X POST https://api.hetzner.cloud/v1/servers -H "Authorization: Bearer $HCLOUD_TOKEN" -H "Content-Type: application/json" -d "$body") \
+                || { echo "::error::Hetzner refused to create $name in $loc"; exit 1; }
+              ip=$(jq -r .server.public_net.ipv4.ip <<< "$resp")
+              echo "$name $ip" | tee -a servers.txt
+            done
+          else
+            [ -n "${DIGITALOCEAN_TOKEN:-}" ] || { echo "::error::DIGITALOCEAN_TOKEN is not set in the fleet environment"; exit 1; }
+            regions=${regions:-nyc3,sfo3,ams3,sgp1,fra1}
+            IFS=, read -ra R <<< "$regions"
+            ids=()
+            for i in $(seq 0 $((count-1))); do
+              reg=${R[$((i % ${#R[@]}))]}
+              name="witness-${stamp}-$i"
+              body=$(jq -n --arg n "$name" --arg reg "$reg" --arg ud "$userdata" \
+                '{name:$n, region:$reg, size:"s-1vcpu-1gb", image:"ubuntu-24-04-x64", user_data:$ud, ipv6:true, tags:["witness-log"]}')
+              resp=$(curl -fsS -X POST https://api.digitalocean.com/v2/droplets -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" -H "Content-Type: application/json" -d "$body") \
+                || { echo "::error::DigitalOcean refused to create $name in $reg"; exit 1; }
+              ids+=("$(jq -r .droplet.id <<< "$resp")")
+            done
+            # droplets get their address a few seconds after creation
+            for i in "${!ids[@]}"; do
+              for _ in $(seq 1 30); do
+                ip=$(curl -fsS https://api.digitalocean.com/v2/droplets/${ids[$i]} -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" | jq -r '.droplet.networks.v4[] | select(.type=="public") | .ip_address' | head -1)
+                [ -n "$ip" ] && break; sleep 5
+              done
+              [ -n "$ip" ] || { echo "::error::droplet ${ids[$i]} never got an address"; exit 1; }
+              echo "witness-${stamp}-$i $ip" | tee -a servers.txt
+            done
+          fi
+
+      - name: wait for every witness to answer
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > urls.txt
+          while read -r name ip; do
+            url="https://${ip}.sslip.io"
+            echo "waiting for $url ..."
+            ok=0
+            for _ in $(seq 1 60); do   # up to ~20 min: apt, binary download, certificate issuance
+              if curl -fsS --max-time 15 "$url/" 2>/dev/null | jq -e .directory_entry.pubkey >/dev/null 2>&1; then ok=1; break; fi
+              sleep 20
+            done
+            if [ "$ok" = 1 ]; then echo "$url" >> urls.txt; echo "up: $url"
+            else echo "::warning::$name ($ip) did not answer in time; register it later with register-witness"; fi
+          done < servers.txt
+          [ -s urls.txt ] || { echo "::error::no witness came up"; exit 1; }
+
+      - name: register the ones that answered
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p registry/witnesses
+          while read -r url; do
+            curl -fsS --max-time 20 "$url/" > info.json
+            jq --arg url "$url" '.directory_entry | .url = $url | .is_project_operated = true' info.json > entry.json
+            name=$(jq -r .name entry.json)
+            slug=$(echo "$name" | tr '/' '-' | tr -c 'A-Za-z0-9._-\n' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')
+            cp entry.json "registry/witnesses/$slug.json"
+            echo "registered $name -> registry/witnesses/$slug.json"
+          done < urls.txt
+          python3 registry/validate.py --require-live
+
+      - name: commit the registry entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "0xAndersen"
+          git config user.email "321999970+0xAndersen@users.noreply.github.com"
+          git add registry/witnesses
+          if git diff --cached --quiet; then echo "nothing new to commit"; exit 0; fi
+          n=$(git diff --cached --name-only | wc -l)
+          git commit -q -m "registry: $n project-operated witnesses from deploy-fleet (${{ inputs.provider }})"
+          git pull -q --rebase origin main
+          git push -q origin HEAD:main
+
+      - name: summary
+        shell: bash
+        run: |
+          {
+            echo "## Fleet"
+            echo
+            echo "| server | ip | url |"; echo "|---|---|---|"
+            while read -r name ip; do echo "| $name | $ip | https://${ip}.sslip.io |"; done < servers.txt
+            echo
+            echo "Registered: $(wc -l < urls.txt) of $(wc -l < servers.txt). One operator bucket (\`${{ inputs.org }}\`); independence comes from outside operators."
+            echo
+            echo "Build a directory: \`witness-log directory build --registry registry/witnesses --include-project --out trusted.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
