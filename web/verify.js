@@ -22,10 +22,11 @@ async function loadEngine() {
   // the same API from the second implementation; web/build-go.sh produces
   // it, and the Playwright test uses it where the Rust toolchain cannot
   // target wasm32.
+  const want = new URLSearchParams(location.search).get("engine"); // ?engine=rust|go pins one
   const candidates = [
     { name: "rust", url: "./pkg/witness_log_wasm.js" },
     { name: "go", url: "./pkg-go/witness_log_go.js" },
-  ];
+  ].filter((c) => !want || c.name === want);
   const errors = [];
   for (const c of candidates) {
     try {

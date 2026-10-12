@@ -28,15 +28,36 @@ def main() -> int:
         print("no engine built: run web/build.sh or web/build-go.sh", file=sys.stderr)
         return 2
     httpd = serve()
-    engines = [p.name for p in (WEB / "pkg", WEB / "pkg-go") if p.exists()]
+    engines = [name for name, d in (("rust", WEB / "pkg"), ("go", WEB / "pkg-go")) if d.exists()]
     print("engines built:", ", ".join(engines))
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     failures = []
     with sync_playwright() as p:
         browser = p.chromium.launch()
+        for engine in engines:
+            try:
+                run_engine(browser, base, engine, failures)
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"{engine}: {type(e).__name__}: {str(e).splitlines()[0]}")
+        browser.close()
+    httpd.shutdown()
+    for f in failures:
+        print("FAIL", f, file=sys.stderr)
+        print(f"::error::browser verifier: {f}")
+    return 1 if failures else 0
+
+
+def run_engine(browser, base, engine, failures):
         page = browser.new_page()
-        page.goto(f"{base}/index.html")
-        page.wait_for_function("document.getElementById('engine').textContent.startsWith('engine:')", timeout=30000)
+        console = []
+        page.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
+        page.on("pageerror", lambda e: console.append(f"pageerror: {e}"))
+        page.goto(f"{base}/index.html?engine={engine}")
+        try:
+            page.wait_for_function("document.getElementById('engine').textContent.startsWith('engine:')", timeout=30000)
+        except Exception:
+            failures.append(f"{engine}: engine did not load; status={page.text_content('#status')!r}; console={console[-5:]}")
+            return
         print(page.text_content("#engine"))
 
         # WITNESSED with the directory
@@ -48,7 +69,7 @@ def main() -> int:
         want = json.loads((GOLD.parent / "expect" / "c2sp-a.directory.json").read_text())["verdict"]
         print("with directory:", got)
         if got != want:
-            failures.append(f"with directory: got {got}, want {want}")
+            failures.append(f"{engine} with directory: got {got}, want {want}")
 
         # Tampered dossier -> DIVERGED
         tampered = json.loads((GOLD / "a.json").read_text())
@@ -58,7 +79,10 @@ def main() -> int:
         try:
             page.set_input_files("#input-dossier", str(tmp))
             page.click("#verify")
-            page.wait_for_function("document.getElementById('verdict-word').textContent === 'DIVERGED'", timeout=10000)
+            try:
+                page.wait_for_function("document.getElementById('verdict-word').textContent === 'DIVERGED'", timeout=10000)
+            except Exception:
+                failures.append(f"{engine} tampered: got {page.text_content('#verdict-word')!r}, status={page.text_content('#status')!r}")
             print("tampered:", page.text_content("#verdict-word"))
         finally:
             tmp.unlink(missing_ok=True)
@@ -71,13 +95,11 @@ def main() -> int:
         print("bind:", bind_out[:80])
         want_exit = (GOLD / "bind.expected.exit").read_text().strip()
         if f"exit {want_exit}" not in bind_out:
-            failures.append(f"bind: expected exit {want_exit} in: {bind_out[:200]}")
-        browser.close()
-    httpd.shutdown()
-    for f in failures:
-        print("FAIL", f, file=sys.stderr)
-        print(f"::error::browser verifier: {f}")
-    return 1 if failures else 0
+            failures.append(f"{engine} bind: expected exit {want_exit} in: {bind_out[:200]}")
+        errs = [c for c in console if c.startswith("error") or c.startswith("pageerror")]
+        if errs:
+            failures.append(f"{engine}: console errors: {errs[:5]}")
+        page.close()
 
 
 if __name__ == "__main__":

@@ -387,7 +387,11 @@ pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
 }
 
 fn to_js(v: Value) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&v).map_err(|e| JsValue::from_str(&e.to_string()))
+    // json_compatible(): objects become plain JS objects, not `Map`s, so
+    // the page reads `result.verdict` the same way for both engines.
+    use serde::Serialize;
+    v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Verify a dossier in the browser. `directory_json` is the directory the
