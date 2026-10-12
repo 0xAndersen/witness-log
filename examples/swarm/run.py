@@ -1646,10 +1646,15 @@ def t094():
         args += ["--vkey", k]
     code, out, err = cli(*args)
     assert code == 0 and "✓" in out, (out, err)
-    # Only the witness key: the note itself must be reported unverified (exit 30).
+    # Only the witness key: the cosignature verifies, so the note passes (as
+    # c2sp.org's `note` verification does with any trusted key), but the
+    # output must say the note's own signature was not checked (0.4.0).
     code2, out2, _ = cli("c2sp", "verify", np, "--vkey", keys[1])
-    assert code2 == 30, (code2, out2)
-    return "log+witness keys exit 0; witness key alone exit 30"
+    assert code2 == 0 and "cannot be checked without the log's vkey" in out2, (code2, out2)
+    # No usable key at all is a rejection.
+    code3, out3, _ = cli("c2sp", "verify", np, "--vkey", keys[1].replace("+", "x", 1) if "+" not in keys[1][:1] else keys[1])
+    assert code3 != 0, (code3, out3)
+    return "log+witness keys exit 0; witness key alone exit 0 with the unverified-note warning; bad key rejected"
 
 
 @test("T095", "c2sp", "vkey key id recomputed in Python matches (SHA-256(name || '\\n' || type || key)[:4])")

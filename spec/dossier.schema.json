@@ -71,7 +71,8 @@
         "root_hash": { "$ref": "#/$defs/hex32" },
         "witnessed_at_ms": { "$ref": "#/$defs/u64" },
         "signature": { "$ref": "#/$defs/hex64" },
-        "c2sp_origin": { "type": "string", "pattern": "^witness-log/[0-9a-f]{64}$", "description": "Present for C2SP cosignatures; must equal the identity's canonical origin or the receipt does not count." }
+        "c2sp_origin": { "type": "string", "pattern": "^witness-log/[0-9a-f]{64}$", "description": "Present for C2SP cosignatures; must equal the identity's canonical origin or the receipt does not count." },
+        "witness_name": { "type": "string", "maxLength": 256, "description": "Display only (0.4.0+): the directory name of the witness that issued the receipt, as the submitting client saw it. Not signed, never consulted by verify." }
       }
     },
     "witness_directory": {
