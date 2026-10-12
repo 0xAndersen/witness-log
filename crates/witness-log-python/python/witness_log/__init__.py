@@ -58,7 +58,7 @@ __all__ = [
     "submit_round",
 ]
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"
 
 from .witnessing import Witnesser, WitnessStatus, submit_round  # noqa: E402
 

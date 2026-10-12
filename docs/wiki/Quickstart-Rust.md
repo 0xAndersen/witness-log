@@ -10,9 +10,9 @@ MSRV 1.75. No `unsafe`. Dependencies are audited with `cargo deny` in CI.
 
 ```toml
 [dependencies]
-witness-log-core    = "0.3.5" # log, Merkle tree, identity, redaction, journal, C2SP encoding
-witness-log-network = "0.3.5" # witnesses, directories, quorum, dossiers, verification
-# from crates.io; or { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.5" }
+witness-log-core    = "0.3.6" # log, Merkle tree, identity, redaction, journal, C2SP encoding
+witness-log-network = "0.3.6" # witnesses, directories, quorum, dossiers, verification
+# from crates.io; or { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.6" }
 ```
 
 **Why two crates.** `core` is everything a single process needs to keep a

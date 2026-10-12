@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.6 — 2026-10-12
 
 Driven by a fresh-eyes evaluation of the published 0.3.5 packages
 (integrator, adversary and hostile-input personas working only from the
@@ -55,6 +55,52 @@ fails on 0.3.5. No wire-format or verdict change.
   list form `verify_dossier_json` accepts.
 - `conform` only worked from a checkout's root: `--reference <corpus>`.
 - `from witness_log import *` exported `open`, shadowing the builtin.
+
+### Fixed (routed from the operator-kit and launch-content work)
+
+- **A witness in a container never restarted after `docker kill`.** Its
+  lock file named pid 1, the restarted witness was pid 1 again, the
+  liveness check saw itself and refused forever. A lock naming the
+  process's own pid is now treated as stale (it cannot be held by a live
+  witness: this process has not taken it yet).
+- **`diff` hedged on a whole-history rewrite.** Two dossiers under one
+  identity diverging at leaf 0 printed "usually means these are two
+  SEPARATE logs" and never "EQUIVOCATION DETECTED". Under the canonical
+  origin the key names the log, so it is equivocation (witnesses refuse
+  it the same way); the output now says so and names the same-seed case.
+- `bind` printed authorization kinds in Rust Debug form (`Some(GrantedByMe)`);
+  it now prints `granted_by_me` etc.
+- **No Linux ARM binary was released**, so the Oracle Always Free path
+  (Ampere A1) had nothing to download. `aarch64-unknown-linux-gnu` is now
+  built, and Linux binaries are built on Ubuntu 22.04 for older glibc.
+- `registry/validate.py` rejects loopback URLs (`witness init` without
+  `--url` writes `http://127.0.0.1:7380`).
+- SPEC §0 said every leaf is signed by a session key; leaves are not
+  individually signed. SPEC §1 claimed a wire-compatibility aim with the
+  agent-record draft and an IETF working group's conclusion; both are
+  corrected.
+
+### Operators
+
+- Public witness status page, every 10 minutes, on the `status` branch
+  (`STATUS.md`, `status.json`); empty registry rendered honestly.
+- `ghcr.io/0xandersen/witness-log` multi-arch image that initialises
+  itself from `WITNESS_ORG` on first start (docker one-liner).
+- cloud-init survives offline steps (IP fallback, Caddy optional, ARM
+  compile fallback); a QEMU end-to-end workflow (manual).
+- Operator onboarding page with current, cited hosting facts; a Founding
+  operators list in GOVERNANCE.md; `witnessed-report` workflow that writes
+  the first independent-WITNESSED report only when two outside
+  organisations are registered and up.
+
+### Launch material
+
+- `examples/rewrite-attack/run.py`: the same-key history rewrite refused
+  by two witnesses with 422, evidence verified, `diff` flagging
+  equivocation, in under a second on localhost.
+- Per-project comparison pages (Tessera, Microsoft AGT, Signet, immudb,
+  Agent Receipts, SCITT) from primary sources; SCITT RFC 9943 mapping with
+  the agent-record divergence list; a runnable AP2 mandates tutorial.
 
 ### Added
 

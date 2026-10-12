@@ -26,10 +26,10 @@ answers `ok`. Then register it from the repo: Actions → *register-witness*
 opens the PR in step 6 instead). Manual steps follow for anyone who wants
 to see what it does.
 
-If the release has no Linux binary for the CPU (v0.3.5 ships
-`x86_64-unknown-linux-gnu` only; Oracle's Always Free Ampere VMs are
-`aarch64`), the script compiles the same version from crates.io instead,
-which takes several minutes on first boot. The Docker image
+Releases from v0.3.6 ship Linux binaries for x86_64 and aarch64 (Oracle's
+Always Free Ampere VMs, Graviton, a 64-bit Pi). If a release ever lacks
+one for the CPU, the script compiles the same version from crates.io
+instead, which takes several minutes on first boot. The Docker image
 (`OPERATORS.md`, "Docker") covers arm64 without compiling.
 
 ## 0. Where to run it (free, always-on)
@@ -41,7 +41,7 @@ forgets what it cosigned will contradict itself. Known-good free options:
 
 | provider | tier | notes |
 |---|---|---|
-| Oracle Cloud | Always Free: 2 AMD micro VMs, or Ampere A1 up to 2 OCPUs / 12 GB; 200 GB block storage | the best free always-on choice; idle Always Free VMs may be reclaimed, so snapshot the state volume; ARM: `cargo install` or the Docker image (no aarch64 Linux binary in v0.3.5) |
+| Oracle Cloud | Always Free: 2 AMD micro VMs, or Ampere A1 up to 2 OCPUs / 12 GB; 200 GB block storage | the best free always-on choice; idle Always Free VMs may be reclaimed, so snapshot the state volume |
 | Google Cloud | e2-micro, 1 per account, always free (US regions) | 30 GB disk persists |
 | AWS | new accounts: credits on a Free plan that ends after 6 months | temporary; set a reminder |
 | your own hardware | a Raspberry Pi, a NAS, a desk machine | needs a port forward or a tunnel (Cloudflare Tunnel is free) |
@@ -54,9 +54,8 @@ jobs), serverless/edge functions (no durable fsync before reply).
 
 ```sh
 # pick the asset for your CPU from https://github.com/0xAndersen/witness-log/releases/latest
-# (no aarch64 Linux asset in v0.3.5: on ARM use `cargo install` below or the Docker image)
 ARCH=$(uname -m)            # x86_64 or aarch64
-VER=v0.3.5
+VER=v0.3.6
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS

@@ -38,6 +38,8 @@ except ImportError:  # pragma: no cover
     sys.exit("this demo needs the Python package: pip install witness-log")
 
 CLI = os.environ.get("WITNESS_LOG_BIN") or shutil.which("witness-log")
+if CLI and os.sep in CLI:
+    CLI = os.path.abspath(CLI)  # the demo runs commands from a temp dir
 if not CLI:
     sys.exit("this demo needs the CLI on PATH: cargo install witness-log-cli (or set WITNESS_LOG_BIN)")
 

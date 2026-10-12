@@ -61,9 +61,10 @@ curl -s http://<public-ip>/ | jq .directory_entry
 It installs the checksum-verified release binary, a dedicated user, one
 witness under a hardened systemd unit, Caddy (http at once, TLS on
 `<public-ip>.sslip.io` with no DNS needed) and the host firewall rules.
-On an ARM VM with v0.3.5 it compiles the binary from crates.io first,
-because that release has no aarch64 Linux binary; that adds several
-minutes.
+Releases from v0.3.6 include an aarch64 Linux binary, so ARM VMs
+(Oracle Ampere A1) download it like x86_64; only a release without a
+binary for the CPU would fall back to compiling from crates.io, which adds
+several minutes.
 
 ### 2. Docker, one line
 
