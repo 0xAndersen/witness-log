@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-Driven by an outside evaluation of 0.3.6 that found a newcomer could not
-get from `cargo install` to a WITNESSED dossier without writing Python or
-Rust: the CLI could verify and run witnesses but could not create a
-journal, append to it, or stand up witnesses to submit to. No wire-format,
+Driven by two outside evaluations of 0.3.6: a newcomer could not get from
+`cargo install` to a WITNESSED dossier without writing code; framework
+developers and an MCP gateway team found the Python package and MCP
+server short of disclosure, submit and sealing helpers. No wire-format,
 leaf-encoding or verdict change; the two-operator rule is unchanged.
 
-### Added
+### Added (CLI, core, network)
 
 - **`witness-log testnet up|status|down`.** N local witnesses (default 3)
   as child processes of the binary, each with its own key, operator name
@@ -134,6 +134,73 @@ leaf-encoding or verdict change; the two-operator rule is unchanged.
 - `clients/go`: an independent Go implementation of the verifier (standard library only) — `VerifyDossier`, `Bind`, `VerifyHandoffBinding`, `VerifyAuthorizationBinding`, `VerifyDisclosure`, C2SP note parsing and cosignature verification, RFC 6962 proofs — with every corpus vector as a table-driven test and golden dossiers regenerated from the Rust CLI; `cmd/witness-log-verify` returns the same exit codes as `witness-log verify`. `go.yml` runs vet/test/staticcheck on three OSes and diffs Go reports against the Rust CLI.
 - `crates/witness-log-wasm`: `verify_dossier`, `verify_dossier_with_options`, `verify_disclosure`, `bind` over the canonical Rust verifier for the browser; host-side conformance tests so `cargo test --workspace` covers it.
 - `web/`: a static offline verifier page (drop a dossier and a trusted directory; verdict, receipts, leaves, disclosure check, bind) with two interchangeable engines (Rust wasm, Go wasm) and a Playwright test; `pages.yml` deploys it to GitHub Pages.
+
+### Added (Python)
+
+- **Disclosure (SPEC §8).** `log.disclose(i)` returns `{index, leaf,
+  payload_hash, salt}` and, when the journal was opened with
+  `store_payloads=True`, the `payload`; `witness_log.verify_disclosure(leaf,
+  payload, salt_hex)` and `witness_log.payload_hash(payload, salt, index)`
+  let a third party check an entry against the leaf without trusting the
+  log. Tested against corpus vector 11 and an independent Python reference
+  of `SHA256(bucket_pad(payload) || salt || index)`.
+- `witness_log.open(path, ..., store_payloads=True)` keeps payloads in an
+  erasable `<journal>.payloads` sidecar (`0600`); `forget(i)`
+  zero-overwrites and drops the record. `session="reuse"` returns the log
+  this process already has open instead of resuming (a resume mints a new
+  session key and takes about a millisecond).
+- **`WITNESS_LOG_IDENTITY_SEED_ENV`.** Names an environment variable holding
+  a 32-byte hex seed; every `open()` without a seed argument then seals
+  the journal. Honoured by the package, the MCP server, the proxy and the
+  hook daemon. `witness_log.identity_seed_from_env()` reads it.
+- `log.submit(directory, want=None, min=None, timeout=10)` and `await
+  log.asubmit(...)`: one blocking witnessing round (409 resync,
+  `Retry-After`, refuse-to-equivocate) returning `{dossier, verdict,
+  cosignatures, contacted, tree_size, outcomes}`.
+- `JournaledLog.path()`, `.leaf_json(i)`, `.salt_hex(i)`, `.payload(i)`,
+  `.enable_payload_store()`, `.payload_store_path()`.
+- **`witness-log-mcp-proxy`** (`witness_log.mcp_proxy`): wraps any stdio
+  MCP server; passes JSON-RPC through; records an intent leaf before and a
+  result leaf after every `tools/call` under profile `"mcp.tools/call v1"`
+  (SHA-256 of the RFC 8785 form of the arguments and of the result or
+  error; byte layout in `docs/wiki/MCP-Proxy.md`); restarts a crashed
+  server (bounded) and replays `initialize`; per-call timeout;
+  `--directory --submit-every N` periodic witnessing; injects
+  `audit__status` and `audit__export` into `tools/list`.
+- **`witness-log-hook` and `witness-log-hookd`** (`witness_log.hook`,
+  `witness_log.hookd`): a hook that reads Claude Code's
+  `PreToolUse`/`PostToolUse` event (or a generic `{tool, args, result}`)
+  from stdin and appends through a Unix-socket daemon holding the sealed
+  journal; `--autostart`; `--strict` to block the tool call when the trail
+  cannot be written; `install claude-code|cursor|codex` prints the
+  settings snippet.
+- Wiki pages `MCP-Proxy` and `Hooks`.
+
+### Changed (Python)
+
+- **`canonical_json` is RFC 8785 (JCS).** Object keys sort by UTF-16 code
+  units, numbers use ECMAScript `Number::toString` (`10.0` -> `10`,
+  `1e21` -> `1e+21`), non-ASCII is literal UTF-8. Any JCS implementation
+  reproduces the bytes `@step` hashes, which disclosure needs. The
+  pre-0.3.7 encoding (`json.dumps(sort_keys=True, separators=(",", ":"))`)
+  is `witness_log.sorted_json`, for recomputing hashes of leaves written
+  by earlier releases. Still never raises. Tested against the RFC's
+  Appendix B number table and §3.2.3 examples.
+
+### Changed (MCP server)
+
+- `record_authorization.kind` is a JSON-schema enum of the six SPEC §3.2
+  kinds; `scope` accepts a JSON object (committed as RFC 8785 canonical
+  JSON) or a string (its UTF-8 bytes).
+- `export_dossier` also writes `<session>/dossier.json` and returns
+  `path`, `sha256` and `bytes`.
+- New tool `audit_this_session(session_id)` -> `{leaf_count, root,
+  identity, witnessed, last_verdict, witnessed_size, journal}`. Eleven
+  tools.
+- Journals are opened through `witness_log.open`, so
+  `WITNESS_LOG_IDENTITY_SEED_ENV` seals every session. One journal per
+  server process is kept open; a regression test counts key bindings so a
+  per-call reopen cannot come back.
 
 ## 0.3.6 — 2026-10-12
 

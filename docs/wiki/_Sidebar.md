@@ -12,6 +12,7 @@
 - [Quickstart: CLI](Quickstart-CLI)
 - [CLI reference](CLI-Reference)
 - [MCP integration](MCP-Integration)
+  - [MCP proxy](MCP-Proxy) · [Hooks](Hooks)
 - [Framework guides](Framework-Guides)
   - [Adapters: nightly live run](Framework-Adapters-CI)
 - [Quickstart: Go](Quickstart-Go)

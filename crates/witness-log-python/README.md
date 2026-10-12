@@ -82,11 +82,46 @@ head witnesses already cosigned. `await w.aflush()` in asyncio code;
 primitives underneath are `add_checkpoint_body(old_size)` and
 `dossier_from_responses(...)` (and their `_at(size, ...)` forms).
 
+## Console scripts
+
+| command | what it is | needs |
+|---|---|---|
+| `witness-log-mcp` | the MCP server (eleven tools) | `witness-log[mcp]` |
+| `witness-log-mcp-proxy --name git --journal git.wlog -- mcp-server-git` | wraps any stdio MCP server and records every `tools/call` as salted hashes ([MCP proxy](../../docs/wiki/MCP-Proxy.md)) | stdlib |
+| `witness-log-hook` / `witness-log-hookd` | a hook for Claude Code (and any host that pipes a JSON event) plus the Unix-socket daemon that holds the journal ([Hooks](../../docs/wiki/Hooks.md)) | stdlib |
+
+## Identity from the environment
+
+Set `WITNESS_LOG_IDENTITY_SEED_ENV` to the *name* of an environment
+variable that holds the identity seed as 64 hex characters, and every
+`witness_log.open()` without a seed argument (the package, the MCP server,
+the proxy, the hook daemon) seals the journal: the header holds only the
+public key and the seed stays in your secrets manager. Without it the
+default is still an unsealed journal, which is a key file: `0600`, back it
+up like one, and move to the environment variable before anything leaves
+a laptop.
+
+```sh
+export AGENT_KEY=$(python -c 'import os; print(os.urandom(32).hex())')
+export WITNESS_LOG_IDENTITY_SEED_ENV=AGENT_KEY
+```
+
+## Disclosure
+
+A leaf commits to `SHA256(bucket_pad(payload) || salt || index)` (SPEC §8).
+`log.disclose(i)` returns `{"index", "leaf", "payload_hash", "salt"}` and,
+when the journal was opened with `store_payloads=True`, `"payload"`; a
+third party checks it with
+`witness_log.verify_disclosure(leaf, payload, salt_hex)` or recomputes
+`witness_log.payload_hash(payload, salt, index)`. After `forget(i)` there
+is nothing to disclose. `store_payloads=True` keeps payloads in
+`<journal>.payloads` (0600), which `forget(i)` zero-overwrites and rewrites.
+
 ## Extras
 
 | extra | gives you |
 |---|---|
-| `witness-log[mcp]` | the MCP server: `witness-log-mcp` (stdio), ten tools including `submit_to_witnesses` |
+| `witness-log[mcp]` | the MCP server: `witness-log-mcp` (stdio), eleven tools including `submit_to_witnesses` and `audit_this_session` |
 | `witness-log[langchain]` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` |
 | `witness-log[openai-agents]` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
 | `witness-log[crewai]` | `witness_log.integrations.crewai.witness_crewai` |
@@ -107,13 +142,17 @@ Everything is typed in [`python/witness_log/_core.pyi`](python/witness_log/_core
 
 | | |
 |---|---|
-| `witness_log.open(path, identity_seed=None)` | `JournaledLog`: create or resume. |
+| `witness_log.open(path, identity_seed=None, *, seal=False, store_payloads=False, session="new")` | `JournaledLog`: create or resume. `session="reuse"` returns the object this process already has open; `store_payloads` keeps an erasable payload sidecar for `disclose`. |
 | `witness_log.step(log, name=None, *, record_result=True, sync=False)` | Decorator: intent leaf before the call, result (or error) leaf after. Sync and async. |
-| `witness_log.canonical_json(value)` | The byte form `step` hashes. |
+| `witness_log.canonical_json(value)` | RFC 8785 (JCS) bytes: the byte form `step` hashes, reproducible from any JCS library. `sorted_json(value)` is the pre-0.3.7 encoding. |
+| `log.disclose(i)` / `witness_log.verify_disclosure(leaf, payload, salt_hex)` / `witness_log.payload_hash(payload, salt, index)` | SPEC §8 disclosure: hand out one leaf's salt (and payload) and let anyone check it. |
+| `log.submit(directory, want=None, min=None, timeout=10)` / `await log.asubmit(...)` | One witnessing round, blocking: `{"dossier", "verdict", "cosignatures", "contacted", "tree_size", "outcomes"}`. |
+| `witness_log.identity_seed_from_env()` | The seed `WITNESS_LOG_IDENTITY_SEED_ENV` points at, or None. |
 | `JournaledLog.create(path, seed)` / `.create_ephemeral(path)` / `.resume(path)` | Explicit constructors; `resume` returns `(log, dropped_trailing_lines)`. |
 | `.append_intent/.append_result/.append_memory(bytes)` | New leaf index. |
 | `.append_handoff_sent/.append_handoff_received(state, counterparty_hex)` | SPEC §3.1 cross-log binding. |
 | `.forget(i)` / `.can_forget(i)` | Redaction; works for leaves from earlier sessions. |
+| `.salt_hex(i)` / `.leaf_json(i)` / `.payload(i)` / `.enable_payload_store(path=None)` / `.payload_store_path()` / `.path()` | The pieces `disclose` is built from. |
 | `.checkpoint()` / `.to_dossier_json()` / `.leaves_json()` | JSON, SPEC §6 / §9 / §2. |
 | `.inclusion_proof(i)` → `(tree_size, root_hex, path)` | Check offline with `verify_inclusion(...)`. |
 | `.add_checkpoint_body(old_size)` / `.dossier_from_responses(...)` | Witness protocol client; `_at(size, ...)` forms pin an earlier head; `.root_hex_at(size)`. |

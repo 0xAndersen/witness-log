@@ -36,7 +36,7 @@ if (v.verdict !== "WITNESSED") throw new Error(v.verdict);   // v.exitCode is 0/
 
 Any MCP client library can drive the server (`witness-log-mcp`, or
 `python -m witness_log.mcp_server`, from `pip install "witness-log[mcp]"`)
-over stdio. Its ten tools cover logging, proofs, redaction, export,
+over stdio. Its eleven tools cover logging, proofs, redaction, export,
 witnessing and verification; your code never touches the format.
 
 **TypeScript with the SDK directly (Vercel AI SDK / LangChain.js / Mastra / custom):**

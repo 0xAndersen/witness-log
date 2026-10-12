@@ -12,7 +12,8 @@ We will follow a single event: an agent calls `transfer_funds(amount_usd=250)`.
 ## Stage 1: the payload
 
 The Python decorator (or your own code) produces a payload: deterministic
-JSON bytes, sorted keys, no whitespace.
+JSON bytes (RFC 8785 canonical JSON: sorted keys, no whitespace, fixed
+number and string forms).
 
 ```
 {"args":{"amount_usd":250},"tool":"transfer_funds"}

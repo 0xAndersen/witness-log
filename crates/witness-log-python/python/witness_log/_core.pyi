@@ -7,7 +7,7 @@ whose shape is documented in ``spec/SPEC.md`` and ``spec/dossier.schema.json``.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 class WitnessLogError(Exception):
     """Base class for all WitnessLog-specific errors."""
@@ -58,6 +58,26 @@ class WitnessLog:
     def leaf_hash_hex(self, index: int) -> Optional[str]: ...
     def to_dossier_json(self) -> str: ...
     def save_snapshot(self, path: str) -> None: ...
+    # Attached by ``witness_log/__init__.py``; ``state_path`` is required
+    # for an in-memory log.
+    def submit(
+        self,
+        directory: Any,
+        want: Optional[int] = None,
+        min: Optional[int] = None,
+        *,
+        timeout: float = 10.0,
+        state_path: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    async def asubmit(
+        self,
+        directory: Any,
+        want: Optional[int] = None,
+        min: Optional[int] = None,
+        *,
+        timeout: float = 10.0,
+        state_path: Optional[str] = None,
+    ) -> dict[str, Any]: ...
 
 class JournaledLog:
     """A log whose every append lands in ``path`` (one JSON line per leaf)
@@ -104,7 +124,34 @@ class JournaledLog:
     def inclusion_proof(self, index: int) -> Optional[tuple[int, str, list[str]]]: ...
     def leaf_hash_hex(self, index: int) -> Optional[str]: ...
     def leaves_json(self) -> str: ...
+    def leaf_json(self, index: int) -> Optional[str]: ...
+    def path(self) -> str: ...
+    def salt_hex(self, index: int) -> Optional[str]: ...
+    def enable_payload_store(self, path: Optional[str] = None) -> None: ...
+    def payload_store_path(self) -> Optional[str]: ...
+    def payload(self, index: int) -> Optional[bytes]: ...
     def close(self) -> None: ...
+    # Attached by ``witness_log/__init__.py`` (Python, not Rust); listed
+    # here because they are methods of this class at runtime.
+    def disclose(self, index: int) -> dict[str, Any]: ...
+    def submit(
+        self,
+        directory: Any,
+        want: Optional[int] = None,
+        min: Optional[int] = None,
+        *,
+        timeout: float = 10.0,
+        state_path: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    async def asubmit(
+        self,
+        directory: Any,
+        want: Optional[int] = None,
+        min: Optional[int] = None,
+        *,
+        timeout: float = 10.0,
+        state_path: Optional[str] = None,
+    ) -> dict[str, Any]: ...
     def is_closed(self) -> bool: ...
     def __enter__(self) -> JournaledLog: ...
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool: ...
@@ -142,6 +189,8 @@ def verify_dossier_json(
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str
 ) -> bool: ...
+def payload_hash(payload: bytes, salt: bytes, index: int) -> str:
+    """SPEC §8: ``SHA256(bucket_pad(payload) || salt || index)``, hex."""
 def verify_handoff_binding(
     sender_identity_hex: str, sender_leaf_json: str, receiver_identity_hex: str, receiver_leaf_json: str
 ) -> Optional[str]: ...

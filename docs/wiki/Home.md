@@ -15,6 +15,7 @@ Python bindings, MCP server, CLI.
 | use it from Rust | [Quickstart: Rust](Quickstart-Rust) |
 | use it from the terminal or any language | [Quickstart: CLI](Quickstart-CLI) |
 | give Claude Code / Claude Desktop / Cursor / any MCP host an audit trail with zero code | [MCP integration](MCP-Integration) |
+| audit an MCP server you already run, or record a coding agent's tool calls from its hooks | [MCP proxy](MCP-Proxy) · [Hooks](Hooks) |
 | wire it into LangChain, LangGraph, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex | [Framework guides](Framework-Guides) |
 | verify from Go | [Quickstart: Go](Quickstart-Go) |
 | verify in a browser, nothing installed | [Browser verifier](Browser-Verifier) |
