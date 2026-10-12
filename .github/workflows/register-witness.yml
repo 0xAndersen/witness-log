@@ -51,7 +51,7 @@ jobs:
           git config user.email "321999970+0xAndersen@users.noreply.github.com"
           git add "registry/witnesses/$SLUG.json"
           if git diff --cached --quiet; then echo "no change"; exit 0; fi
-          git commit -m "registry: witness $SLUG ($(jq -r .operator_org registry/witnesses/$SLUG.json))"
+          git commit -m "registry: witness $SLUG ($(jq -r .operator_org "registry/witnesses/$SLUG.json"))"
           git push
       - name: summary
         shell: bash
