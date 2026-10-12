@@ -181,7 +181,9 @@ reference that should be checked against RFC 9943.
 
 ## Questions for the IETF SCITT list and the C2SP community
 
-Drafts, not posted.
+Final, post-ready versions with venues and subjects:
+`docs/launch/community-questions.md`. Posting is the maintainer's step;
+answers get folded back into this page with the thread as the source.
 
 1. **To the SCITT list.** RFC 9943 separates the Issuer from the
    Transparency Service and states non-equivocation as a property of the
