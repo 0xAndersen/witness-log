@@ -3,24 +3,24 @@
   "runner": "GitHub-hosted ubuntu-latest",
   "metrics": {
     "rust_append_inmem": {
-      "ns": 1768.7,
-      "normalized": 2.5482
+      "ns": 1187.4,
+      "normalized": 2.3852
     },
     "rust_append_journaled_nosync": {
-      "ns": 7455.5,
-      "normalized": 10.7487
+      "ns": 5323.9,
+      "normalized": 10.5247
     },
     "rust_verify_10k_leaves": {
-      "ns": 7422385.0,
-      "normalized": 10798.0904
+      "ns": 5127716.0,
+      "normalized": 10311.7311
     },
     "python_step_inmem": {
-      "ns": 15126.3,
-      "normalized": 3.9373
+      "ns": 9640.0,
+      "normalized": 4.6978
     },
     "python_step_journaled_nosync": {
-      "ns": 28090.8,
-      "normalized": 7.4052
+      "ns": 18068.0,
+      "normalized": 8.9593
     }
   }
 }
