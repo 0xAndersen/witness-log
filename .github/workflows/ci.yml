@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if ! cargo build --workspace --exclude witness-log-wasm 2>&1 | tee build.log; then
+          if ! cargo build --workspace --exclude witness-log-wasm --color never 2>&1 | tee build.log; then
             # Job logs are not always reachable; surface the compiler's own words.
             grep -E "^(error|warning: unused)|requires rustc|cannot be built|-->" build.log | head -40 | while IFS= read -r line; do echo "::error::MSRV build: ${line}"; done
             exit 1

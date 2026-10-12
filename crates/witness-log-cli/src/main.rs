@@ -898,15 +898,17 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 /// weaker can rely on. WITNESSED alone is not enough: a WITNESSED dossier
 /// cosigned by fewer than half the directory can coexist with a
 /// conflicting one (see `QuorumResult::split_view_resistant`).
-fn strict_exit(report: &DossierReport) -> ExitCode {
+/// The `--strict` exit status as a plain code (`ExitCode` is not
+/// comparable on the MSRV toolchain).
+fn strict_exit_code(report: &DossierReport) -> u8 {
     let majority = report
         .quorum
         .as_ref()
         .is_some_and(|q| q.split_view_resistant);
     if report.verdict == witness_log_network::Verdict::Witnessed && majority {
-        ExitCode::from(exit::WITNESSED)
+        exit::WITNESSED
     } else {
-        ExitCode::from(exit::STRICT_FAILED)
+        exit::STRICT_FAILED
     }
 }
 
@@ -985,7 +987,7 @@ fn run_verify(opts: &Options) -> ExitCode {
         });
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
         return if opts.strict {
-            strict_exit(&report)
+            ExitCode::from(strict_exit_code(&report))
         } else {
             exit_code_for(&report.verdict)
         };
@@ -1068,8 +1070,8 @@ fn run_verify(opts: &Options) -> ExitCode {
     );
     let _ = overall_ok;
     if opts.strict {
-        let code = strict_exit(&report);
-        if code != ExitCode::from(exit::WITNESSED) {
+        let code = strict_exit_code(&report);
+        if code != exit::WITNESSED {
             println!(
                 "--strict: not WITNESSED by a majority of the directory ({}); exit 11",
                 match &report.quorum {
@@ -1081,7 +1083,7 @@ fn run_verify(opts: &Options) -> ExitCode {
                 }
             );
         }
-        return code;
+        return ExitCode::from(code);
     }
     exit_code_for(&report.verdict)
 }
