@@ -183,7 +183,8 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
     // Bare relative paths (`submit agent.jsonl --out dossier.json` from the
     // journal's own directory): `Path::parent()` is `Some("")` here and
     // the directory fsync used to fail with ENOENT after the file was
-    // already written, turning a successful submit into exit 1.
+    // already written, turning a successful submit into exit 1. No --min:
+    // the fail-closed default is max(2, 3/2+1) = 2, met by three cosigners.
     let out = Command::new(BIN)
         .current_dir(&root)
         .args([
@@ -254,7 +255,9 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
         "--out",
         root.join("f.json").to_str().unwrap(),
     ]);
-    assert_ne!(code, 0);
+    // Fail-closed: a 422 from any witness is exit 20 (0.3.6 exited 1 only
+    // when fewer than `--min`, default 1, cosigned).
+    assert_eq!(code, 20, "{err}");
     assert_eq!(err.matches("REFUSED (422)").count(), 3, "{err}");
     // A growing fork is refused but is not PROVABLE by a witness alone
     // (a junk proof looks the same), so it is not recorded as evidence.
@@ -279,7 +282,7 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
         "--out",
         root.join("s.json").to_str().unwrap(),
     ]);
-    assert_ne!(code, 0);
+    assert_eq!(code, 20, "{err}");
     assert_eq!(err.matches("REFUSED (422)").count(), 3, "{err}");
     for w in &ws {
         let files: Vec<_> = std::fs::read_dir(w.dir.join("evidence"))
@@ -306,7 +309,7 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
         "--out",
         root.join("f2.json").to_str().unwrap(),
     ]);
-    assert_ne!(code, 0);
+    assert_eq!(code, 20, "after restart: {err}");
     assert_eq!(
         err.matches("REFUSED (422)").count(),
         3,

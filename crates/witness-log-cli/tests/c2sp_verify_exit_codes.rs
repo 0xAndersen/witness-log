@@ -106,6 +106,64 @@ fn forged_cosignature_from_a_supplied_key_fails_the_gate() {
     let _ = std::fs::remove_file(bad_path);
 }
 
+/// The exit status is about the keys the caller supplied, both kinds.
+/// Until 0.3.6 it was the log-key check alone: a note whose cosignatures
+/// all verified exited 30 when only witness keys were given (the shape
+/// `c2sp export` writes without `--sign-with`), and a run in which none
+/// of the supplied keys matched any signature line was not itself a
+/// rejection.
+#[test]
+fn verdict_covers_cosignature_keys_and_rejects_when_nothing_verified() {
+    let origin = "example.test/log";
+    let log_key = SigningKey::generate(&mut OsRng);
+    let witness_key = SigningKey::generate(&mut OsRng);
+    let stranger = SigningKey::generate(&mut OsRng);
+    let cp = Checkpoint {
+        origin: origin.into(),
+        tree_size: 9,
+        root_hash: [3u8; 32],
+        extensions: vec![],
+    };
+    let body = cp.note_text().unwrap();
+    // A cosignature-only note, as `c2sp export` writes it without the log key.
+    let note = witness_log_core::c2sp::SignedNote {
+        text: body.clone(),
+        signatures: vec![
+            Cosignature::sign("w.test/1", &witness_key, 1_700_000_000, &body).to_note_signature(),
+        ],
+    };
+    let path = tmp("cosig-only", &note.encode().unwrap());
+    let witness_vkey =
+        VerifierKey::for_cosignature("w.test/1", &witness_key.verifying_key()).encode();
+    let (code, out) = run(&["c2sp", "verify", &path, "--vkey", &witness_vkey]);
+    assert_eq!(
+        code, 0,
+        "a verifying cosignature from a supplied key is a pass:\n{out}"
+    );
+
+    // A supplied witness key that matches no line: nothing verified.
+    let stranger_vkey =
+        VerifierKey::for_cosignature("w.test/9", &stranger.verifying_key()).encode();
+    let (code, out) = run(&["c2sp", "verify", &path, "--vkey", &stranger_vkey]);
+    assert_eq!(code, 30, "no supplied key verified anything:\n{out}");
+    assert!(
+        out.contains("None of the 1 supplied key(s) verified"),
+        "{out}"
+    );
+
+    // Same for a log-signed note checked with the wrong log key.
+    let signed = cp.sign(&log_key).unwrap();
+    let signed_path = tmp("log-signed", &signed.encode().unwrap());
+    let wrong_log_vkey = VerifierKey::for_ed25519(origin, &stranger.verifying_key()).encode();
+    let (code, _) = run(&["c2sp", "verify", &signed_path, "--vkey", &wrong_log_vkey]);
+    assert_eq!(code, 30);
+    let right_log_vkey = VerifierKey::for_ed25519(origin, &log_key.verifying_key()).encode();
+    let (code, _) = run(&["c2sp", "verify", &signed_path, "--vkey", &right_log_vkey]);
+    assert_eq!(code, 0);
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(signed_path);
+}
+
 #[test]
 fn unreadable_input_is_a_usage_error_not_a_verdict() {
     let (code, _) = run(&["verify", "/definitely/not/a/file.json"]);
