@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.4.2 — 2026-10-12
+
+A second security review of core and the verify path
+(`docs/reviews/round-2-core-and-verify.md`: 1 high, 3 medium, 5 low, 4
+info), every finding pinned by a test that asserted the defect and now
+asserts the fix, plus the open-issue sweep. No wire-format change; two
+validation rules tightened (below) that every verifier applies.
+
+### Fixed (security review)
+
+- **A crash between a journal record and its newline could lose a
+  committed leaf** (high). Records were written as two `write(2)` calls;
+  a record left without its terminator was accepted on resume, the next
+  record was glued onto it, and the resume after that dropped the merged
+  line as a torn tail, taking a leaf that may have been witnessed with
+  it. Records are now one write; an unterminated last record is kept and
+  terminated before anything else lands; the same in the salt sidecar; a
+  tear inside a multi-byte character is healed instead of refused.
+- **Equivocation proofs trusted the key inside the file** (medium): a
+  proof signed with a stranger's key under a victim's canonical origin
+  verified and `witness verify-evidence` printed PROVEN. The key is now
+  taken from the origin (`EquivocationProof::verify`) or supplied by the
+  checker (`verify_with_key`, `verify-evidence --vkey`).
+- **Revocations** (medium): a checkpoint signed at or after `as_of_ms`
+  is no longer evidence of anything, and a verifier can supply
+  revocations it knows about (`VerifyContext::revocations`,
+  `verify --revocations <json>`) so a dossier that omits one is judged the
+  same way. The timestamp cut-off is still holder-controlled; an index
+  cut-off witnesses can pin is RFC-0005.
+- **Leaf validation** (low), in the Rust, Go and TypeScript verifiers:
+  fields of another leaf type are rejected (they are not committed by the
+  root, so they were free to edit and still displayed); markers must
+  commit the all-zero hash; a redaction must name an earlier leaf.
+  `forget` refuses an ExternalAnchor leaf, whose content lives in
+  cleartext in the leaf (SPEC §2, §8).
+- `old <size>` in a witness request must be a canonical integer; a note
+  signature with no signature bytes is refused.
+
+### Fixed (issues)
+
+- #12 `testnet up` clears the inherit flag on its own stdio before
+  spawning witnesses, so a parent reading it through a pipe sees EOF on
+  Windows; the six integration tests run on Windows again.
+- #11 `clients/go/interop`: witness-log notes and cosignatures verified
+  by the reference libraries the ecosystem runs (`golang.org/x/mod`
+  signed notes, `transparency-dev/formats` cosignature/v1) on the corpus
+  vector and a live `c2sp export`; a CI job.
+- #10 the three SCITT/C2SP community questions as post-ready mails
+  (`docs/launch/community-questions.md`).
+- #5 the npm workflows publish from an `NPM_TOKEN` secret until trusted
+  publishing exists; #2 `image-public-check.yml` proves an anonymous pull.
+
 ## 0.4.1 — 2026-10-12
 
 Findings from a 100,000-agent swarm run against 0.4.0 (`examples/swarm/outside_0_4.py`,
