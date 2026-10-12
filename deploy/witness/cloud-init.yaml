@@ -56,8 +56,8 @@ write_files:
       COMPUTE="oracle-cloud"         # where it runs: oracle-cloud, gcp, aws, hetzner, homelab, ...
       # ---- optional ----
       HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed; this needs the public-IP lookup)
-      WL_VERSION="latest"            # a tag like v0.3.6 to pin, or latest
-      WL_REF="v0.3.6"                # repo tag the systemd unit is fetched from; keep it a release tag, not a branch
+      WL_VERSION="latest"            # a tag like v0.4.0 to pin, or latest
+      WL_REF="v0.4.0"                # repo tag the systemd unit is fetched from; keep it a release tag, not a branch
       CADDY_VERSION="2.11.7"         # Caddy release to install, checked against that release's checksum file
 
   - path: /usr/local/sbin/witness-log-bootstrap
@@ -66,7 +66,7 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       . /etc/witness-log/env
-      WL_REF="${WL_REF:-v0.3.6}"
+      WL_REF="${WL_REF:-v0.4.0}"
       CADDY_VERSION="${CADDY_VERSION:-2.11.7}"
       REPO=0xAndersen/witness-log
       log(){ echo "[witness-log-bootstrap] $*"; }

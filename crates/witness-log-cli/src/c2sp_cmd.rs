@@ -515,7 +515,7 @@ pub fn run_export(args: &[String]) -> ExitCode {
             .or_else(|| r.witness_name.clone());
         let Some(name) = name else {
             skipped.push(format!(
-                "{}: key name unknown (pass --directory, or submit with 0.3.7+ so receipts carry it)",
+                "{}: key name unknown (pass --directory, or submit with 0.4.0+ so receipts carry it)",
                 short_key(&r.witness_pubkey)
             ));
             continue;

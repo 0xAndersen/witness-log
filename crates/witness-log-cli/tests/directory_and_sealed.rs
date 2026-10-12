@@ -560,7 +560,7 @@ fn old_fixture_dossier_still_verifies() {
     let raw = std::fs::read_to_string(&dossier).unwrap();
     assert!(
         !raw.contains("witness_name"),
-        "fixture must stay a pre-0.3.7 dossier for this test to mean anything"
+        "fixture must stay a pre-0.4.0 dossier for this test to mean anything"
     );
     let parsed: witness_log_network::Dossier = serde_json::from_str(&raw).unwrap();
     assert!(parsed

@@ -144,7 +144,7 @@ Everything is typed in [`python/witness_log/_core.pyi`](python/witness_log/_core
 |---|---|
 | `witness_log.open(path, identity_seed=None, *, seal=False, store_payloads=False, session="new")` | `JournaledLog`: create or resume. `session="reuse"` returns the object this process already has open; `store_payloads` keeps an erasable payload sidecar for `disclose`. |
 | `witness_log.step(log, name=None, *, record_result=True, sync=False)` | Decorator: intent leaf before the call, result (or error) leaf after. Sync and async. |
-| `witness_log.canonical_json(value)` | RFC 8785 (JCS) bytes: the byte form `step` hashes, reproducible from any JCS library. `sorted_json(value)` is the pre-0.3.7 encoding. |
+| `witness_log.canonical_json(value)` | RFC 8785 (JCS) bytes: the byte form `step` hashes, reproducible from any JCS library. `sorted_json(value)` is the pre-0.4.0 encoding. |
 | `log.disclose(i)` / `witness_log.verify_disclosure(leaf, payload, salt_hex)` / `witness_log.payload_hash(payload, salt, index)` | SPEC §8 disclosure: hand out one leaf's salt (and payload) and let anyone check it. |
 | `log.submit(directory, want=None, min=None, timeout=10)` / `await log.asubmit(...)` | One witnessing round, blocking: `{"dossier", "verdict", "cosignatures", "contacted", "tree_size", "outcomes"}`. |
 | `witness_log.identity_seed_from_env()` | The seed `WITNESS_LOG_IDENTITY_SEED_ENV` points at, or None. |

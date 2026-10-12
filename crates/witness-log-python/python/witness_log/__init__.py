@@ -77,7 +77,7 @@ __all__ = [
     "submit_round",
 ]
 
-__version__ = "0.3.6"
+__version__ = "0.4.0"
 
 from . import _core  # noqa: E402
 from .witnessing import Witnesser, WitnessStatus, submit_round  # noqa: E402
@@ -94,7 +94,7 @@ IDENTITY_SEED_ENV = "WITNESS_LOG_IDENTITY_SEED_ENV"
 
 
 def sorted_json(value: Any) -> bytes:
-    """The payload encoding ``canonical_json`` produced before 0.3.7:
+    """The payload encoding ``canonical_json`` produced before 0.4.0:
     ``json.dumps(sort_keys=True, separators=(",", ":"))`` with non-ASCII
     escaped as ``\\uXXXX`` and Python's number formatting. Kept so a
     verifier can recompute the payload hash of a leaf written by an older
@@ -134,7 +134,7 @@ def canonical_json(value: Any) -> bytes:
     become ``repr`` strings too; integers above 2**53 are formatted as the
     nearest double, as RFC 8785 requires of every number.
 
-    Before 0.3.7 this function was :func:`sorted_json`; payloads written
+    Before 0.4.0 this function was :func:`sorted_json`; payloads written
     by older releases hash under that encoding."""
     out: list = []
     _jcs(value, out, set(), 0)

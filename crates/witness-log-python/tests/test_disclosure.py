@@ -209,7 +209,7 @@ def test_canonical_json_never_raises_and_is_valid_json():
     assert wl.canonical_json({1: "x", "1": "y"}) == b'{"1":"y"}'
 
 
-def test_sorted_json_is_the_pre_0_3_7_encoding():
+def test_sorted_json_is_the_pre_0_4_0_encoding():
     v = {"z": "€", "a": [1.0, 1e-7, 10**20], "m": {"k": None}}
     assert wl.sorted_json(v) == json.dumps(v, sort_keys=True, separators=(",", ":")).encode()
     assert wl.sorted_json(v) != wl.canonical_json(v)  # € escaped vs literal; 1.0 vs 1

@@ -1064,7 +1064,7 @@ mod tests {
             vec![3, 4]
         );
         assert!(log.evidence_window(5..5, &key).unwrap().entries.is_empty());
-        // Before 0.3.7 each of these returned a shorter window with no
+        // Before 0.4.0 each of these returned a shorter window with no
         // indication the request was not met.
         assert_eq!(
             log.evidence_window(3..7, &key).unwrap_err(),

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-12
 
 Driven by two outside evaluations of 0.3.6: a newcomer could not get from
 `cargo install` to a WITNESSED dossier without writing code; framework
@@ -182,7 +182,7 @@ leaf-encoding or verdict change; the two-operator rule is unchanged.
   units, numbers use ECMAScript `Number::toString` (`10.0` -> `10`,
   `1e21` -> `1e+21`), non-ASCII is literal UTF-8. Any JCS implementation
   reproduces the bytes `@step` hashes, which disclosure needs. The
-  pre-0.3.7 encoding (`json.dumps(sort_keys=True, separators=(",", ":"))`)
+  pre-0.4.0 encoding (`json.dumps(sort_keys=True, separators=(",", ":"))`)
   is `witness_log.sorted_json`, for recomputing hashes of leaves written
   by earlier releases. Still never raises. Tested against the RFC's
   Appendix B number table and §3.2.3 examples.

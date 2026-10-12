@@ -16,7 +16,7 @@ The recording uses the commerce profile helpers in
 x402 and Verifiable Intent shapes onto the same four calls.
 
 Time: 10 minutes. Needs `pip install witness-log` and
-`cargo install witness-log-cli` (v0.3.6). Everything runs on localhost.
+`cargo install witness-log-cli` (v0.4.0). Everything runs on localhost.
 The output below is real, from a v0.3.6 checkout; hashes and keys differ on
 your run.
 

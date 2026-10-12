@@ -12,7 +12,7 @@ All three map onto the same four calls, defined in :mod:`.ap2` and
 re-exported here: :func:`mandate_hash`, :func:`record_grant`,
 :func:`record_receipt`, :func:`bind_profile_ap2`, plus
 :func:`dispute_export`. The mandate hash is ``SHA-256(JCS(mandate))``
-with JCS per RFC 8785 (:mod:`._jcs`), so a counterparty written in another
+with JCS per RFC 8785 (``witness_log.canonical_json``, strict here), so a counterparty written in another
 language reproduces it from the same JSON.
 
 What this does not do: validate the mandate. ``user_authorization``,

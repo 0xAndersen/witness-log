@@ -371,8 +371,8 @@ from it. The registry starts empty: the first independent operator is the one th
 
 ## Evidence
 
-Every push runs 289 Rust tests plus proptest properties for inclusion and consistency, the Python and MCP suites,
-the TypeScript client tests, an overhead budget, clippy and rustdoc with `-D warnings`,
+Every push runs 310 Rust tests plus proptest properties for inclusion and consistency, 193 Python and MCP tests,
+the TypeScript, Node and Go suites, an overhead budget, clippy and rustdoc with `-D warnings`,
 `cargo deny`, the conformance corpus, ten live witnesses through ten scenarios, 100 scenarios against the
 *released* CLI and wheel, and a 200-agent swarm, on Linux, macOS and Windows.
 
@@ -430,8 +430,8 @@ witness-log/
 
 ## Status
 
-Pre-1.0 (v0.3.6). Core, network, CLI, Python bindings and the MCP server are implemented, tested and
-released; the wire format is specified and corpus-pinned. Independent witness operators are being
+Pre-1.0 (v0.4.0). Core, network, CLI, Python bindings, the MCP server and proxy, Node and Go clients and the
+browser verifier are implemented, tested and released; the wire format is specified and corpus-pinned. Independent witness operators are being
 recruited: see `GOVERNANCE.md` and `deploy/witness/AGENT_OPERATOR.md`.
 
 ## License

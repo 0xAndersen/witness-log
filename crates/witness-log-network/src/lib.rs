@@ -301,7 +301,7 @@ pub struct WitnessReceipt {
     /// against a directory by key. Never part of any signature and never
     /// consulted by `verify` or `evaluate_quorum`, which match receipts to
     /// a trusted directory by `witness_pubkey` alone. Absent (and not
-    /// serialized) when unknown, so dossiers from before 0.3.7 and
+    /// serialized) when unknown, so dossiers from before 0.4.0 and
     /// receipts without a name are byte-identical to what they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_name: Option<String>,
@@ -1125,7 +1125,7 @@ mod tests {
     }
 
     /// `witness_name` is display metadata: it serializes only when set,
-    /// a receipt without it (every dossier before 0.3.7) still parses,
+    /// a receipt without it (every dossier before 0.4.0) still parses,
     /// and no value of it changes whether the receipt verifies.
     #[test]
     fn witness_name_is_optional_additive_and_not_signed() {
