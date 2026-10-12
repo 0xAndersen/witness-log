@@ -1,5 +1,97 @@
 # Changelog
 
+## Unreleased
+
+Driven by a fresh-eyes evaluation of the published 0.3.5 packages
+(integrator, adversary and hostile-input personas working only from the
+README, `pip install witness-log` and `cargo install witness-log-cli`).
+The adversary found no way to a dishonest verdict: tampering, truncation,
+reordering, forged and re-signed logs, stolen receipts, duplicated
+receipts, dossier-supplied directories and forks submitted to witnesses
+all ended where they should (DIVERGED, UNANCHORED, CONSISTENT-UNWITNESSED,
+or a 422 with verifiable evidence). The integrator and hostile-input
+personas found the defects below; each fix has a regression test that
+fails on 0.3.5. No wire-format or verdict change.
+
+### Fixed
+
+- **A bad anchor URL bricked the journal.** `append_external_anchor`
+  committed a non-http(s) URL that the verifier rejects: every later
+  dossier was DIVERGED and `resume` refused the journal. Now refused
+  before the leaf exists (`JournaledLog`, and `WitnessLog::try_append_external_anchor`);
+  the validation error names the URL rule instead of "64 lowercase hex".
+- **Handoff and authorization counterparties were not checked.** Any
+  string ("zz", "") was committed as the other agent's key, producing a
+  leaf that verifies but can never `bind`; an uppercase key never bound
+  either. `JournaledLog` refuses non-keys; keys are stored lowercase.
+- **Expired TTL sessions made honest logs DIVERGED.** After
+  `resume_with_ttl`'s binding expired the log kept writing under it. The
+  next append now rotates to a fresh session bound with the same TTL.
+- **The MCP server read local files.** `submit_to_witnesses` followed any
+  URL scheme in a caller-supplied directory and returned the first 200
+  bytes of the response, so `file:///path#` disclosed local files to the
+  caller. Witness URLs must be http(s) (MCP, `Witnesser`, entry builders,
+  `witness init`).
+- **MCP witnessing did not stick.** After a successful
+  `submit_to_witnesses`, `verify_chain_integrity` said
+  `consistent_unwitnessed` and `export_dossier` had no receipts. The
+  witnessed dossier is kept and used while the head is unchanged
+  (`witnessed_size` / `witnessed_verdict` after). The MCP witness state
+  now uses the CLI's `<journal>.witnesses.json` format (it shared the path
+  with a different format) and the CLI's refuse-to-equivocate rule.
+- MCP tool errors carried no reason ("Error executing tool X"); they now
+  say what to fix.
+- `@witness_log.step` raised `TypeError`/`ValueError` into the agent for
+  values `json` cannot encode with sorted keys (mixed key types, cycles),
+  after the tool had run, losing its return value. `canonical_json` never
+  raises and always emits valid JSON (NaN/infinity become strings).
+- `witness-log verify /dev/zero` (or a FIFO) read until the OOM killer
+  ended it; inputs are capped at 512 MiB with a message.
+- `witness submit` ignored unknown flags (`--mni 2` meant `--min 1`);
+  `witness init` accepted an empty `--org` (scored as an operator) and a
+  non-http `--url`; `verify` silently ignored directory entries with
+  malformed keys (now a warning); `witness_entry_independent` accepted a
+  pubkey of "zz" and an empty org; `select_witnesses` rejected the bare
+  list form `verify_dossier_json` accepts.
+- `conform` only worked from a checkout's root: `--reference <corpus>`.
+- `from witness_log import *` exported `open`, shadowing the builtin.
+
+### Added
+
+- `witness_log.Witnesser`: background witnessing for a journal.
+  `request()` never blocks or raises; retries with exponential backoff,
+  honours `Retry-After`, follows 409 resyncs, pins the head it submits
+  while the agent keeps appending; `status()` with a structured
+  `last_error`; `flush(timeout)` and `await aflush(timeout)`; state shared
+  with the CLI. `witness_log.submit_round` is one synchronous round.
+- Sized heads: `root_hex_at`, `add_checkpoint_body_at`,
+  `dossier_from_responses_at` (Python); `root_at`,
+  `consistency_proof_between`, `c2sp_checkpoint_at`, `checkpoint_at` (Rust).
+- The MCP server ships in the package: `pip install "witness-log[mcp]"`,
+  then `witness-log-mcp` (or `python -m witness_log.mcp_server`).
+  `integrations/mcp/witness_mcp_server.py` remains as a launcher. New
+  tool `record_result`: intent before acting, result after.
+- Framework adapters as extras: `witness-log[langchain]`
+  (`WitnessLogCallbackHandler`), `witness-log[openai-agents]`
+  (`WitnessLogHooks`), `witness-log[crewai]` (`witness_crewai`).
+- `@witness-log/client` (`clients/typescript`): typed verdicts from the
+  CLI and `WitnessLogMCP` (`step`, `forget`, `exportDossier`, `verify`,
+  `submit`) over the MCP server. Published by `npm.yml` on `ts-v*` tags.
+- Benchmarks with a budget (`bench.yml`, `benches/`), proptest properties
+  for inclusion and consistency proofs, `docs/SECURITY-AUDIT-BRIEF.md`.
+
+### Docs
+
+- Framework guides point at the adapters; the OpenAI Agents SDK snippet
+  raised `KeyError` when one tool was called twice in parallel, and the
+  LangChain snippet recorded every result under the name "tool".
+- MCP pages: nine (now ten) tools, not seven; state lives in
+  `<session>/journal.jsonl`; leaves are not individually signed.
+- Quickstart: Python uses `Witnesser`, shows the intent payload as it
+  really is, and explains `min_witnesses` against a two-witness setup;
+  Quickstart: CLI shows how to build `trusted.json` from `witness init`
+  output and says that `submit` contacts every witness in the directory.
+
 ## 0.3.5 — 2026-10-11
 
 ### Changed
