@@ -1,0 +1,207 @@
+/**
+ * The TypeScript verifier against the conformance corpus (/corpus) and the
+ * repository's sample dossier. Pure Node: no binary, no network.
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  bytesToHex,
+  hexToBytes,
+  leafCanonicalBytes,
+  leafHash,
+  merkleRoot,
+  payloadHash,
+  verifyCheckpoint,
+  verifyDossier,
+  verifyInclusion,
+  verifyDisclosure,
+  ed25519Verify,
+  type Dossier,
+  type Leaf,
+  type WitnessDirectory,
+} from "../src/index.js";
+
+const here = dirname(fileURLToPath(import.meta.url)); // clients/typescript/dist/test
+const repo = resolve(here, "..", "..", "..", "..");
+const corpus = (name: string) => JSON.parse(readFileSync(join(repo, "corpus", name), "utf8"));
+
+describe("corpus vectors", { skip: existsSync(join(repo, "corpus")) ? false : "no corpus directory" }, () => {
+  it("01: leaf canonical bytes and leaf hashes", () => {
+    for (const v of corpus("01_leaf_encoding.json").vectors) {
+      const bytes = leafCanonicalBytes(v.leaf as Leaf);
+      assert.equal(bytesToHex(bytes), v.canonical_bytes_hex);
+      assert.equal(bytesToHex(leafHash(bytes)), v.leaf_hash_hex);
+    }
+  });
+
+  it("07/08/09: handoff, authorization and anchor leaves encode byte for byte", () => {
+    const h = corpus("07_handoff_attestation.json");
+    for (const v of [h.sent_leaf, h.received_leaf]) {
+      assert.equal(bytesToHex(leafCanonicalBytes(v.leaf)), v.canonical_bytes_hex);
+      assert.equal(bytesToHex(leafHash(leafCanonicalBytes(v.leaf))), v.leaf_hash_hex);
+    }
+    const a = corpus("08_authorization_event.json");
+    for (const k of Object.keys(a)) {
+      if (a[k] && typeof a[k] === "object" && "canonical_bytes_hex" in a[k] && "leaf" in a[k]) {
+        assert.equal(bytesToHex(leafCanonicalBytes(a[k].leaf)), a[k].canonical_bytes_hex, k);
+      }
+    }
+    const x = corpus("09_external_anchor.json");
+    assert.equal(bytesToHex(leafCanonicalBytes(x.anchor_leaf.leaf)), x.anchor_leaf.canonical_bytes_hex);
+    assert.equal(bytesToHex(leafHash(leafCanonicalBytes(x.anchor_leaf.leaf))), x.anchor_leaf.leaf_hash_hex);
+    if (x.swapped_proof_case?.leaf) {
+      assert.equal(bytesToHex(leafCanonicalBytes(x.swapped_proof_case.leaf)), x.swapped_proof_case.canonical_bytes_hex);
+    }
+  });
+
+  it("02: Merkle roots for sizes 1..8", () => {
+    const leaves = corpus("01_leaf_encoding.json").vectors.map((v: { leaf: Leaf }) => v.leaf as Leaf);
+    // fixed_leaf(i): same shape as vector 01's leaves; the corpus builds roots from fixed_leaf(0..n).
+    const fixed = (i: number): Leaf => ({
+      ...leaves[0],
+      index: i,
+      leaf_type: 1,
+      timestamp_ms: 1700000000000 + i * 1000,
+      payload_hash: ((i + 1) & 0xff).toString(16).padStart(2, "0").repeat(32),
+    });
+    const hashes = Array.from({ length: 8 }, (_, i) => leafHash(leafCanonicalBytes(fixed(i))));
+    const vectors = corpus("02_merkle_roots.json").vectors as Array<{ root_hex: string; tree_size: number }>;
+    assert.equal(bytesToHex(hashes[0]), corpus("01_leaf_encoding.json").vectors[0].leaf_hash_hex);
+    for (const v of vectors) {
+      assert.equal(bytesToHex(merkleRoot(hashes.slice(0, v.tree_size))), v.root_hex, `size ${v.tree_size}`);
+    }
+  });
+
+  it("03: inclusion proofs", () => {
+    const d = corpus("03_inclusion_proofs.json");
+    for (const v of d.vectors) {
+      const ok = verifyInclusion(
+        hexToBytes(v.leaf_hash_hex),
+        v.leaf_index,
+        v.tree_size,
+        v.proof_hex.map(hexToBytes),
+        hexToBytes(d.root_hex),
+      );
+      assert.equal(ok, true, `leaf ${v.leaf_index}`);
+      const wrong = verifyInclusion(hexToBytes(v.leaf_hash_hex), v.leaf_index, v.tree_size, v.proof_hex.map(hexToBytes), hexToBytes("00".repeat(32)));
+      assert.equal(wrong, false);
+    }
+  });
+
+  it("04: signed tree head verifies, and not after a change", () => {
+    const sth = corpus("04_signed_tree_head.json").sth;
+    assert.equal(verifyCheckpoint(sth), true);
+    assert.equal(verifyCheckpoint({ ...sth, tree_size: sth.tree_size + 1 }), false);
+    assert.equal(verifyCheckpoint({ ...sth, sig_alg: "ml-dsa-65" }), false);
+  });
+
+  it("05: a redaction marker leaves earlier leaf hashes unchanged", () => {
+    const d = corpus("05_redaction_continuity.json");
+    const before = (d.leaves_before_redaction as Leaf[]).map((l) => leafHash(leafCanonicalBytes(l)));
+    assert.equal(bytesToHex(merkleRoot(before)), d.root_before_hex);
+    const after = [...before, leafHash(leafCanonicalBytes(d.redaction_marker_leaf as Leaf))];
+    assert.equal(bytesToHex(merkleRoot(after)), d.root_after_hex);
+  });
+
+  it("10: C2SP cosignature message verifies under the witness key", () => {
+    const d = corpus("10_c2sp_checkpoint.json");
+    const vkey = String(d.cosignature.witness_vkey);
+    const [, , b64] = vkey.split("+", 3);
+    const keyBytes = Buffer.from(b64, "base64"); // sig type byte || 32-byte key
+    const witnessHex = keyBytes.subarray(1).toString("hex");
+    const lines = String(d.cosignature.cosigned_note).split("\n");
+    const sigLine = lines.find((l) => l.startsWith("— corpus-witness.example/w1 "))!;
+    const payload = Buffer.from(sigLine.split(" ")[2], "base64"); // key id (4) || timestamp (8) || sig (64)
+    const sig = payload.subarray(12).toString("hex");
+    assert.equal(ed25519Verify(witnessHex, new TextEncoder().encode(d.cosignature.signed_message), sig), true);
+  });
+
+  it("11: payload hash with an explicit salt", () => {
+    for (const c of corpus("11_payload_hash.json").cases) {
+      const h = payloadHash(hexToBytes(c.payload_hex), hexToBytes(c.salt_hex), c.leaf_index);
+      assert.equal(bytesToHex(h), c.payload_hash, c.name);
+      const leaf = { index: c.leaf_index, payload_hash: c.payload_hash } as Leaf;
+      assert.equal(verifyDisclosure(leaf, hexToBytes(c.payload_hex), hexToBytes(c.salt_hex)), true);
+    }
+  });
+});
+
+describe("verifyDossier on examples/sample-dossier.json", () => {
+  const dossierPath = join(repo, "examples", "sample-dossier.json");
+  const dirPath = join(repo, "examples", "trusted-directory.json");
+  const have = existsSync(dossierPath) && existsSync(dirPath);
+  const load = () => ({
+    dossier: JSON.parse(readFileSync(dossierPath, "utf8")) as Dossier,
+    directory: JSON.parse(readFileSync(dirPath, "utf8")) as WitnessDirectory,
+  });
+
+  it("is UNANCHORED with no trusted inputs", { skip: !have }, () => {
+    const { dossier } = load();
+    const r = verifyDossier(dossier);
+    assert.equal(r.verdict, "UNANCHORED");
+    assert.equal(r.exitCode, 20);
+    assert.equal(r.internallyConsistent, true);
+    assert.equal(r.report.bindings_asserted, true);
+    assert.equal(r.report.leaf_count, dossier.leaves.length);
+  });
+
+  it("reaches WITNESSED with the trusted directory and pinned identity", { skip: !have }, () => {
+    const { dossier, directory } = load();
+    const r = verifyDossier(dossier, { directory, identity: dossier.identity_pubkey, minWitnesses: 2 });
+    assert.equal(r.verdict, "WITNESSED", JSON.stringify(r.report.quorum));
+    assert.equal(r.ok, true);
+    assert.equal(r.identityPinned, true);
+    assert.ok(r.report.quorum);
+    assert.ok(r.report.quorum.distinct_independent_operators >= 2);
+    assert.equal(r.report.quorum.count_gate, "count >= 2");
+  });
+
+  it("is CONSISTENT-UNWITNESSED when the gate is not met", { skip: !have }, () => {
+    const { dossier, directory } = load();
+    const r = verifyDossier(dossier, { directory, minWitnesses: 50 });
+    assert.equal(r.verdict, "CONSISTENT-UNWITNESSED");
+    assert.equal(r.exitCode, 10);
+    const none = verifyDossier(dossier, { directory: { witnesses: [] } });
+    assert.equal(none.verdict, "CONSISTENT-UNWITNESSED");
+  });
+
+  it("is DIVERGED after tampering, with a reason", { skip: !have }, () => {
+    const { dossier, directory } = load();
+    const t = structuredClone(dossier);
+    t.leaves[1].payload_hash = "00".repeat(32);
+    const r = verifyDossier(t, { directory });
+    assert.equal(r.verdict, "DIVERGED");
+    assert.equal(r.exitCode, 30);
+    assert.ok(r.failures.some((f) => /signed root/.test(f)));
+
+    const wrongIdentity = verifyDossier(dossier, { identity: "ab".repeat(32) });
+    assert.equal(wrongIdentity.verdict, "DIVERGED");
+    assert.ok(wrongIdentity.failures.some((f) => /expected/.test(f)));
+
+    const reordered = structuredClone(dossier);
+    [reordered.leaves[0], reordered.leaves[1]] = [reordered.leaves[1], reordered.leaves[0]];
+    assert.equal(verifyDossier(reordered).verdict, "DIVERGED");
+
+    const noBinding = structuredClone(dossier);
+    noBinding.key_bindings = [{ ...noBinding.key_bindings![0], session_pubkey: "cd".repeat(32) }];
+    assert.equal(verifyDossier(noBinding).verdict, "DIVERGED");
+
+    const forgedReceipt = structuredClone(dossier);
+    forgedReceipt.witness_receipts![0].signature = "00".repeat(64);
+    const fr = verifyDossier(forgedReceipt, { directory, minWitnesses: 2 });
+    assert.equal(fr.report.quorum?.valid_receipts, dossier.witness_receipts!.length - 1);
+  });
+
+  it("rejects bad options rather than guessing", () => {
+    const d = { identity_pubkey: "", leaves: [], checkpoint: {} } as unknown as Dossier;
+    assert.throws(() => verifyDossier(d, { identity: "zz" }), TypeError);
+    assert.throws(() => verifyDossier(d, { threshold: 2 }), RangeError);
+    assert.throws(() => verifyDossier(d, { minWitnesses: 0 }), RangeError);
+    assert.equal(verifyDossier(d).verdict, "DIVERGED");
+    assert.equal(verifyDossier("{}").verdict, "DIVERGED");
+  });
+});

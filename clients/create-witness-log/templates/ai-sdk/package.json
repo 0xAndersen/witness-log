@@ -1,0 +1,21 @@
+{
+  "name": "witness-log-ai-sdk-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Vercel AI SDK agent whose tool calls are recorded in a witness-log: append, export a dossier, verify it offline.",
+  "scripts": {
+    "start": "node src/agent.mjs",
+    "verify": "node src/verify.mjs dossier.json",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@witness-log/ai-sdk": "^0.1.0",
+    "@witness-log/node": "^0.1.0",
+    "ai": "^5.0.0",
+    "zod": "^4.1.8"
+  }
+}

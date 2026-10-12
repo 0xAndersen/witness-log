@@ -1,0 +1,40 @@
+{
+  "name": "create-witness-log",
+  "version": "0.1.0",
+  "description": "npm create witness-log: a minimal Node.js project that appends to a witness-log, exports a dossier and verifies it offline. Templates: plain, ai-sdk (Vercel AI SDK).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "create-witness-log": "./bin/create-witness-log.js"
+  },
+  "files": [
+    "bin/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xAndersen/witness-log.git",
+    "directory": "clients/create-witness-log"
+  },
+  "homepage": "https://github.com/0xAndersen/witness-log/tree/main/clients/create-witness-log",
+  "keywords": [
+    "create",
+    "scaffold",
+    "audit-log",
+    "ai-agents",
+    "witness-log"
+  ],
+  "scripts": {
+    "build": "node --check bin/create-witness-log.js",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@witness-log/ai-sdk": "^0.1.0",
+    "@witness-log/node": "^0.1.0"
+  }
+}

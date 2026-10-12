@@ -1,0 +1,239 @@
+name: npm (@witness-log/node, @witness-log/ai-sdk, create-witness-log)
+
+# Builds the napi-rs addon for five platforms, runs the JavaScript test
+# suites against it, and publishes to npm with trusted publishing (OIDC, no
+# token in the repository) and provenance:
+#   node-v<version>                 @witness-log/node and its five platform packages
+#   ai-sdk-v<version>               @witness-log/ai-sdk
+#   create-witness-log-v<version>   create-witness-log
+#
+# Publishing fails until each package's trusted publisher is configured on
+# npmjs.com (Package settings -> Trusted publishing -> GitHub Actions:
+# repository 0xAndersen/witness-log, workflow file npm-node.yml, environment
+# npm). That is seven packages for a node-v tag: @witness-log/node,
+# @witness-log/node-linux-x64-gnu, -linux-arm64-gnu, -darwin-x64,
+# -darwin-arm64, -win32-x64-msvc, plus @witness-log/ai-sdk and
+# create-witness-log under their own tags. For a package that does not exist
+# yet, npm requires one manual first publish before trusted publishing can
+# be configured; `npm run artifacts` after downloading this workflow's
+# `bindings-*` artefacts prepares the platform packages for that.
+
+on:
+  push:
+    branches: [main]
+    tags: ["node-v*", "ai-sdk-v*", "create-witness-log-v*"]
+    paths:
+      - "clients/**"
+      - "crates/witness-log-core/**"
+      - "crates/witness-log-network/**"
+      - ".github/workflows/npm-node.yml"
+  pull_request:
+    paths:
+      - "clients/**"
+      - "crates/witness-log-core/**"
+      - "crates/witness-log-network/**"
+      - ".github/workflows/npm-node.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  npm_config_fund: "false"
+  npm_config_audit: "false"
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/node
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: npm ci (workspace)
+        working-directory: clients
+        run: npm ci
+      - name: Build @witness-log/client (pure-TypeScript verifier)
+        working-directory: clients/typescript
+        run: npm run build
+      - name: Build the addon
+        working-directory: clients/node
+        run: npx napi build --platform --release --output-dir native --esm --target ${{ matrix.target }}
+      - name: Lint the addon crate
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: clients/node
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+      - name: Build and test @witness-log/node
+        if: matrix.target != 'x86_64-apple-darwin'   # cross-built on an arm64 runner; cannot load there
+        working-directory: clients/node
+        run: |
+          npm run build:ts
+          npm test
+      - name: Build and test @witness-log/ai-sdk
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: clients/ai-sdk
+        run: |
+          npm run build
+          npm test
+      - name: Test create-witness-log (generates and runs both templates)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: clients/create-witness-log
+        run: npm test
+      - name: Smoke test the built addon
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: clients/node
+        shell: bash
+        run: |
+          node --input-type=module -e '
+            import { openLog, verifyDossier, verifyDossierNative, tempJournalPath } from "@witness-log/node";
+            const log = openLog(tempJournalPath());
+            log.appendIntent("ci"); log.appendResult({ ok: true });
+            const d = log.exportDossier();
+            const a = verifyDossier(d).verdict, b = verifyDossierNative(d).verdict;
+            console.log(a, b);
+            if (a !== "UNANCHORED" || b !== "UNANCHORED") process.exit(1);
+            log.close();'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: clients/node/native/*.node
+          if-no-files-found: error
+
+  publish-node:
+    name: Publish @witness-log/node
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/node-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write   # OIDC token for npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: npm >= 11.5.1 (trusted publishing)
+        run: npm install -g npm@^11.5.1
+      - name: Tag must match package.json version
+        working-directory: clients/node
+        run: |
+          want="node-v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($want)"
+            exit 1
+          fi
+      - name: npm ci (workspace) and build the TypeScript
+        working-directory: clients
+        run: |
+          npm ci
+          npm run build -w typescript
+      - uses: actions/download-artifact@v4
+        with:
+          path: clients/node/artifacts
+      - name: Place the binaries into the platform packages
+        working-directory: clients/node
+        run: |
+          npx napi artifacts --output-dir artifacts --npm-dir npm
+          ls -l npm/*/
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Regenerate the loader (native/index.js, index.d.ts) and build the TypeScript layer
+        working-directory: clients/node
+        run: |
+          npx napi build --platform --release --output-dir native --esm
+          npm run build:ts
+      - name: Publish the platform packages
+        working-directory: clients/node
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: npx napi prepublish --no-gh-release --npm-dir npm
+      - name: Publish @witness-log/node
+        working-directory: clients/node
+        run: npm publish --provenance --access public
+
+  publish-ai-sdk:
+    name: Publish @witness-log/ai-sdk
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/ai-sdk-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@^11.5.1
+      - name: Tag must match package.json version
+        working-directory: clients/ai-sdk
+        run: |
+          want="ai-sdk-v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($want)"
+            exit 1
+          fi
+      - name: Build
+        working-directory: clients
+        run: |
+          npm ci
+          npm run build -w typescript
+          npm run build -w ai-sdk
+      - name: Publish
+        working-directory: clients/ai-sdk
+        run: npm publish --provenance --access public
+
+  publish-create:
+    name: Publish create-witness-log
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/create-witness-log-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@^11.5.1
+      - name: Tag must match package.json version
+        working-directory: clients/create-witness-log
+        run: |
+          want="create-witness-log-v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($want)"
+            exit 1
+          fi
+      - name: Publish
+        working-directory: clients/create-witness-log
+        run: npm publish --provenance --access public

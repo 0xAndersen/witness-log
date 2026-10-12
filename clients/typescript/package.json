@@ -1,7 +1,7 @@
 {
   "name": "@witness-log/client",
-  "version": "0.1.0",
-  "description": "TypeScript client for witness-log: typed verdicts from the witness-log CLI, and the witness-log MCP server as step()/forget()/exportDossier()/verify(). No cryptography is reimplemented in JavaScript.",
+  "version": "0.2.0",
+  "description": "TypeScript client for witness-log: an offline dossier verifier in pure TypeScript (node:crypto), typed verdicts from the witness-log CLI, and the witness-log MCP server as step()/forget()/exportDossier()/verify().",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -32,7 +32,9 @@
     "merkle",
     "ai-agents",
     "mcp",
-    "c2sp"
+    "c2sp",
+    "ed25519",
+    "verifier"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

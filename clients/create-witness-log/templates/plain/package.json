@@ -1,0 +1,18 @@
+{
+  "name": "witness-log-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An agent whose steps are recorded in a witness-log: append, export a dossier, verify it offline.",
+  "scripts": {
+    "start": "node src/agent.mjs",
+    "verify": "node src/verify.mjs dossier.json",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@witness-log/node": "^0.1.0"
+  }
+}

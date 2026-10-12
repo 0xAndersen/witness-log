@@ -16,12 +16,16 @@ on:
     tags: ["ts-v*"]
     paths:
       - "clients/typescript/**"
+      - "clients/package.json"
+      - "clients/package-lock.json"
       - "crates/**"
       - "integrations/mcp/**"
       - ".github/workflows/npm.yml"
   pull_request:
     paths:
       - "clients/typescript/**"
+      - "clients/package.json"
+      - "clients/package-lock.json"
       - "crates/**"
       - "integrations/mcp/**"
       - ".github/workflows/npm.yml"
@@ -61,7 +65,7 @@ jobs:
           WITNESS_LOG_BIN: ${{ github.workspace }}/target/release/witness-log
           WITNESS_LOG_PYTHON: python
         run: |
-          npm ci
+          npm ci          # the lockfile is the clients/ workspace's
           npm test
 
   publish:
