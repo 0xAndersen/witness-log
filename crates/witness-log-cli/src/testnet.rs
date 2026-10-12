@@ -133,7 +133,39 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
+/// On Windows every inheritable handle in this process is copied into
+/// each child, not only the three stdio handles the child is given.
+/// When `testnet up` runs under a parent that reads its stdout through a
+/// pipe (a test, a script), that pipe handle is inheritable, the
+/// long-lived `witness serve` children inherit it, and the parent never
+/// sees EOF (issue #12). Clearing the inherit flag on this process's own
+/// stdio before spawning keeps the pipe with this process alone.
+#[cfg(windows)]
+fn detach_inherited_stdio() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(n_std_handle: u32) -> isize;
+        fn SetHandleInformation(h: isize, mask: u32, flags: u32) -> i32;
+    }
+    const HANDLE_FLAG_INHERIT: u32 = 0x1;
+    for n in [-10i32, -11, -12] {
+        // STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+        // SAFETY: both calls take a handle value and flags; an invalid or
+        // closed handle makes SetHandleInformation fail, which is ignored.
+        unsafe {
+            let h = GetStdHandle(n as u32);
+            if h != 0 && h != -1 {
+                let _ = SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn detach_inherited_stdio() {}
+
 fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
+    detach_inherited_stdio();
     let n: usize = match crate::flag_value(args, "--witnesses").map(|v| v.parse()) {
         None => 3,
         Some(Ok(n)) if (1..=64).contains(&n) => n,

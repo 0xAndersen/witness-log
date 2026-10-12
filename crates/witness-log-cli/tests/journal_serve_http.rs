@@ -109,10 +109,6 @@ impl Drop for Front {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
-)]
 fn append_forget_info_dossier_over_http() {
     let root = tmpdir("basic");
     let journal = root.join("agent.jsonl");
@@ -229,10 +225,6 @@ fn append_forget_info_dossier_over_http() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
-)]
 fn submit_over_http_reaches_witnessed() {
     let root = tmpdir("submit");
     let tn = root.join("tn").display().to_string();
@@ -342,10 +334,6 @@ fn submit_over_http_reaches_witnessed() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
-)]
 fn refuses_a_non_loopback_bind_without_allow_remote() {
     let root = tmpdir("bind");
     let journal = root.join("a.jsonl");
