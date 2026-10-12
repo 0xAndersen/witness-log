@@ -100,7 +100,7 @@ fn directory(path: &str) -> witness_log_network::WitnessDirectory {
 #[test]
 #[cfg_attr(
     windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
 )]
 fn install_to_witnessed_with_the_cli_alone() {
     let root = tmpdir("flow");
@@ -460,7 +460,7 @@ fn install_to_witnessed_with_the_cli_alone() {
 #[test]
 #[cfg_attr(
     windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
 )]
 fn submit_fails_closed_by_default() {
     let root = tmpdir("closed");
@@ -669,7 +669,7 @@ fn witness_init_json_is_one_object() {
 #[test]
 #[cfg_attr(
     windows,
-    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (#12)"
 )]
 fn testnet_up_refuses_a_second_start() {
     let root = tmpdir("twice");
