@@ -41,14 +41,26 @@ jobs:
       - name: Build (debug)
         run: cargo build --workspace --verbose
       - name: Test (debug)
-        run: cargo test --workspace --verbose
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --verbose 2>&1 | tee test-debug.log || {
+            # Surface the failing tests as annotations: job logs are not
+            # always reachable, annotations are.
+            grep -E "^test .* FAILED$|panicked at|^---- .* stdout ----$" test-debug.log | head -20 | sed 's/^/::error title=test failure (debug)::/'
+            exit 1; }
       - name: Test (release)
         # debug_assert!-gated invariants (e.g. largest_power_of_two_lt_u64's
         # precondition check) are never exercised under --release, which is
         # the profile users actually ship. A bug that only a debug_assert
         # would catch could otherwise reach production undetected by CI.
         # See the pre-launch review, finding 24.
-        run: cargo test --workspace --release --verbose
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --release --verbose 2>&1 | tee test-release.log || {
+            grep -E "^test .* FAILED$|panicked at|^---- .* stdout ----$" test-release.log | head -20 | sed 's/^/::error title=test failure (release)::/'
+            exit 1; }
 
   msrv:
     name: Minimum supported Rust version
