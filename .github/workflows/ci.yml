@@ -153,7 +153,16 @@ jobs:
         # snapshot round-trip, file permissions) rather than one inline
         # smoke-test string -- see the pre-launch review, finding 19.
         working-directory: crates/witness-log-python
-        run: pip install jsonschema && pytest tests/ -v
+        shell: bash
+        run: |
+          pip install jsonschema
+          set -o pipefail
+          if ! pytest tests/ -v -ra 2>&1 | tee pytest.log; then
+            # Job logs are not always reachable; name the failing tests.
+            grep -E "^(FAILED|ERROR) " pytest.log | head -20 | while IFS= read -r line; do echo "::error::pytest (${{ matrix.python }}): ${line}"; done
+            grep -E "^E   " pytest.log | head -10 | while IFS= read -r line; do echo "::error::pytest (${{ matrix.python }}): ${line}"; done
+            exit 1
+          fi
       - name: MCP server end to end (official client over stdio)
         # The MCP SDK requires Python >= 3.10; the bindings themselves
         # support 3.9, which the other steps cover.
