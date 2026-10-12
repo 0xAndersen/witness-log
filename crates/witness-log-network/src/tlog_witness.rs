@@ -780,6 +780,7 @@ pub fn cosignature_to_receipt(
             witnessed_at_ms: cosignature.timestamp.saturating_mul(1000),
             signature: hex::encode(&cosignature.signature),
             c2sp_origin: Some(checkpoint.origin.clone()),
+            witness_name: None,
         },
         native_verifiable: true,
     })

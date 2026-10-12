@@ -295,6 +295,16 @@ pub struct WitnessReceipt {
     /// dossiers are byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub c2sp_origin: Option<String>,
+    /// The directory `name` of the witness that issued this receipt, as
+    /// the submitting client knew it (`witness.example/w1`). Display
+    /// only: a reader of the dossier sees who cosigned without joining
+    /// against a directory by key. Never part of any signature and never
+    /// consulted by `verify` or `evaluate_quorum`, which match receipts to
+    /// a trusted directory by `witness_pubkey` alone. Absent (and not
+    /// serialized) when unknown, so dossiers from before 0.3.7 and
+    /// receipts without a name are byte-identical to what they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_name: Option<String>,
 }
 
 impl WitnessReceipt {
@@ -315,7 +325,15 @@ impl WitnessReceipt {
             witnessed_at_ms,
             signature: hex::encode(signature.to_bytes()),
             c2sp_origin: None,
+            witness_name: None,
         }
+    }
+
+    /// Attach the witness's directory name (display only; see
+    /// [`witness_name`](Self::witness_name)).
+    pub fn with_witness_name(mut self, name: impl Into<String>) -> Self {
+        self.witness_name = Some(name.into());
+        self
     }
 
     pub fn verify(&self, against: &SignedTreeHead) -> Result<(), WitnessError> {
@@ -1104,6 +1122,33 @@ mod tests {
         let witness_key = SigningKey::generate(&mut OsRng);
         let receipt = WitnessReceipt::sign(&witness_key, &sth, 1050);
         assert!(receipt.verify(&sth).is_ok());
+    }
+
+    /// `witness_name` is display metadata: it serializes only when set,
+    /// a receipt without it (every dossier before 0.3.7) still parses,
+    /// and no value of it changes whether the receipt verifies.
+    #[test]
+    fn witness_name_is_optional_additive_and_not_signed() {
+        let sth = make_sth();
+        let witness_key = SigningKey::generate(&mut OsRng);
+        let bare = WitnessReceipt::sign(&witness_key, &sth, 1050);
+        let bare_json = serde_json::to_string(&bare).unwrap();
+        assert!(!bare_json.contains("witness_name"));
+        let old: WitnessReceipt = serde_json::from_str(&bare_json).unwrap();
+        assert_eq!(old.witness_name, None);
+        assert!(old.verify(&sth).is_ok());
+
+        let named = bare.clone().with_witness_name("w.example/1");
+        let named_json = serde_json::to_string(&named).unwrap();
+        assert!(named_json.contains("\"witness_name\":\"w.example/1\""));
+        let back: WitnessReceipt = serde_json::from_str(&named_json).unwrap();
+        assert!(back.verify(&sth).is_ok());
+        let mut relabelled = back;
+        relabelled.witness_name = Some("someone-else".into());
+        assert!(
+            relabelled.verify(&sth).is_ok(),
+            "the name is not part of the signed message"
+        );
     }
 
     #[test]
