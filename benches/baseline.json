@@ -1,26 +1,26 @@
 {
   "budget": 0.2,
-  "runner": "measured on a 2-vCPU Intel Xeon @ 2.80GHz Linux VM (development sandbox); regenerate on ubuntu-latest with the bench workflow's update-baseline run",
+  "runner": "GitHub-hosted ubuntu-latest",
   "metrics": {
     "rust_append_inmem": {
-      "ns": 4491.6,
-      "normalized": 0.847
+      "ns": 1768.7,
+      "normalized": 2.5482
     },
     "rust_append_journaled_nosync": {
-      "ns": 7771.1,
-      "normalized": 1.4488
+      "ns": 7455.5,
+      "normalized": 10.7487
     },
     "rust_verify_10k_leaves": {
-      "ns": 23291027.0,
-      "normalized": 4354.2705
+      "ns": 7422385.0,
+      "normalized": 10798.0904
     },
     "python_step_inmem": {
-      "ns": 19871.3,
-      "normalized": 5.6249
+      "ns": 15126.3,
+      "normalized": 3.9373
     },
     "python_step_journaled_nosync": {
-      "ns": 26652.5,
-      "normalized": 7.3348
+      "ns": 28090.8,
+      "normalized": 7.4052
     }
   }
 }
