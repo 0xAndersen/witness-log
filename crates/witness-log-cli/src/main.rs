@@ -370,13 +370,35 @@ fn main() -> ExitCode {
                 ExitCode::from(exit::USAGE)
             }
         },
-        Some("conform") => match args.get(2) {
-            Some(dir) => run_conform(dir),
-            None => {
-                eprintln!("usage: witness-log conform <candidate-corpus-dir>");
-                ExitCode::from(exit::USAGE)
+        Some("conform") => {
+            // `--reference <dir>`: the corpus to compare against. Defaults
+            // to ./corpus, which only exists in a checkout; a `cargo
+            // install` user points this at a downloaded corpus/.
+            let rest = &args[2..];
+            let reference = flag_value(rest, "--reference");
+            let positional: Vec<&String> = rest
+                .iter()
+                .enumerate()
+                .filter(|(i, a)| {
+                    !a.starts_with("--")
+                        && i.checked_sub(1)
+                            .and_then(|p| rest.get(p))
+                            .map(String::as_str)
+                            != Some("--reference")
+                })
+                .map(|(_, a)| a)
+                .collect();
+            let bad_flag = rest
+                .iter()
+                .find(|a| a.starts_with("--") && a.as_str() != "--reference");
+            match (positional.as_slice(), bad_flag) {
+                ([dir], None) => run_conform(dir, reference.as_deref().unwrap_or("corpus")),
+                _ => {
+                    eprintln!("usage: witness-log conform <candidate-corpus-dir> [--reference <corpus-dir>]");
+                    ExitCode::from(exit::USAGE)
+                }
             }
-        },
+        }
         Some("--help") | Some("-h") | Some("help") => {
             print!("{HELP}");
             ExitCode::SUCCESS
@@ -409,8 +431,8 @@ fn main() -> ExitCode {
 /// parsed JSON values, so formatting/key-order differences don't matter —
 /// only actual values do, which is exactly the property a wire-format
 /// conformance check should have.
-fn run_conform(candidate_dir: &str) -> ExitCode {
-    let reference_dir = "corpus";
+fn run_conform(candidate_dir: &str, reference_dir: &str) -> ExitCode {
+    let reference_dir = reference_dir.trim_end_matches('/');
     let files = [
         "01_leaf_encoding.json",
         "02_merkle_roots.json",
@@ -435,7 +457,10 @@ fn run_conform(candidate_dir: &str) -> ExitCode {
         {
             Some(v) => v,
             None => {
-                eprintln!("✗ cannot read reference {ref_path} — run this from the repository root");
+                eprintln!(
+                    "✗ cannot read reference {ref_path} — run this from the repository root, \
+                     or pass --reference <path to the repository's corpus/ directory>"
+                );
                 return ExitCode::from(2);
             }
         };
@@ -517,7 +542,7 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0] [--json] [--explain] [--identity <hex>] [--directory <path>]
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--identity <hex>] [--directory <path>]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --threshold  receipt-count bar as a fraction of the directory (default 0.66)
@@ -526,6 +551,29 @@ const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshol
   Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage";
 
 /// 64 hex characters: a 32-byte key.
+/// Largest input file (dossier, directory, note, evidence) the CLI reads.
+/// A dossier of a million leaves is a few hundred MiB; anything larger is
+/// refused with a message instead of being read until memory runs out.
+pub(crate) const MAX_INPUT_BYTES: u64 = 512 * 1024 * 1024;
+
+/// `fs::read_to_string` with a size cap. 0.3.5 read inputs unbounded, so
+/// `witness-log verify /dev/zero` (or a FIFO) grew until the OOM killer
+/// ended it, with no message (found by the hostile-input evaluation).
+pub(crate) fn read_input(path: &str) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut out = String::new();
+    fs::File::open(path)?
+        .take(MAX_INPUT_BYTES + 1)
+        .read_to_string(&mut out)?;
+    if out.len() as u64 > MAX_INPUT_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("input is larger than {} MiB", MAX_INPUT_BYTES >> 20),
+        ));
+    }
+    Ok(out)
+}
+
 pub(crate) fn is_hex32(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -644,7 +692,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 }
 
 fn run_verify(opts: &Options) -> ExitCode {
-    let raw = match fs::read_to_string(&opts.path) {
+    let raw = match read_input(&opts.path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("could not read {}: {e}", opts.path);
@@ -663,7 +711,7 @@ fn run_verify(opts: &Options) -> ExitCode {
     // the dossier under test. See VerifyContext and finding 02.
     let trusted_directory: Option<WitnessDirectory> = match &opts.directory_path {
         Some(p) => {
-            let raw = match fs::read_to_string(p) {
+            let raw = match read_input(p) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("could not read trusted directory {p}: {e}");
@@ -671,7 +719,21 @@ fn run_verify(opts: &Options) -> ExitCode {
                 }
             };
             match parse_directory(&raw) {
-                Ok(d) => Some(d),
+                Ok(d) => {
+                    // An entry whose key is not a key can never match a
+                    // receipt; say so instead of silently scoring it as a
+                    // witness that did not cosign.
+                    for w in &d.witnesses {
+                        if !is_hex32(w.pubkey.trim()) {
+                            eprintln!(
+                                "warning: trusted directory entry {:?} has a malformed pubkey {:?}; \
+                                 it can never count toward the quorum",
+                                w.name, w.pubkey
+                            );
+                        }
+                    }
+                    Some(d)
+                }
                 Err(e) => {
                     eprintln!("could not parse trusted directory {p}: {e}");
                     return ExitCode::from(exit::USAGE);

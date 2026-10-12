@@ -414,8 +414,8 @@ impl Leaf {
                 }
             }
             if let Some(url) = &self.anchor_url {
-                if !(url.starts_with("https://") || url.starts_with("http://")) {
-                    return Err(LeafValidationError::MalformedField {
+                if !is_valid_anchor_url(url) {
+                    return Err(LeafValidationError::MalformedUrl {
                         field: "anchor_url",
                         value: url.clone(),
                     });
@@ -424,6 +424,22 @@ impl Leaf {
         }
         Ok(())
     }
+}
+
+/// The rule [`Leaf::validate`] applies to an ExternalAnchor's
+/// `anchor_url`: an `http://` or `https://` URL. Public so writers can
+/// refuse a bad URL *before* the leaf is committed: a committed leaf that
+/// fails this check makes every later dossier of that log `DIVERGED`, and
+/// journal replay refuses it, permanently.
+pub fn is_valid_anchor_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
+/// A 32-byte public key as 64 hex characters, either case. Writers
+/// lowercase counterparty keys before committing them, because `bind`
+/// compares the committed strings byte for byte.
+pub fn is_hex_pubkey(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn is_valid_hex64(s: &str) -> bool {
@@ -440,6 +456,8 @@ pub enum LeafValidationError {
     UnrecognizedType(u8),
     #[error("field `{field}` must be exactly 64 lowercase hex characters, got {value:?}")]
     MalformedField { field: &'static str, value: String },
+    #[error("field `{field}` must be an http:// or https:// URL, got {value:?}")]
+    MalformedUrl { field: &'static str, value: String },
     #[error("leaf_type 0x{leaf_type:02x} requires field `{field}` to be present")]
     MissingMandatoryField { leaf_type: u8, field: &'static str },
     #[error("anchor_proof_json does not hash to the committed anchor_proof_hash (committed {committed}, actual {actual}); the anchor proof was swapped after the leaf was committed")]
@@ -628,11 +646,15 @@ mod tests {
         l.anchor_url = Some("etherscan tx 0x1234".into());
         assert!(matches!(
             l.validate(0),
-            Err(LeafValidationError::MalformedField {
+            Err(LeafValidationError::MalformedUrl {
                 field: "anchor_url",
                 ..
             })
         ));
+        // ...and the message says what is wrong, rather than demanding 64
+        // hex characters of a URL (the 0.3.5 message did).
+        let msg = l.validate(0).unwrap_err().to_string();
+        assert!(msg.contains("http:// or https:// URL"), "{msg}");
     }
 
     fn matching_pair() -> (String, Leaf, String, Leaf) {

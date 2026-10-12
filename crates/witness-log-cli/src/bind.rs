@@ -21,7 +21,7 @@ use witness_log_network::Dossier;
 use crate::exit;
 
 fn load(path: &str) -> Result<Dossier, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let text = crate::read_input(path).map_err(|e| format!("{path}: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("{path}: not a dossier: {e}"))
 }
 

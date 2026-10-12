@@ -90,7 +90,7 @@ print(log.tree_size(), log.root_hex())    # 2 <64 hex chars>
 
 **What just happened.** The decorator appended **two leaves**:
 
-1. an **intent** leaf *before* the function ran: `{"tool":"transfer_funds","args":{"amount_usd":250}}` plus a timestamp;
+1. an **intent** leaf *before* the function ran, committing to `{"args":[250],"kwargs":{},"t":<unix time>,"tool":"transfer_funds"}` (positional and keyword arguments are kept apart, exactly as the call was made);
 2. a **result** leaf *after* it returned: the return value, or the exception (which is re-raised, so your error handling is unchanged).
 
 Two leaves, not one, is the point. An audit trail that only records
@@ -209,34 +209,41 @@ and you have erased everything.
 ## 5. Get witnessed: the step that turns a claim into evidence
 
 ```python
-import json, urllib.request
+import json
 
-directory = json.load(open("directory.json"))      # witnesses YOU trust, obtained out-of-band
-picks = json.loads(witness_log.select_witnesses(
-    json.dumps(directory), log.identity_pubkey_hex(), 6))
-
-responses = []
-for w in picks:
-    body = log.add_checkpoint_body(0)
-    req = urllib.request.Request(w["url"] + "/add-checkpoint", data=body.encode(), method="POST")
-    try:
-        with urllib.request.urlopen(req) as r:
-            responses.append((w["pubkey"], r.read().decode()))
-    except urllib.error.HTTPError as e:
-        if e.code == 409:                             # the witness has seen an older head of this log
-            body = log.add_checkpoint_body(int(e.read()))   # resend with a consistency proof from that size
-            with urllib.request.urlopen(urllib.request.Request(
-                    w["url"] + "/add-checkpoint", data=body.encode(), method="POST")) as r:
-                responses.append((w["pubkey"], r.read().decode()))
-
-dossier, accepted = log.dossier_from_responses(responses)
-report = json.loads(witness_log.verify_dossier_json(
-    dossier, 0.66, log.identity_pubkey_hex(), json.dumps(directory), min_witnesses=3))
-print(report["verdict"])                              # 'witnessed'
+w = witness_log.Witnesser(log, "directory.json", "agent.jsonl")   # witnesses YOU trust; journal path for state
+w.request()                       # call whenever you like: returns at once, never raises
+...                               # the agent keeps working; submission runs in a background thread
+if w.flush(timeout=30):           # bounded wait for the current head to be cosigned
+    dossier = w.dossier()
+    directory = open("directory.json").read()
+    report = json.loads(witness_log.verify_dossier_json(
+        dossier, 0.66, log.identity_pubkey_hex(), directory, min_witnesses=2))
+    print(report["verdict"])      # 'witnessed' with two witnesses from two organisations
+else:
+    print(w.status().last_error)  # {"kind": "no_cosignatures", "message": ..., "outcomes": [...]}
+w.close()
 ```
 
-Or let the CLI do all of it, including retries and `Retry-After`:
-`witness-log witness submit agent.jsonl --directory directory.json --out dossier.json`.
+`Witnesser` follows the `409` resync, honours `Retry-After` on `429`/`503`,
+backs off exponentially when witnesses are down, and keeps its state in
+`agent.jsonl.witnesses.json`, the same file and format as the CLI, so
+`witness-log witness submit agent.jsonl --directory directory.json --out
+dossier.json` can take turns with it. In asyncio code use `await
+w.aflush(timeout)`. `witness_log.submit_round(log, directory, state_path)`
+is one synchronous round, for scripts.
+
+Two rules it shares with the CLI: it pins the head it submits (the agent
+may keep appending; the dossier it returns covers exactly the cosigned
+prefix), and it refuses to submit a journal that does not extend a head
+witnesses already cosigned for this identity (`status().last_error["kind"]
+== "refused"`), because witnesses would keep both heads as proof that the
+identity equivocated.
+
+**Making `directory.json`.** `witness-log witness init` prints the
+witness's directory entry as JSON on stdout. A directory is those entries
+in a list: `jq -s '{witnesses: .}' w1.json w2.json > directory.json`, or a
+bare JSON array of them.
 
 **What a witness is.** A tiny HTTP service, ideally run by an organisation
 that is not you, speaking the public `c2sp.org/tlog-witness` protocol (the
@@ -250,8 +257,8 @@ keeps the two signed roots as publishable evidence of equivocation.
 **Why `409` is normal.** The first time a witness sees your log you send
 `add_checkpoint_body(0)` ("I have no prior head"). Later, the witness
 remembers your size, and if you guessed wrong it answers `409` with the size
-it expects. You resend with a proof from that size. The CLI and MCP server
-handle this loop for you.
+it expects. You resend with a proof from that size. `Witnesser`, the CLI
+and the MCP server handle this loop for you.
 
 **Why the directory is yours, not the dossier's.** The dossier carries a
 copy of the witness list for display, but the verifier scores receipts
@@ -264,10 +271,12 @@ public registry; you can edit it to exactly the operators you trust.
 by `operator_org`: two witnesses from one organisation are one voice.
 `select_witnesses` picks one witness per operator first, then fills to
 `want` round-robin, spread per agent so a thousand agents do not all hit
-the same six machines. `min_witnesses` is an absolute gate on receipt
-count, added because a percentage threshold alone becomes meaningless as a
-directory grows; use both. `WITNESSED` requires at least two distinct
-operators regardless of what you pass.
+the same six machines (`Witnesser` uses it with `max_witnesses=8`).
+`min_witnesses` is an absolute gate on receipt count, added because a
+percentage threshold alone becomes meaningless as a directory grows; use
+both, and set it to what your directory can deliver (with two local
+witnesses, `min_witnesses=3` can never pass). `WITNESSED` requires at
+least two distinct operators regardless of what you pass.
 
 ---
 

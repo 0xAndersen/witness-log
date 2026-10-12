@@ -110,6 +110,19 @@ impl<'a> AppendArgs<'a> {
     }
 }
 
+/// Identity keys are compared as committed strings by `bind`, and every
+/// identity this crate prints is lowercase hex. A caller that pasted an
+/// uppercase key used to commit it verbatim, and the handoff could then
+/// never bind. A 64-hex key is lowercased; anything else is kept as given
+/// (the in-memory API cannot fail; `JournaledLog` refuses non-keys).
+fn normalize_counterparty(k: &str) -> String {
+    if crate::leaf::is_hex_pubkey(k) {
+        k.to_ascii_lowercase()
+    } else {
+        k.to_string()
+    }
+}
+
 fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -348,7 +361,7 @@ impl WitnessLog {
             redacted_index: None,
             revoked_identity: None,
             handoff_direction: Some(direction),
-            counterparty_pubkey: Some(counterparty_identity_pubkey.to_string()),
+            counterparty_pubkey: Some(normalize_counterparty(counterparty_identity_pubkey)),
             handoff_state_hash: Some(state_hash),
             authorization_event_kind: None,
             authorization_scope_hash: None,
@@ -379,7 +392,7 @@ impl WitnessLog {
             redacted_index: None,
             revoked_identity: None,
             handoff_direction: None,
-            counterparty_pubkey: Some(counterparty_identity_pubkey.to_string()),
+            counterparty_pubkey: Some(normalize_counterparty(counterparty_identity_pubkey)),
             handoff_state_hash: None,
             authorization_event_kind: Some(kind),
             authorization_scope_hash: Some(scope_hash),
@@ -423,6 +436,24 @@ impl WitnessLog {
         })
     }
 
+    /// `append_external_anchor`, but refusing an `anchor_url` that
+    /// [`Leaf::validate`] would reject. Prefer this: an invalid anchor
+    /// leaf, once committed, makes every later dossier of this log
+    /// `DIVERGED`.
+    pub fn try_append_external_anchor(
+        &mut self,
+        anchor_url: &str,
+        anchor_proof_json: &str,
+    ) -> Result<u64, crate::leaf::LeafValidationError> {
+        if !crate::leaf::is_valid_anchor_url(anchor_url) {
+            return Err(crate::leaf::LeafValidationError::MalformedUrl {
+                field: "anchor_url",
+                value: anchor_url.to_string(),
+            });
+        }
+        Ok(self.append_external_anchor(anchor_url, anchor_proof_json))
+    }
+
     /// GDPR/CCPA right-to-be-forgotten. Appends a 0x03 Redaction leaf and
     /// deletes the salt for `target_index`, permanently, from this log's
     /// salt store. Tree continuity for every other leaf is untouched.
@@ -446,6 +477,38 @@ impl WitnessLog {
             anchor_proof_hash: None,
         });
         true
+    }
+
+    /// A session binding with a TTL (`resume_with_ttl`) stops covering
+    /// leaves once it expires: the verifier rejects any leaf whose
+    /// timestamp is past its binding's `not_after_ms`. Before 0.3.6 the
+    /// log kept writing under the expired session, so an honest
+    /// long-running agent's dossier turned `DIVERGED` the moment its TTL
+    /// passed (found by the hostile-input evaluation: `ttl_ms=0` did it on
+    /// the first append). Now the next append rotates to a fresh session
+    /// key, bound by the identity with the same TTL length, and the old
+    /// binding moves to `prior_bindings` so the leaves it covered still
+    /// verify.
+    fn rotate_session_if_expired(&mut self, leaf_timestamp_ms: u64) {
+        let Some(not_after) = self.binding.not_after_ms else {
+            return;
+        };
+        if leaf_timestamp_ms <= not_after {
+            return;
+        }
+        let ttl = not_after.saturating_sub(self.binding.timestamp_ms);
+        let session = SessionKeypair::generate();
+        let session_number = self.session_number.saturating_add(1);
+        let binding = self.identity.bind_session(
+            &session.verifying_key(),
+            session_number,
+            leaf_timestamp_ms,
+            Some(leaf_timestamp_ms.saturating_add(ttl)),
+        );
+        let old = std::mem::replace(&mut self.binding, binding);
+        self.prior_bindings.push(old);
+        self.session = session;
+        self.session_number = session_number;
     }
 
     fn append(&mut self, args: AppendArgs<'_>) -> u64 {
@@ -485,6 +548,7 @@ impl WitnessLog {
         let observed_now = now_ms();
         let previous_timestamp = self.leaves.last().map(|l| l.timestamp_ms).unwrap_or(0);
         let timestamp_ms = observed_now.max(previous_timestamp);
+        self.rotate_session_if_expired(timestamp_ms);
         let leaf = Leaf {
             index,
             leaf_type: args.leaf_type.tag(),
@@ -558,6 +622,52 @@ impl WitnessLog {
     /// deleted between these two points in time."
     pub fn consistency_proof(&self, earlier_size: u64) -> Option<Vec<crate::merkle::Hash>> {
         self.tree.consistency_proof(earlier_size, self.tree.size())
+    }
+
+    /// Consistency proof between two earlier heads of this log. Lets a
+    /// background submitter pin one head (`second`) while the agent keeps
+    /// appending.
+    pub fn consistency_proof_between(
+        &self,
+        first: u64,
+        second: u64,
+    ) -> Option<Vec<crate::merkle::Hash>> {
+        self.tree.consistency_proof(first, second)
+    }
+
+    /// Root of this log's first `tree_size` leaves, or `None` if it has
+    /// fewer. Used to check that the log still extends a head witnesses
+    /// cosigned, and to build a dossier for that head.
+    pub fn root_at(&self, tree_size: u64) -> Option<crate::merkle::Hash> {
+        self.tree.root_at(tree_size)
+    }
+
+    /// `c2sp_checkpoint` for an earlier head (`tree_size` leaves).
+    pub fn c2sp_checkpoint_at(
+        &self,
+        origin: &str,
+        tree_size: u64,
+    ) -> Option<crate::c2sp::Checkpoint> {
+        Some(crate::c2sp::Checkpoint {
+            origin: origin.to_string(),
+            tree_size,
+            root_hash: self.root_at(tree_size)?,
+            extensions: Vec::new(),
+        })
+    }
+
+    /// `checkpoint` for an earlier head (`tree_size` leaves), signed now.
+    pub fn checkpoint_at(
+        &self,
+        identity_signing_key: &SigningKey,
+        tree_size: u64,
+    ) -> Option<SignedTreeHead> {
+        Some(SignedTreeHead::sign(
+            identity_signing_key,
+            tree_size,
+            &self.root_at(tree_size)?,
+            now_ms(),
+        ))
     }
 
     /// A windowed evidence export: the full checkpoint, only the leaves

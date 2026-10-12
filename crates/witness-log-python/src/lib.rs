@@ -219,6 +219,28 @@ impl PyWitnessLog {
         dossier_from_responses(&lock(&self.inner), responses)
     }
 
+    /// `add_checkpoint_body` for the earlier head of `size` leaves.
+    #[pyo3(signature = (size, old_size=0))]
+    fn add_checkpoint_body_at(&self, size: u64, old_size: u64) -> PyResult<String> {
+        add_checkpoint_body_at(&lock(&self.inner), size, old_size)
+    }
+
+    /// `dossier_from_responses` for the earlier head of `size` leaves.
+    fn dossier_from_responses_at(
+        &self,
+        size: u64,
+        responses: Vec<(String, String)>,
+    ) -> PyResult<(String, usize)> {
+        dossier_from_responses_at(&lock(&self.inner), size, responses)
+    }
+
+    /// Root of the first `size` leaves, hex, or `None` if the log is
+    /// shorter. `root_hex_at(n) == r` is how a client checks the log
+    /// still extends a head `(n, r)` that witnesses cosigned.
+    fn root_hex_at(&self, size: u64) -> Option<String> {
+        lock(&self.inner).root_at(size).map(hex::encode)
+    }
+
     /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
     /// current tree. Verify offline with `witness_log.verify_inclusion`.
     fn inclusion_proof(&self, index: u64) -> Option<(u64, String, Vec<String>)> {
@@ -353,9 +375,20 @@ fn verify_dossier_json(
 /// The add-checkpoint request body for this log's current head, signed
 /// under its canonical origin, with a consistency proof from `old_size`.
 fn add_checkpoint_body(log: &CoreLog, old_size: u64) -> PyResult<String> {
+    add_checkpoint_body_at(log, log.tree_size(), old_size)
+}
+
+/// `add_checkpoint_body` for an earlier head of `size` leaves, so a
+/// background submitter can pin one head while the agent keeps appending.
+fn add_checkpoint_body_at(log: &CoreLog, size: u64, old_size: u64) -> PyResult<String> {
     let key = ed25519_dalek::SigningKey::from_bytes(&log.identity_bytes());
     let origin = witness_log_core::c2sp::canonical_origin(&key.verifying_key());
-    let size = log.tree_size();
+    let current = log.tree_size();
+    if size > current {
+        return Err(MalformedError::new_err(format!(
+            "size {size} exceeds this log's size {current}"
+        )));
+    }
     if old_size > size {
         return Err(MalformedError::new_err(format!(
             "old_size {old_size} exceeds this log's size {size}"
@@ -364,11 +397,12 @@ fn add_checkpoint_body(log: &CoreLog, old_size: u64) -> PyResult<String> {
     let proof = if old_size == 0 || old_size == size {
         vec![]
     } else {
-        log.consistency_proof(old_size)
+        log.consistency_proof_between(old_size, size)
             .ok_or_else(|| MalformedError::new_err("no consistency proof for that size"))?
     };
     let note = log
-        .c2sp_checkpoint(&origin)
+        .c2sp_checkpoint_at(&origin, size)
+        .ok_or_else(|| MalformedError::new_err("no head at that size"))?
         .sign(&key)
         .map_err(|e| MalformedError::new_err(e.to_string()))?;
     witness_log_network::tlog_witness::AddCheckpointRequest {
@@ -389,11 +423,27 @@ fn dossier_from_responses(
     log: &CoreLog,
     responses: Vec<(String, String)>,
 ) -> PyResult<(String, usize)> {
+    dossier_from_responses_at(log, log.tree_size(), responses)
+}
+
+/// `dossier_from_responses` for an earlier head of `size` leaves: the
+/// dossier holds exactly the first `size` leaves and a checkpoint over
+/// them, so cosignatures gathered for that head verify even if the agent
+/// has appended since.
+fn dossier_from_responses_at(
+    log: &CoreLog,
+    size: u64,
+    responses: Vec<(String, String)>,
+) -> PyResult<(String, usize)> {
     use witness_log_core::c2sp::{Cosignature, NoteSignature, VerifierKey};
     let key = ed25519_dalek::SigningKey::from_bytes(&log.identity_bytes());
     let origin = witness_log_core::c2sp::canonical_origin(&key.verifying_key());
-    let cp = log.c2sp_checkpoint(&origin);
-    let native = log.checkpoint(&key);
+    let cp = log
+        .c2sp_checkpoint_at(&origin, size)
+        .ok_or_else(|| MalformedError::new_err(format!("no head at size {size}")))?;
+    let native = log
+        .checkpoint_at(&key, size)
+        .ok_or_else(|| MalformedError::new_err(format!("no head at size {size}")))?;
     let mut receipts = Vec::new();
     for (pk_hex, body) in responses {
         let Some(wvk) = hex::decode(pk_hex.trim())
@@ -420,7 +470,11 @@ fn dossier_from_responses(
         }
     }
     let n = receipts.len();
-    let dossier = witness_log_network::Dossier::from_log(log, native).with_receipts(receipts);
+    let mut dossier = witness_log_network::Dossier::from_log(log, native).with_receipts(receipts);
+    // `size <= tree_size`, checked by `checkpoint_at` above.
+    dossier
+        .leaves
+        .truncate(usize::try_from(size).unwrap_or(usize::MAX));
     Ok((
         serde_json::to_string_pretty(&dossier).map_err(malformed_err)?,
         n,
@@ -808,6 +862,27 @@ impl PyJournaledLog {
         dossier_from_responses(self.j()?.log(), responses)
     }
 
+    /// `add_checkpoint_body` for the earlier head of `size` leaves.
+    #[pyo3(signature = (size, old_size=0))]
+    fn add_checkpoint_body_at(&self, size: u64, old_size: u64) -> PyResult<String> {
+        add_checkpoint_body_at(self.j()?.log(), size, old_size)
+    }
+
+    /// `dossier_from_responses` for the earlier head of `size` leaves.
+    fn dossier_from_responses_at(
+        &self,
+        size: u64,
+        responses: Vec<(String, String)>,
+    ) -> PyResult<(String, usize)> {
+        dossier_from_responses_at(self.j()?.log(), size, responses)
+    }
+
+    /// Root of the first `size` leaves, hex, or `None` if the log is
+    /// shorter.
+    fn root_hex_at(&self, size: u64) -> PyResult<Option<String>> {
+        Ok(self.j()?.log().root_at(size).map(hex::encode))
+    }
+
     /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
     /// current tree. Verify offline with `witness_log.verify_inclusion`.
     fn inclusion_proof(&self, index: u64) -> PyResult<Option<(u64, String, Vec<String>)>> {
@@ -980,8 +1055,7 @@ fn persist_witness_state(
     if let Some(k) = witness_pubkey_hex {
         state = state.bind(k);
     }
-    let json = serde_json::to_vec_pretty(&state)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_vec_pretty(&state).map_err(std::io::Error::other)?;
     let p = std::path::Path::new(path);
     let dir = p
         .parent()
@@ -1262,6 +1336,19 @@ impl PyWitnessService {
     }
 }
 
+/// `{"witnesses": [...]}` or a bare array of entries, the two shapes
+/// `verify_dossier_json` and the CLI accept. The selection functions
+/// accepted only the object form before 0.3.6.
+fn parse_directory_json(s: &str) -> PyResult<witness_log_network::WitnessDirectory> {
+    serde_json::from_str::<witness_log_network::WitnessDirectory>(s)
+        .or_else(|first| {
+            serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(s)
+                .map(|witnesses| witness_log_network::WitnessDirectory { witnesses })
+                .map_err(|_| first)
+        })
+        .map_err(malformed_err)
+}
+
 /// Choose witnesses that maximise operator independence. Takes a
 /// `WitnessDirectory` as JSON, returns the chosen entries as JSON.
 /// Naive selection reaches the independence floor only ~55% of the time
@@ -1274,8 +1361,7 @@ fn select_diverse_witnesses(
     want: usize,
     include_project_operated: bool,
 ) -> PyResult<String> {
-    let dir: witness_log_network::WitnessDirectory =
-        serde_json::from_str(directory_json).map_err(malformed_err)?;
+    let dir = parse_directory_json(directory_json)?;
     let picked: Vec<&witness_log_network::WitnessEntry> =
         witness_log_network::select_diverse_witnesses(
             &dir,
@@ -1297,8 +1383,7 @@ fn select_witnesses(
     want: usize,
     include_project_operated: bool,
 ) -> PyResult<String> {
-    let dir: witness_log_network::WitnessDirectory =
-        serde_json::from_str(directory_json).map_err(malformed_err)?;
+    let dir = parse_directory_json(directory_json)?;
     let picked = witness_log_network::select_witnesses(
         &dir,
         subject_pubkey_hex,
@@ -1306,6 +1391,41 @@ fn select_witnesses(
         include_project_operated,
     );
     serde_json::to_string(&picked).map_err(malformed_err)
+}
+
+/// Entries are the verifier's trust input. 0.3.5 built one from any
+/// strings: a pubkey of "zz" (an entry that silently never matches a
+/// receipt) and an empty `operator_org` (scored as an operator of its
+/// own) both went through. Refused here; the verifier is unchanged.
+fn check_entry_fields(
+    name: &str,
+    operator_org: Option<&str>,
+    url: &str,
+    pubkey_hex: &str,
+) -> PyResult<()> {
+    let bad = |m: String| Err(MalformedError::new_err(m));
+    if name.trim().is_empty() {
+        return bad("name must be non-empty".into());
+    }
+    if let Some(org) = operator_org {
+        if org.trim().is_empty() {
+            return bad(
+                "operator_org must be non-empty: verifiers count independent operators by it"
+                    .into(),
+            );
+        }
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return bad(format!(
+            "url must start with http:// or https://, got {url:?}"
+        ));
+    }
+    if pubkey_hex.len() != 64 || !pubkey_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return bad(format!(
+            "pubkey_hex must be a 32-byte Ed25519 key as 64 hex characters, got {pubkey_hex:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Build an independent witness directory entry. Returns JSON. Prefer
@@ -1320,6 +1440,7 @@ fn witness_entry_independent(
     pubkey_hex: &str,
     compute_provider: Option<String>,
 ) -> PyResult<String> {
+    check_entry_fields(name, Some(operator_org), url, pubkey_hex)?;
     let e = witness_log_network::WitnessEntry::independent(
         name,
         operator_org,
@@ -1339,6 +1460,7 @@ fn witness_entry_project_operated(
     pubkey_hex: &str,
     compute_provider: Option<String>,
 ) -> PyResult<String> {
+    check_entry_fields(name, None, url, pubkey_hex)?;
     let e = witness_log_network::WitnessEntry::project_operated(
         name,
         url,

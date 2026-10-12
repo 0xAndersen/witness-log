@@ -72,6 +72,28 @@ Stop one. If a `422` was already returned, the witness has recorded
 equivocation evidence against your identity; that is permanent. See
 [Keys and identity](Keys-and-Identity) for the safe migration order.
 
+**`anchor_url must be an http:// or https:// URL` / `counterparty must be the other agent's identity public key as 64 hex characters`.**
+Refused before anything is written (0.3.6+). Up to 0.3.5 these were
+committed: a non-http anchor URL made every later dossier `DIVERGED` and
+the journal could not be resumed; a counterparty that is not a key
+produced a handoff that could never `bind`. Pass the other agent's
+`identity_pubkey_hex()` (either case; it is stored lowercase).
+
+**`resume` fails with `field anchor_url must be ...` on a 0.3.5 journal.**
+That journal holds an invalid anchor leaf written by 0.3.5. Its history is
+intact up to that leaf; export a dossier from a copy with the 0.3.5 wheel,
+then start a new journal with the same identity seed.
+
+**`WitnessLog.resume_with_ttl` logs gained extra key bindings.**
+When the session binding's TTL passes, the next append rotates to a new
+session key bound by the identity (0.3.6+); the old binding stays in the
+dossier so earlier leaves still verify. Up to 0.3.5 the log kept writing
+under the expired session and verified as `DIVERGED`.
+
+**`from witness_log import *` and `open`.**
+Since 0.3.6 the star import does not export `open` (it shadowed the
+builtin). Call `witness_log.open(...)`.
+
 **The Python wheel will not import / `No module named witness_log._core`.**
 Wrong platform wheel or Python version. Wheels are built per platform for
 CPython ≥3.9 (abi3). Install the one matching `python -c "import sysconfig;print(sysconfig.get_platform())"`.
@@ -110,6 +132,22 @@ Ask the operator to `witness add-log`, or use a witness with
 The note's signature does not verify under the key in its canonical origin.
 Usually a non-canonical origin (you set a custom one) or a corrupted note.
 
+**`Witnesser.flush()` returns `False`.**
+Read `w.status().last_error`: `kind` is `no_cosignatures` (every witness
+failed; `outcomes` says why per witness), `too_few` (fewer than
+`min_cosignatures`), `refused` (the journal does not extend a head
+witnesses already cosigned; same rule as the CLI's `REFUSING TO SUBMIT`)
+or `exception` (for example the journal was closed). The thread keeps
+retrying with exponential backoff; `flush` skips the backoff and tries now.
+
+**`witness submit: unexpected argument "--..."`.**
+Since 0.3.6 `submit` rejects flags it does not know (it used to ignore
+them, so a typo such as `--mni 2` silently meant `--min 1`).
+
+**`warning: trusted directory entry ... has a malformed pubkey`.**
+That entry can never match a receipt. Fix the directory; `witness init`
+prints a correct entry.
+
 **All witnesses in my directory are mine; verdict stays CONSISTENT-UNWITNESSED.**
 Correct. Independence is scored by `operator_org`, and a fleet of 100 under
 one organisation is one voice. You need a second organisation:
@@ -147,8 +185,18 @@ record it as such.
 ## MCP server
 
 **`ModuleNotFoundError: mcp`.**
-The MCP SDK needs Python ≥3.10. The core library works on 3.9; the server
-does not.
+`pip install "witness-log[mcp]"`. The MCP SDK needs Python ≥3.10. The core
+library works on 3.9; the server does not. crewai pins `mcp<2`, so the
+`crewai` and `mcp` extras need separate environments.
+
+**`verify_chain_integrity` said `consistent_unwitnessed` right after a successful `submit_to_witnesses`.**
+Fixed in 0.3.6: the witnessed dossier is kept and its cosignatures count
+while the head is unchanged. After the next append, `witnessed_size` and
+`witnessed_verdict` report the witnessed prefix; submit again to witness
+the new head.
+
+**A tool error says only `Error executing tool ...`.**
+Servers before 0.3.6 hid the reason. Upgrade; errors now carry it.
 
 **`submit_to_witnesses` returns fewer receipts than `max_witnesses`.**
 Some witnesses were unreachable or rate-limited; the result lists each

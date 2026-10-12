@@ -173,13 +173,20 @@ async def test_every_tool_over_stdio(tmp_path):
                     {"session_id": "agent-7", "trusted_directory": directory},
                 )
             )
-            # The in-memory log has no receipts attached; the dossier from
-            # submit does. Integrity still holds either way.
+            # The cosignatures from submit are kept: verifying right after a
+            # successful submit is WITNESSED (0.3.5 said consistent_unwitnessed
+            # and exported a dossier with no receipts).
             assert v2["tamper_alerts"] == []
+            assert v2["verdict"] == "witnessed", v2
+            assert v2["witnessed_size"] == 4
 
             exp = _data(await client.call_tool("export_dossier", {"session_id": "agent-7"}))
             dossier = exp["dossier"]
             assert dossier["identity_pubkey"] == ident
+            assert len(dossier["witness_receipts"]) == 3
+            assert json.loads(
+                wl.verify_dossier_json(json.dumps(dossier), 0.66, ident, json.dumps(directory))
+            )["verdict"] == "witnessed"
 
             # Tamper with the exported dossier: the verifier catches it.
             dossier["leaves"][2]["payload_hash"] = "00" * 32

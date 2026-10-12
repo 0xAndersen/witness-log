@@ -48,23 +48,75 @@ __all__ = [
     "SignatureError",
     "ContinuityError",
     "MalformedError",
-    # Python layer
-    "open",
+    # Python layer. `open` is deliberately NOT here: `from witness_log
+    # import *` would shadow the builtin, and the next `open("notes.txt")`
+    # would create a journal (0.3.5 did this). Call `witness_log.open`.
     "step",
     "canonical_json",
+    "Witnesser",
+    "WitnessStatus",
+    "submit_round",
 ]
 
 __version__ = "0.3.5"
+
+from .witnessing import Witnesser, WitnessStatus, submit_round  # noqa: E402
 
 
 def canonical_json(value: Any) -> bytes:
     """Deterministic JSON bytes for a payload: sorted keys, no whitespace,
     UTF-8. This is the *payload* encoding used by :func:`step`; it is not
     the wire format (SPEC.md §3 defines that, and it is binary). Values
-    that are not JSON-serialisable fall back to ``repr``."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=repr).encode(
-        "utf-8"
-    )
+    that are not JSON-serialisable fall back to ``repr``.
+
+    Never raises. 0.3.5 raised ``TypeError`` for a dict with mixed key
+    types and ``ValueError`` for a self-referencing structure, which
+    surfaced from ``@step`` *after* the tool had run, losing its return
+    value; such values are now made encodable (keys become strings, a
+    cycle becomes ``"<cycle>"``, NaN/infinity become strings) so the
+    output is always valid JSON."""
+    try:
+        out = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), default=repr, allow_nan=False
+        )
+    except (TypeError, ValueError, RecursionError):
+        out = json.dumps(
+            _jsonable(value, set(), 0),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=repr,
+            allow_nan=False,
+        )
+    return out.encode("utf-8")
+
+
+def _json_key(k: Any) -> str:
+    """The string ``json.dumps`` would have used for a key (``1`` ->
+    ``"1"``, ``None`` -> ``"null"``), or ``repr`` for keys it rejects."""
+    if isinstance(k, str):
+        return k
+    if k is None or isinstance(k, (bool, int, float)):
+        return json.dumps(k) if not isinstance(k, float) or k == k else repr(k)
+    return repr(k)
+
+
+def _jsonable(value: Any, seen: set, depth: int) -> Any:
+    """Convert ``value`` into something ``json.dumps(sort_keys=True,
+    allow_nan=False)`` accepts. Only used when the fast path fails."""
+    if depth > 200:
+        return "<too deep>"
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else repr(value)
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        if id(value) in seen:
+            return "<cycle>"
+        seen = seen | {id(value)}
+        if isinstance(value, dict):
+            return {_json_key(k): _jsonable(v, seen, depth + 1) for k, v in value.items()}
+        return [_jsonable(v, seen, depth + 1) for v in value]
+    return repr(value)
 
 
 def open(  # noqa: A001

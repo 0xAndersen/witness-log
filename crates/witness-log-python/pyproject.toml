@@ -15,6 +15,19 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+# The core has no Python dependencies. Each extra pulls in one integration;
+# the floors are the versions the adapters are tested against in CI
+# (`integrations` job). crewai pins mcp<2, so install `crewai` and `mcp`
+# in separate environments.
+[project.optional-dependencies]
+mcp = ["mcp>=2"]
+langchain = ["langchain-core>=1.0"]
+crewai = ["crewai>=1.0"]
+openai-agents = ["openai-agents>=0.20"]
+
+[project.scripts]
+witness-log-mcp = "witness_log.mcp_server:main"
+
 [project.urls]
 Homepage = "https://github.com/0xAndersen/witness-log"
 Specification = "https://github.com/0xAndersen/witness-log/blob/main/spec/SPEC.md"
