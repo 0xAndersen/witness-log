@@ -556,11 +556,23 @@ fn same_size_different_root_is_provable_equivocation() {
     else {
         panic!()
     };
-    assert!(proof.verify(), "proof must check out on its own");
+    // A non-canonical origin does not name its key: the proof needs the
+    // key the checker holds for this log (0.4.2, review round 2 W1).
+    assert!(
+        !proof.verify(),
+        "no key can be taken from a non-canonical origin"
+    );
+    assert!(
+        proof.verify_with_key(&log.vkey()),
+        "proof must check out under the log's key"
+    );
     // A tampered proof must not.
     let mut bad = proof.clone();
     bad.conflicting_note = bad.earlier_note.clone();
-    assert!(!bad.verify(), "two identical notes prove nothing");
+    assert!(
+        !bad.verify_with_key(&log.vkey()),
+        "two identical notes prove nothing"
+    );
 }
 
 #[test]

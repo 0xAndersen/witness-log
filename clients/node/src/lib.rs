@@ -780,6 +780,7 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
         expected_identity_pubkey: o.identity.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: o.min_witnesses.map(|n| n as usize),
+        revocations: &[],
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string(&report).map_err(fail)

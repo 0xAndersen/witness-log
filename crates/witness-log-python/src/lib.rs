@@ -367,6 +367,7 @@ fn verify_dossier_json(
         expected_identity_pubkey: expected_identity_pubkey.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
         min_receipts: min_witnesses,
+        revocations: &[],
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)

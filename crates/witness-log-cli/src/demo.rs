@@ -176,6 +176,7 @@ pub fn run_demo() -> ExitCode {
         expected_identity_pubkey: Some(&identity_hex),
         trusted_directory: Some(&directory),
         min_receipts: None,
+        revocations: &[],
     };
     let anchored = dossier.verify(0.66, &ctx);
     println!("  B. With an identity you expected and a witness directory YOU trust,");

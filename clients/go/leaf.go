@@ -299,6 +299,9 @@ func IsValidAnchorURL(url string) bool {
 // present, and for 0x07 the anchor_proof_json (when carried) hashes to the
 // committed anchor_proof_hash. It does not check signatures or Merkle
 // membership.
+// ZeroHashHex is the payload_hash every marker leaf (0x03, 0x04) commits.
+const ZeroHashHex = "0000000000000000000000000000000000000000000000000000000000000000"
+
 func (l *Leaf) Validate(expectedIndex uint64) error {
 	if l.Index != expectedIndex {
 		return fmt.Errorf("leaf index %d does not match its position %d", l.Index, expectedIndex)
@@ -317,6 +320,44 @@ func (l *Leaf) Validate(expectedIndex uint64) error {
 			return nil
 		}
 		return fmt.Errorf("leaf_type 0x%02x requires field `%s` to be present", l.LeafType, field)
+	}
+	// Fields of another leaf type are not committed by the root, so they
+	// are refused rather than displayed (SPEC §2, 0.4.2). Markers commit
+	// the all-zero payload hash and a redaction names an earlier leaf.
+	forbid := func(present bool, field string) error {
+		if !present {
+			return nil
+		}
+		return fmt.Errorf("leaf_type 0x%02x must not carry field `%s` (it is not committed by the root)", l.LeafType, field)
+	}
+	t := l.LeafType
+	for _, c := range []struct {
+		when  bool
+		set   bool
+		field string
+	}{
+		{t != LeafRedaction, l.RedactedIndex != nil, "redacted_index"},
+		{t != LeafKeyRevocation, l.RevokedIdentity != nil, "revoked_identity"},
+		{t != LeafHandoffAttestation, l.HandoffDirection != nil, "handoff_direction"},
+		{t != LeafHandoffAttestation, l.HandoffStateHash != nil, "handoff_state_hash"},
+		{t != LeafAuthorizationEvent, l.AuthorizationEventKind != nil, "authorization_event_kind"},
+		{t != LeafAuthorizationEvent, l.AuthorizationScopeHash != nil, "authorization_scope_hash"},
+		{t != LeafHandoffAttestation && t != LeafAuthorizationEvent, l.CounterpartyPubkey != nil, "counterparty_pubkey"},
+		{t != LeafExternalAnchor, l.AnchorURL != nil, "anchor_url"},
+		{t != LeafExternalAnchor, l.AnchorProofJSON != nil, "anchor_proof_json"},
+		{t != LeafExternalAnchor, l.AnchorProofHash != nil, "anchor_proof_hash"},
+	} {
+		if c.when {
+			if err := forbid(c.set, c.field); err != nil {
+				return err
+			}
+		}
+	}
+	if (t == LeafRedaction || t == LeafKeyRevocation) && l.PayloadHash != ZeroHashHex {
+		return fmt.Errorf("field `payload_hash` is invalid: markers commit the all-zero hash, got %q", l.PayloadHash)
+	}
+	if t == LeafRedaction && l.RedactedIndex != nil && *l.RedactedIndex >= expectedIndex {
+		return fmt.Errorf("field `redacted_index` is invalid: must name an earlier leaf, got %d", *l.RedactedIndex)
 	}
 	switch l.LeafType {
 	case LeafRedaction:

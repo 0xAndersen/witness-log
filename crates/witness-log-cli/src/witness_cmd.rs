@@ -65,7 +65,7 @@ const USAGE: &str = "usage:
       exit status 20. --allow-partial instead verifies the dossier it wrote against the
       directory and exits by verdict (0 WITNESSED, 10 CONSISTENT-UNWITNESSED, ...).
       A sealed journal needs its seed: --identity-seed-env NAME or --identity-seed-file F.
-  witness-log witness verify-evidence <evidence.json>
+  witness-log witness verify-evidence <evidence.json> [--vkey <log vkey>]
       Check an equivocation proof a witness recorded under evidence/:
       exit 0 if it proves two signed roots for one size, 30 if not.";
 
@@ -156,11 +156,30 @@ fn cmd_verify_evidence(args: &[String]) -> ExitCode {
     println!("log key: {}", proof.log_vkey);
     println!("note A:  {}", describe(&proof.earlier_note));
     println!("note B:  {}", describe(&proof.conflicting_note));
-    if proof.verify() {
-        println!("PROVEN: both notes are signed by the log's key, name the same origin and size, and commit different roots. This identity showed two histories.");
+    // The key the notes are checked under is never the one inside the
+    // file: a canonical origin names its own key; any other origin needs
+    // `--vkey` from the log's directory entry (review round 2, W1).
+    let supplied = flag(args, "--vkey");
+    let proven = match &supplied {
+        Some(v) => match witness_log_core::c2sp::VerifierKey::parse(v) {
+            Ok(k) => proof.verify_with_key(&k),
+            Err(e) => {
+                eprintln!("--vkey: {e}");
+                return ExitCode::from(2);
+            }
+        },
+        None => proof.verify(),
+    };
+    if proven {
+        println!("PROVEN: both notes are signed by the log's key (taken from its canonical origin or --vkey, not from this file), name the same origin and size, and commit different roots. This identity showed two histories.");
         ExitCode::SUCCESS
+    } else if supplied.is_none()
+        && witness_log_core::c2sp::identity_from_canonical_origin(&proof.origin).is_none()
+    {
+        println!("NOT PROVEN: the origin is not canonical, so the log's key cannot be taken from it; pass --vkey <the log's key as you know it>. The key inside the file is not trusted.");
+        ExitCode::from(30)
     } else {
-        println!("NOT PROVEN: the notes do not both verify under the log key with one origin, one size and two roots. This file is not evidence of equivocation.");
+        println!("NOT PROVEN: the notes do not both verify under the log's key with one origin, one size and two roots. This file is not evidence of equivocation.");
         ExitCode::from(30)
     }
 }
@@ -1304,6 +1323,7 @@ fn cmd_submit(args: &[String]) -> ExitCode {
         expected_identity_pubkey: Some(&result.dossier.identity_pubkey),
         trusted_directory: Some(&directory),
         min_receipts: Some(min),
+        revocations: &[],
     };
     let verdict = result
         .dossier

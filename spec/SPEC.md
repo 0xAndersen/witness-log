@@ -125,6 +125,18 @@ Every event is tagged with a single byte:
 Implementations MUST reject leaves with an unrecognized tag rather than
 silently treating them as a known type. New tags require a spec revision.
 
+Type-specific fields (`redacted_index`, `revoked_identity`,
+`handoff_direction`, `counterparty_pubkey`, `handoff_state_hash`,
+`authorization_event_kind`, `authorization_scope_hash`, `anchor_url`,
+`anchor_proof_json`, `anchor_proof_hash`) are committed to the tree only
+for the type they belong to (§3). A leaf that carries a field of another
+type MUST be rejected as structurally invalid: under an unchanged root
+such a field would be free to edit and would still be displayed. A 0x03
+Redaction leaf's `redacted_index` MUST name a smaller index than its
+own, and the marker types 0x03 and 0x04 MUST commit the all-zero
+`payload_hash` (§8). Since 0.4.2; the reference, Go and TypeScript
+verifiers all enforce this.
+
 ## 3. Leaf canonical encoding
 
 A leaf's canonical byte encoding — the exact bytes that get hashed into the
@@ -417,7 +429,13 @@ signature = Ed25519_Sign(identity_signing_key, message)
 ```
 
 Leaves signed by a revoked identity's sessions after `as_of_ms` MUST be
-treated as untrusted by verifiers.
+treated as untrusted by verifiers, and so MUST a checkpoint whose
+`timestamp_ms` is at or after `as_of_ms`: whoever holds the key after
+the revocation signed it. Both timestamps are set by the key holder, so a
+verifier SHOULD apply revocations it knows about out of band (the
+reference `VerifyContext::revocations`, `verify --revocations`) rather
+than relying on the dossier to carry them. An index-based cut-off that
+witnesses can pin is proposed in RFC-0005.
 
 ## 6. Signed Tree Head (checkpoint)
 
@@ -599,6 +617,14 @@ Redaction and 0x04 KeyRevocation, which carry no payload, commit the
 all-zero `payload_hash`. A redaction request appends a 0x03 leaf naming
 the forgotten index, so the tree root changes because a leaf was added,
 never because an existing leaf changed.
+
+Erasure covers the salted payload only. A 0x07 ExternalAnchor leaf keeps
+`anchor_url` and `anchor_proof_json` in cleartext in the leaf, so there
+is nothing a forget can erase; implementations MUST refuse to forget it
+rather than report an erasure that did not happen. 0x05 and 0x06 leaves
+keep an unsalted hash of their state or scope (§3.1, §3.2) as the
+cross-log commitment; forgetting them erases the payload and leaves that
+hash, which is confirmable by anyone who already holds the content.
 
 Where salts live is an implementation matter, with one normative
 requirement: a forgotten salt MUST be erased from every store the

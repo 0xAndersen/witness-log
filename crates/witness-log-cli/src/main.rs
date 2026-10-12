@@ -78,6 +78,10 @@ struct Options {
     /// witness receipts (even if present) cannot be scored and the
     /// verdict is capped at UNANCHORED.
     directory_path: Option<String>,
+    /// Path to a JSON file of revocation statements the caller knows
+    /// about out of band (`--revocations`); applied whether or not the
+    /// dossier carries them.
+    revocations_path: Option<String>,
     /// Exit 11 unless the verdict is WITNESSED by a majority of the
     /// directory. For gates that must never pass on anything weaker.
     strict: bool,
@@ -106,7 +110,7 @@ USAGE:
       changes when you anchor verification to something outside the file.
       --tamper   build a convincing forgery instead, and watch it get caught.
 
-  witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain]
+  witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--revocations <path>]
                       [--identity <hex-pubkey>] [--directory <path.json>] [--strict]
       Verify a dossier fully offline: checkpoint signature, identity
       binding, leaf structural validity, key-binding validity, Merkle
@@ -644,6 +648,9 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
 const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--identity <hex>] [--directory <path>] [--strict]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
+  --revocations <path>  revocation statements you know of (JSON array); applied even if the
+               dossier omits them: leaves and checkpoints the revoked key signed after
+               as_of_ms do not verify
   --threshold  receipt-count bar as a fraction of the directory (default 0.66)
   --min-witnesses N  receipt-count bar as an absolute number of distinct witnesses; use this
                instead of --threshold when the directory is large (a registry)
@@ -797,6 +804,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut explain = false;
     let mut identity = None;
     let mut directory_path = None;
+    let mut revocations_path = None;
     let mut strict = false;
     let mut i = 0;
     while i < args.len() {
@@ -813,6 +821,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         "--threshold must be between 0.0 and 1.0, got {threshold}"
                     ));
                 }
+                i += 2;
+            }
+            "--revocations" => {
+                revocations_path = Some(
+                    args.get(i + 1)
+                        .ok_or("--revocations requires a path")?
+                        .clone(),
+                );
                 i += 2;
             }
             "--min-witnesses" => {
@@ -890,6 +906,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         explain,
         identity,
         directory_path,
+        revocations_path,
         strict,
     })
 }
@@ -964,10 +981,26 @@ fn run_verify(opts: &Options) -> ExitCode {
         None => None,
     };
 
+    let revocations: Vec<witness_log_core::identity::RevocationStatement> = match &opts
+        .revocations_path
+    {
+        Some(p) => match std::fs::read_to_string(p)
+            .map_err(|e| e.to_string())
+            .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("could not read revocations {p}: {e} (expected a JSON array of revocation statements)");
+                return ExitCode::from(exit::USAGE);
+            }
+        },
+        None => Vec::new(),
+    };
     let ctx = VerifyContext {
         expected_identity_pubkey: opts.identity.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
         min_receipts: opts.min_witnesses,
+        revocations: &revocations,
     };
 
     let report = dossier.verify(opts.threshold, &ctx);

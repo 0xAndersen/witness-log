@@ -196,6 +196,7 @@ fn hundred_witness_sybil_fleet_collapses_to_one_operator() {
         expected_identity_pubkey: Some(&subject_hex),
         trusted_directory: Some(&directory),
         min_receipts: None,
+        revocations: &[],
     };
     let report = dossier.verify(0.0, &ctx);
     assert_eq!(

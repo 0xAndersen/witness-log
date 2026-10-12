@@ -97,6 +97,10 @@ CHANGELOG entry gives the detail.
 
 | version | finding | severity | fix |
 |---|---|---|---|
+| 0.4.2 | Journal record written as two `write(2)` calls; a crash between them dropped a committed leaf on the next-but-one resume (review round 2, `docs/reviews/round-2-core-and-verify.md`) | high | one write per record; unterminated last record kept and terminated on open; same in the salt sidecar |
+| 0.4.2 | Equivocation proof trusted its embedded vkey: a forged proof under a victim's origin verified | medium | key taken from the canonical origin; `verify_with_key` / `--vkey` otherwise |
+| 0.4.2 | Revocation cut-off on holder-set timestamps only; no verifier-supplied revocations | medium | checkpoint timestamp under the cut-off; `verify --revocations`; RFC-0005 for an index cut-off |
+| 0.4.2 | Type-inapplicable leaf fields neither committed nor rejected; marker hash and redaction target unchecked; anchor leaves "forgettable" | low | rejected by all three verifiers; anchor forget refused |
 | 0.2.0 | Leaf encoding not injective; algorithm and signer key not inside signed messages | high | Length-prefixed fields, presence bytes, `sig_alg` and signer inside every signed message (wire-format break) |
 | 0.3.0 | Sybil vector: one operator under many names counted as independent | critical | Independence counted by distinct `operator_org`, deduplicated by key; project-run witnesses one bucket; the log's own operator excluded |
 | 0.3.0 | Restarted agent reported as a forger (bindings for earlier sessions missing) | critical | `all_bindings()` in every dossier; bindings persisted in journal and snapshots |

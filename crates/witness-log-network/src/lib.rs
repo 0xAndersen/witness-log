@@ -796,6 +796,13 @@ pub struct VerifyContext<'a> {
     /// rule is what a verifier actually means. Found by the 1,000-agent
     /// swarm against a 100-witness network.
     pub min_receipts: Option<usize>,
+    /// Revocations the verifier knows about out of band (a revocation
+    /// the identity's operator published, a registry entry). They are
+    /// applied whether or not the dossier carries them: a dossier that
+    /// omits a known revocation cannot thereby verify leaves or a
+    /// checkpoint the revoked key signed after `as_of_ms`. Statements
+    /// for other identities are ignored. Review round 2, W2.
+    pub revocations: &'a [RevocationStatement],
 }
 
 /// Everything `witness-log verify` reports, structured rather than printed —
@@ -873,6 +880,7 @@ fn bindings_and_revocations_valid(
     identity_pubkey: &str,
     key_bindings: &[KeyBindingStatement],
     revocations: &[RevocationStatement],
+    checkpoint_timestamp_ms: u64,
 ) -> bool {
     // No binding or revocation data supplied at all. This is the common
     // case today (see `Dossier::key_bindings`'s doc comment on the
@@ -918,6 +926,18 @@ fn bindings_and_revocations_valid(
             Some(existing) => existing.min(r.as_of_ms),
             None => r.as_of_ms,
         });
+    }
+    // A checkpoint the revoked key signed at or after the revocation is
+    // not evidence of anything: whoever holds the key now signed it. The
+    // leaf cut-off below is on timestamps the same holder sets, so on
+    // its own it only catches an honest clock; the checkpoint rule and
+    // verifier-supplied revocations (`VerifyContext::revocations`) are
+    // what make omitting or backdating the statement visible. An
+    // index-based cut-off that witnesses can pin is RFC-0005.
+    if let Some(as_of) = revoked_as_of {
+        if checkpoint_timestamp_ms >= as_of {
+            return false;
+        }
     }
 
     for l in leaves {
@@ -985,13 +1005,27 @@ impl Dossier {
         // every leaf's authoring session key must be covered by a valid
         // binding to this identity, within its validity window, and not
         // postdating a revocation.
+        let trusted_revocations: Vec<RevocationStatement> = ctx
+            .revocations
+            .iter()
+            .filter(|r| normalize_hex(&r.identity_pubkey) == normalize_hex(&self.identity_pubkey))
+            .filter(|r| !self.revocations.iter().any(|d| d.signature == r.signature))
+            .cloned()
+            .collect();
+        let all_revocations: Vec<RevocationStatement> = self
+            .revocations
+            .iter()
+            .cloned()
+            .chain(trusted_revocations)
+            .collect();
         let bindings_valid = bindings_and_revocations_valid(
             &self.leaves,
             &self.identity_pubkey,
             &self.key_bindings,
-            &self.revocations,
+            &all_revocations,
+            self.checkpoint.timestamp_ms,
         );
-        let bindings_asserted = !self.key_bindings.is_empty() || !self.revocations.is_empty();
+        let bindings_asserted = !self.key_bindings.is_empty() || !all_revocations.is_empty();
 
         let mut tree = MerkleTree::new();
         for l in &self.leaves {
@@ -2371,6 +2405,7 @@ mod registry_scale_tests {
                 expected_identity_pubkey: Some(&ident),
                 trusted_directory: Some(&d),
                 min_receipts: None,
+                revocations: &[],
             },
         );
         assert_eq!(
@@ -2388,6 +2423,7 @@ mod registry_scale_tests {
                 expected_identity_pubkey: Some(&ident),
                 trusted_directory: Some(&d),
                 min_receipts: Some(4),
+                revocations: &[],
             },
         );
         assert_eq!(absolute.verdict, Verdict::Witnessed);
@@ -2398,6 +2434,7 @@ mod registry_scale_tests {
                 expected_identity_pubkey: Some(&ident),
                 trusted_directory: Some(&d),
                 min_receipts: Some(9),
+                revocations: &[],
             },
         );
         assert_eq!(

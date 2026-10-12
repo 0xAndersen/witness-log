@@ -124,7 +124,7 @@ impl FileSaltStore {
     /// tail, and is an error: delete the sidecar to proceed without the
     /// ability to redact earlier leaves.
     pub fn open(path: &str) -> std::io::Result<Self> {
-        use std::io::{BufReader, Seek, SeekFrom};
+        use std::io::BufReader;
         let mut open_opts = std::fs::OpenOptions::new();
         open_opts
             .read(true)
@@ -180,7 +180,9 @@ impl FileSaltStore {
         if file.metadata()?.len() != good_len {
             file.set_len(good_len)?;
         }
-        file.seek(SeekFrom::End(0))?;
+        // A record whose newline never reached the disk is complete and
+        // was kept; give it its terminator before the next one lands.
+        crate::journal::terminate_last_line(&mut file)?;
         Ok(Self {
             path: std::path::PathBuf::from(path),
             file,
@@ -298,10 +300,10 @@ impl FileSaltStore {
 
 impl SaltStore for FileSaltStore {
     fn commit(&mut self, leaf_index: u64, payload: &[u8]) -> [u8; 32] {
-        use std::io::Write;
         let salt = rand_salt();
         self.salts.insert(leaf_index, salt);
-        let r = Self::record_line(leaf_index, &salt).and_then(|line| writeln!(self.file, "{line}"));
+        let r = Self::record_line(leaf_index, &salt)
+            .and_then(|line| crate::journal::write_line(&mut self.file, &line));
         self.note(r);
         payload_hash(payload, &salt, leaf_index)
     }

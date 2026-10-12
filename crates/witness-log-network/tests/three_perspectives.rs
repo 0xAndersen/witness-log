@@ -658,6 +658,7 @@ mod regulator {
                 expected_identity_pubkey: Some(&id_hex),
                 trusted_directory: None,
                 min_receipts: None,
+                revocations: &[],
             },
         );
         assert!(r.is_internally_consistent() && r.identity_bound);

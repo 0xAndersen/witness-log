@@ -119,9 +119,12 @@ impl AddCheckpointRequest {
             .ok_or_else(|| WitnessError::Malformed("empty request".into()))?;
         let old_size: u64 = old_line
             .strip_prefix("old ")
-            .ok_or_else(|| WitnessError::Malformed("first line must be `old <size>`".into()))?
-            .parse()
-            .map_err(|_| WitnessError::Malformed("old size is not a decimal integer".into()))?;
+            .and_then(witness_log_core::c2sp::parse_canonical_u64)
+            .ok_or_else(|| {
+                WitnessError::Malformed(
+                    "first line must be `old <size>` with a canonical decimal size".into(),
+                )
+            })?;
 
         let mut consistency_proof = Vec::new();
         for l in lines.filter(|l| !l.is_empty()) {
@@ -296,15 +299,43 @@ pub struct EquivocationProof {
 }
 
 impl EquivocationProof {
-    /// Check the proof independently: both notes verify under
-    /// `log_vkey`, name `origin`, have the same size, and differ in root.
+    /// Check the proof independently: both notes verify under the log's
+    /// key, name `origin`, have the same size, and differ in root.
+    ///
+    /// The key is taken from `origin`, never from the proof: a canonical
+    /// origin (`witness-log/<identity hex>`) names its own key, and the
+    /// embedded `log_vkey` must be that key with the origin as its name.
+    /// Before 0.4.2 the embedded vkey was trusted as given, so a proof
+    /// signed with a stranger's key under a victim's origin verified
+    /// (review round 2, W1). A proof for a non-canonical origin needs the
+    /// trusted key supplied out of band: `verify_with_key`.
     pub fn verify(&self) -> bool {
+        let Some(identity) = witness_log_core::c2sp::identity_from_canonical_origin(&self.origin)
+        else {
+            return false;
+        };
         let Ok(vkey) = VerifierKey::parse(&self.log_vkey) else {
             return false;
         };
+        if vkey.name != self.origin
+            || vkey.sig_type != witness_log_core::c2sp::SIG_TYPE_ED25519
+            || vkey.public_key != identity.to_bytes()
+        {
+            return false;
+        }
+        self.verify_with_key(&vkey)
+    }
+
+    /// `verify` for a log whose origin is not canonical: `vkey` is the
+    /// log's key as the caller knows it (from the log's directory entry,
+    /// not from this proof). The proof's own `log_vkey` is ignored.
+    pub fn verify_with_key(&self, vkey: &VerifierKey) -> bool {
+        if vkey.name != self.origin {
+            return false;
+        }
         let parse = |n: &str| -> Option<Checkpoint> {
             let note = SignedNote::parse(n).ok()?;
-            note.verify(std::slice::from_ref(&vkey)).ok()?;
+            note.verify(std::slice::from_ref(vkey)).ok()?;
             Checkpoint::from_note(&note).ok()
         };
         match (parse(&self.earlier_note), parse(&self.conflicting_note)) {

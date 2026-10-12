@@ -4,6 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The `payload_hash` of a marker leaf (0x03, 0x04): 32 zero bytes, hex.
+pub const ZERO_HASH_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LeafType {
@@ -372,8 +375,70 @@ impl Leaf {
                 })
             }
         };
+        // Fields that belong to another leaf type are not committed by
+        // `canonical_bytes`, so under an unchanged signed root a dossier
+        // editor could add or alter them freely and anything that renders
+        // them (explain, bind, the Python package) would show the edit as
+        // if it were on the record. They are refused (0.4.2, review
+        // round 2 L1). Markers commit the all-zero payload hash and a
+        // redaction names an earlier leaf, never itself (L2).
+        let forbid = |present: bool, field: &'static str| -> Result<(), LeafValidationError> {
+            if present {
+                Err(LeafValidationError::FieldNotApplicable {
+                    leaf_type: self.leaf_type,
+                    field,
+                })
+            } else {
+                Ok(())
+            }
+        };
+        let t = self.leaf_type;
+        if t != LeafType::Redaction.tag() {
+            forbid(self.redacted_index.is_some(), "redacted_index")?;
+        }
+        if t != LeafType::KeyRevocation.tag() {
+            forbid(self.revoked_identity.is_some(), "revoked_identity")?;
+        }
+        if t != LeafType::HandoffAttestation.tag() {
+            forbid(self.handoff_direction.is_some(), "handoff_direction")?;
+            forbid(self.handoff_state_hash.is_some(), "handoff_state_hash")?;
+        }
+        if t != LeafType::AuthorizationEvent.tag() {
+            forbid(
+                self.authorization_event_kind.is_some(),
+                "authorization_event_kind",
+            )?;
+            forbid(
+                self.authorization_scope_hash.is_some(),
+                "authorization_scope_hash",
+            )?;
+        }
+        if t != LeafType::HandoffAttestation.tag() && t != LeafType::AuthorizationEvent.tag() {
+            forbid(self.counterparty_pubkey.is_some(), "counterparty_pubkey")?;
+        }
+        if t != LeafType::ExternalAnchor.tag() {
+            forbid(self.anchor_url.is_some(), "anchor_url")?;
+            forbid(self.anchor_proof_json.is_some(), "anchor_proof_json")?;
+            forbid(self.anchor_proof_hash.is_some(), "anchor_proof_hash")?;
+        }
+        if (t == LeafType::Redaction.tag() || t == LeafType::KeyRevocation.tag())
+            && self.payload_hash != ZERO_HASH_HEX
+        {
+            return Err(LeafValidationError::InvalidField {
+                field: "payload_hash (markers commit the all-zero hash)",
+                value: self.payload_hash.clone(),
+            });
+        }
         if self.leaf_type == LeafType::Redaction.tag() {
             require(self.redacted_index.is_some(), "redacted_index")?;
+            if let Some(target) = self.redacted_index {
+                if target >= expected_index {
+                    return Err(LeafValidationError::InvalidField {
+                        field: "redacted_index (must name an earlier leaf)",
+                        value: target.to_string(),
+                    });
+                }
+            }
         }
         if self.leaf_type == LeafType::KeyRevocation.tag() {
             require(self.revoked_identity.is_some(), "revoked_identity")?;
@@ -460,6 +525,12 @@ pub enum LeafValidationError {
     MalformedUrl { field: &'static str, value: String },
     #[error("leaf_type 0x{leaf_type:02x} requires field `{field}` to be present")]
     MissingMandatoryField { leaf_type: u8, field: &'static str },
+    /// A field that belongs to another leaf type is set; it would not be
+    /// committed by the root, so it is refused rather than displayed.
+    #[error("leaf_type 0x{leaf_type:02x} must not carry field `{field}` (it is not committed by the root)")]
+    FieldNotApplicable { leaf_type: u8, field: &'static str },
+    #[error("field `{field}` is invalid: {value:?}")]
+    InvalidField { field: &'static str, value: String },
     #[error("anchor_proof_json does not hash to the committed anchor_proof_hash (committed {committed}, actual {actual}); the anchor proof was swapped after the leaf was committed")]
     AnchorProofMismatch { committed: String, actual: String },
 }

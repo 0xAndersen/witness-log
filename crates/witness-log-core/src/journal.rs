@@ -16,7 +16,7 @@ use crate::identity::{IdentityKeypair, KeyBindingStatement};
 use crate::leaf::{AuthorizationEventKind, Leaf};
 use crate::log::WitnessLog;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 
 /// One record in the journal. `untagged` deliberately: a leaf line keeps
 /// exactly the shape it always had, so journals written before binding
@@ -115,9 +115,49 @@ pub(crate) fn read_bounded_line<R: BufRead>(
             format!("journal line exceeds {max_len} byte cap"),
         ));
     }
-    String::from_utf8(buf)
-        .map(Some)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let ends_with_newline = buf.last() == Some(&b'\n');
+    match String::from_utf8(buf) {
+        Ok(s) => Ok(Some(s)),
+        // A tear inside a multi-byte character can only happen in a torn
+        // tail (no newline follows). Hand it back lossily so the caller's
+        // JSON parse fails and the torn-tail logic heals it, instead of
+        // refusing the whole file for one unfinished write.
+        Err(e) if !ends_with_newline => {
+            Ok(Some(String::from_utf8_lossy(e.as_bytes()).into_owned()))
+        }
+        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+    }
+}
+
+/// `writeln!` on an unbuffered `File` is two `write(2)` calls (the body,
+/// then the newline); a crash between them leaves a complete record with
+/// no terminator, and the next append would glue onto it. One `write_all`
+/// of the whole line keeps every record a single write.
+pub(crate) fn write_line(file: &mut File, line: &str) -> std::io::Result<()> {
+    let mut buf = String::with_capacity(line.len() + 1);
+    buf.push_str(line);
+    buf.push('\n');
+    file.write_all(buf.as_bytes())
+}
+
+/// If the file does not end with a newline (a record whose terminator
+/// never reached the disk), write one before anything is appended, so
+/// the next record starts on its own line. The file must be positioned
+/// at its end on return.
+pub(crate) fn terminate_last_line(file: &mut File) -> std::io::Result<()> {
+    let len = file.metadata()?.len();
+    if len == 0 {
+        file.seek(SeekFrom::End(0))?;
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)?;
+    if last[0] != b'\n' {
+        file.write_all(b"\n")?;
+    }
+    file.seek(SeekFrom::End(0))?;
+    Ok(())
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -394,11 +434,13 @@ impl LeafJournal {
         // `set_len` failed with "Access is denied" on EVERY resume (the
         // first CI run on Windows). The lock guarantees a single writer,
         // so seeking to the end gives the same append behaviour.
-        let mut file = OpenOptions::new().write(true).open(path)?;
+        // Read access too: the last byte is inspected to re-terminate a
+        // record whose newline never reached the disk.
+        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
         if file.metadata()?.len() != truncate_to {
             file.set_len(truncate_to)?;
         }
-        file.seek(SeekFrom::End(0))?;
+        terminate_last_line(&mut file)?;
         let file_id = file.metadata().ok().as_ref().and_then(file_id_of);
         Ok(Self {
             file,
@@ -438,8 +480,7 @@ impl LeafJournal {
                 ),
             ));
         }
-        writeln!(self.file, "{line}")?;
-        Ok(())
+        write_line(&mut self.file, &line)
     }
 
     /// Whether an external-anchor leaf with these fields fits in one
@@ -464,7 +505,7 @@ impl LeafJournal {
     pub fn append_binding(&mut self, binding: &KeyBindingStatement) -> std::io::Result<()> {
         let record = JournalRecord::Binding(Box::new(binding.clone()));
         let line = serde_json::to_string(&record).map_err(std::io::Error::other)?;
-        writeln!(self.file, "{line}")
+        write_line(&mut self.file, &line)
     }
 
     /// Flush + fsync. Callers choose their own durability cadence (every

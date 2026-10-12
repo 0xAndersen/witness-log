@@ -383,6 +383,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             expected_identity_pubkey: Some(&a.identity_hex),
             trusted_directory: Some(&directory),
             min_receipts: None,
+            revocations: &[],
         };
         let r = dossier.verify(0.03, &ctx);
         f4.check(
@@ -764,6 +765,7 @@ fn witnessed_verdict_does_not_degrade_as_the_directory_grows() {
             expected_identity_pubkey: Some(&subject_hex),
             trusted_directory: Some(&directory),
             min_receipts: None,
+            revocations: &[],
         };
         // Threshold scaled to the directory: 3 of N by count. The point
         // is the OPERATOR-INDEPENDENCE gate, which must not care about N.

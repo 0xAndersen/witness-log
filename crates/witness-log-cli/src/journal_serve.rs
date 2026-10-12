@@ -448,6 +448,7 @@ fn submit(state: &Arc<Mutex<State>>, req: &Request) -> Response {
         expected_identity_pubkey: Some(&report.dossier.identity_pubkey),
         trusted_directory: Some(&directory),
         min_receipts: Some(min),
+        revocations: &[],
     };
     let verdict = report
         .dossier

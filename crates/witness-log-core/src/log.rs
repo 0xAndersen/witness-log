@@ -271,7 +271,25 @@ impl WitnessLog {
     /// Whether `forget(index)` would do anything: the leaf exists, carries
     /// a payload, and its salt is still held by this log's salt store.
     pub fn can_forget(&self, index: u64) -> bool {
-        self.salts.has_salt(index)
+        self.salts.has_salt(index) && self.erasable_type(index)
+    }
+
+    /// An ExternalAnchor leaf keeps its content (`anchor_url`,
+    /// `anchor_proof_json`) in cleartext in the leaf itself, so deleting
+    /// the salt behind its payload hash erases nothing a reader can see.
+    /// `forget` refuses it instead of reporting an erasure that did not
+    /// happen (0.4.2, review round 2 R1; SPEC §8). Handoff and
+    /// authorization leaves stay forgettable: their payload goes, and the
+    /// unsalted `handoff_state_hash` / `authorization_scope_hash` that
+    /// remains is a documented commitment for `bind`, not the content.
+    fn erasable_type(&self, index: u64) -> bool {
+        let Ok(i) = usize::try_from(index) else {
+            return false;
+        };
+        match self.leaves.get(i) {
+            Some(l) => LeafType::from_tag(l.leaf_type) != Some(LeafType::ExternalAnchor),
+            None => false,
+        }
     }
 
     /// The salt committed with leaf `index`, for selective disclosure of
@@ -482,7 +500,7 @@ impl WitnessLog {
     /// deletes the salt for `target_index`, permanently, from this log's
     /// salt store. Tree continuity for every other leaf is untouched.
     pub fn forget(&mut self, target_index: u64) -> bool {
-        if !self.salts.has_salt(target_index) {
+        if !self.can_forget(target_index) {
             return false;
         }
         self.salts.forget(target_index);

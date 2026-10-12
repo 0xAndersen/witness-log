@@ -225,6 +225,7 @@ pub fn verify_dossier_value(
         expected_identity_pubkey: options.expected_identity_pubkey.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: options.min_receipts,
+        revocations: &[],
     };
     let threshold = options.threshold.unwrap_or(DEFAULT_QUORUM_THRESHOLD);
     let report: DossierReport = dossier.verify(threshold, &ctx);

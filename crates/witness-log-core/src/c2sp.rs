@@ -46,6 +46,17 @@ pub const SIG_TYPE_ED25519: u8 = 0x01;
 /// cosignatures (`c2sp.org/tlog-cosignature`).
 pub const SIG_TYPE_COSIGNATURE_V1: u8 = 0x04;
 
+/// A tree size as the C2SP formats spell it: ASCII digits only, no sign,
+/// no leading zero unless the value is 0, within `u64`. The only accepted
+/// spelling of a number, so two encodings can never name one checkpoint.
+pub fn parse_canonical_u64(s: &str) -> Option<u64> {
+    if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    s.parse().ok()
+}
+
 /// Em dash (U+2014) — the first character of every signed-note signature
 /// line. Spelled out because a literal em dash in source is easy to
 /// mistake for a hyphen during review, and getting it wrong produces
@@ -235,14 +246,19 @@ impl NoteSignature {
         let payload = Base64::decode_vec(b64)
             .map_err(|_| C2spError::MalformedSignature("signature is not valid base64".into()))?;
         // Bind the 4-byte key ID and the remaining signature bytes by
-        // pattern rather than by length-check-then-index. `..` requires
-        // at least one signature byte after the ID, which is the same
-        // condition the old explicit length check enforced.
+        // pattern rather than by length-check-then-index. `sig @ ..`
+        // matches an empty tail, so the one-byte minimum is checked
+        // explicitly (review round 2, C2).
         let [a, b, c, d, sig @ ..] = payload.as_slice() else {
             return Err(C2spError::MalformedSignature(
                 "signature payload shorter than a key ID plus one byte".into(),
             ));
         };
+        if sig.is_empty() {
+            return Err(C2spError::MalformedSignature(
+                "signature payload holds a key ID and no signature bytes".into(),
+            ));
+        }
         Ok(Self {
             key_name: key_name.to_string(),
             key_id: [*a, *b, *c, *d],
@@ -480,13 +496,7 @@ impl Checkpoint {
         // tree size is 0)" -- accepting "007" would let two distinct
         // encodings represent one checkpoint, which breaks the property
         // that a checkpoint's bytes are canonical.
-        if size_str.is_empty()
-            || (size_str.len() > 1 && size_str.starts_with('0'))
-            || !size_str.bytes().all(|b| b.is_ascii_digit())
-        {
-            return Err(C2spError::MalformedTreeSize);
-        }
-        let tree_size: u64 = size_str.parse().map_err(|_| C2spError::MalformedTreeSize)?;
+        let tree_size = parse_canonical_u64(size_str).ok_or(C2spError::MalformedTreeSize)?;
 
         let root_bytes = Base64::decode_vec(root_line).map_err(|_| C2spError::MalformedRootHash)?;
         let root_hash: [u8; 32] = root_bytes

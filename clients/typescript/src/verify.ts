@@ -402,6 +402,9 @@ export function canonicalOrigin(identityPubkeyHex: string): string {
 const LOWER_HEX64 = /^[0-9a-f]{64}$/;
 
 /** `Leaf::validate` for one leaf at `expectedIndex`; the reason it is invalid, or null. */
+/** The payload_hash every marker leaf (0x03, 0x04) commits. */
+export const ZERO_HASH_HEX = "0".repeat(64);
+
 export function validateLeaf(leaf: Leaf, expectedIndex: number): string | null {
   if (leaf.index !== expectedIndex) return `leaf index ${leaf.index} does not match its position ${expectedIndex}`;
   if (!Number.isInteger(leaf.leaf_type) || leaf.leaf_type < 0 || leaf.leaf_type > 7) {
@@ -415,6 +418,31 @@ export function validateLeaf(leaf: Leaf, expectedIndex: number): string | null {
   }
   const present = (v: unknown) => v !== undefined && v !== null;
   const need = (ok: boolean, field: string) => (ok ? null : `leaf_type ${leaf.leaf_type} requires field ${field}`);
+  // Fields of another leaf type are not committed by the root, so they are
+  // refused rather than displayed (SPEC §2, 0.4.2). Markers commit the
+  // all-zero payload hash and a redaction names an earlier leaf.
+  const t = leaf.leaf_type;
+  const stray: Array<[boolean, unknown, string]> = [
+    [t !== LEAF_TYPES.Redaction, leaf.redacted_index, "redacted_index"],
+    [t !== LEAF_TYPES.KeyRevocation, leaf.revoked_identity, "revoked_identity"],
+    [t !== LEAF_TYPES.HandoffAttestation, leaf.handoff_direction, "handoff_direction"],
+    [t !== LEAF_TYPES.HandoffAttestation, leaf.handoff_state_hash, "handoff_state_hash"],
+    [t !== LEAF_TYPES.AuthorizationEvent, leaf.authorization_event_kind, "authorization_event_kind"],
+    [t !== LEAF_TYPES.AuthorizationEvent, leaf.authorization_scope_hash, "authorization_scope_hash"],
+    [t !== LEAF_TYPES.HandoffAttestation && t !== LEAF_TYPES.AuthorizationEvent, leaf.counterparty_pubkey, "counterparty_pubkey"],
+    [t !== LEAF_TYPES.ExternalAnchor, leaf.anchor_url, "anchor_url"],
+    [t !== LEAF_TYPES.ExternalAnchor, leaf.anchor_proof_json, "anchor_proof_json"],
+    [t !== LEAF_TYPES.ExternalAnchor, leaf.anchor_proof_hash, "anchor_proof_hash"],
+  ];
+  for (const [when, v, field] of stray) {
+    if (when && present(v)) return `leaf_type ${t} must not carry field ${field} (it is not committed by the root)`;
+  }
+  if ((t === LEAF_TYPES.Redaction || t === LEAF_TYPES.KeyRevocation) && leaf.payload_hash !== ZERO_HASH_HEX) {
+    return `field payload_hash is invalid: markers commit the all-zero hash`;
+  }
+  if (t === LEAF_TYPES.Redaction && present(leaf.redacted_index) && leaf.redacted_index! >= expectedIndex) {
+    return `field redacted_index is invalid: must name an earlier leaf`;
+  }
   let e: string | null = null;
   switch (leaf.leaf_type) {
     case LEAF_TYPES.Redaction:

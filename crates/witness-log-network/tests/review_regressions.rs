@@ -63,6 +63,7 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
         expected_identity_pubkey: Some(&victim_pubkey),
         trusted_directory: None,
         min_receipts: None,
+        revocations: &[],
     };
     let pinned_report = dossier.verify(0.66, &ctx);
     assert_eq!(pinned_report.verdict, Verdict::Diverged);
