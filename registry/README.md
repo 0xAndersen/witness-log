@@ -60,3 +60,14 @@ the orphan branch `status` (never to main):
 Uptime is a count over `history.jsonl` (probes where `/health` answered
 `ok` and `GET /` served the registered key, divided by probes), so anyone
 can recompute it. Run it yourself: `python3 registry/status.py --out-dir /tmp/status`.
+
+## The first independent WITNESSED
+
+`registry/witnessed_report.py` (run by the manual `witnessed-report`
+workflow) claims the first WITNESSED verdict against this registry or
+claims nothing: with fewer than two distinct independent `operator_org`
+values it stops without writing anything. Otherwise it submits a fresh
+journal to the independent witnesses, verifies with
+`--min-witnesses 2`, and on WITNESSED commits
+`examples/swarm/reports/first-independent-witnessed.md` with the
+commands, operators, cosignatures and verify output.
