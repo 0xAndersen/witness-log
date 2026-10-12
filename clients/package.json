@@ -1,0 +1,16 @@
+{
+  "name": "witness-log-js",
+  "private": true,
+  "description": "npm workspace for the witness-log JavaScript packages. Each member is published on its own; this file only links them together for local development and CI.",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "typescript",
+    "node",
+    "ai-sdk",
+    "create-witness-log"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  }
+}
