@@ -122,7 +122,7 @@ witness-log verify dossier.json --identity $(jq -r .identity_pubkey dossier.json
 **What `submit` does, step by step.**
 
 1. Opens the journal read-only and signs a checkpoint over its current head.
-2. Picks witnesses from `trusted.json` with `select_witnesses`: one per `operator_org` first (independence), then round-robin to fill (capacity), spread per identity so many agents do not converge on the same machines.
+2. Contacts every witness in `trusted.json`, in parallel. (The Python `Witnesser` and the MCP server instead pick at most 8 with `select_witnesses`: one per `operator_org` first, then round-robin, spread per identity. For a registry-sized directory, give `submit` a directory trimmed to the witnesses you want to use.)
 3. POSTs the checkpoint to each witness's `/add-checkpoint`. A `409` means "I remember an older head of yours"; `submit` resends with a consistency proof from that size. A `429`/`503` with `Retry-After` is honoured up to 60 s.
 4. Collects cosignatures into receipts and writes the dossier.
 5. Records, in `agent.jsonl.witnesses.json`, the last size each witness cosigned.
@@ -136,7 +136,22 @@ from your own backups is cheaper than explaining to an auditor why your
 agent has two histories.
 
 Where `trusted.json` comes from: [Getting witnessed](Getting-Witnessed) and
-`registry/build_directory.py`.
+`registry/build_directory.py`. To try it on one machine, run two witnesses
+under two organisation names and list their entries (`witness init`
+prints the entry as JSON on stdout; the prose goes to stderr):
+
+```sh
+witness-log witness init w1 --name w1.local/w --org "Org One" --url http://127.0.0.1:7381 > w1.json
+witness-log witness init w2 --name w2.local/w --org "Org Two" --url http://127.0.0.1:7382 > w2.json
+witness-log witness serve w1 --listen 127.0.0.1:7381 --open-enrollment &
+witness-log witness serve w2 --listen 127.0.0.1:7382 --open-enrollment &
+jq -s '{witnesses: .}' w1.json w2.json > trusted.json     # or a bare array: jq -s . w1.json w2.json
+witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
+witness-log verify dossier.json --identity "$(jq -r .identity_pubkey dossier.json)" --directory trusted.json   # exit 0
+```
+
+Both witnesses are yours, so this proves the mechanics, not independence:
+`WITNESSED` is only as strong as the organisations in the directory.
 
 ---
 

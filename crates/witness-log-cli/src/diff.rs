@@ -29,7 +29,7 @@ fn short(hexstr: &str) -> String {
 }
 
 fn load(path: &str) -> Result<Dossier, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("could not read {path}: {e}"))?;
+    let raw = crate::read_input(path).map_err(|e| format!("could not read {path}: {e}"))?;
     serde_json::from_str(&raw).map_err(|e| format!("could not parse {path}: {e}"))
 }
 

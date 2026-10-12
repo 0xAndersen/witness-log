@@ -46,6 +46,25 @@ const MAX_JOURNAL_LINE_BYTES: usize = 16 * 1024 * 1024;
 /// hashes, the newline. A full leaf with 64-hex fields is under 1 KiB.
 const ANCHOR_LEAF_FIXED_OVERHEAD: usize = 4096;
 
+/// A handoff or authorization leaf names the other agent by its identity
+/// key, and `bind` later matches it byte for byte. Before 0.3.6 any string
+/// was committed ("zz", "", a name), producing a leaf that verified but
+/// could never bind. Refused here, before the leaf exists; the in-memory
+/// log lowercases a valid key so pasted uppercase hex still binds.
+fn check_counterparty(k: &str) -> std::io::Result<()> {
+    if crate::leaf::is_hex_pubkey(k) {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "counterparty must be the other agent's identity public key as 64 hex \
+                 characters, got {k:?}"
+            ),
+        ))
+    }
+}
+
 /// Read one line (including its trailing `\n` if present) from `reader`,
 /// bailing with an error the moment the accumulated length exceeds
 /// `max_len` rather than continuing to grow an unbounded buffer. Returns
@@ -872,6 +891,7 @@ impl JournaledLog {
         state_payload: &[u8],
         counterparty_identity_pubkey: &str,
     ) -> std::io::Result<u64> {
+        check_counterparty(counterparty_identity_pubkey)?;
         let idx = self
             .log
             .append_handoff_sent(state_payload, counterparty_identity_pubkey);
@@ -885,6 +905,7 @@ impl JournaledLog {
         state_payload: &[u8],
         counterparty_identity_pubkey: &str,
     ) -> std::io::Result<u64> {
+        check_counterparty(counterparty_identity_pubkey)?;
         let idx = self
             .log
             .append_handoff_received(state_payload, counterparty_identity_pubkey);
@@ -899,6 +920,7 @@ impl JournaledLog {
         scope_description: &[u8],
         counterparty_identity_pubkey: &str,
     ) -> std::io::Result<u64> {
+        check_counterparty(counterparty_identity_pubkey)?;
         let idx = self.log.append_authorization_event(
             kind,
             scope_description,
@@ -916,7 +938,16 @@ impl JournaledLog {
     ) -> std::io::Result<u64> {
         // Checked before the leaf enters the tree: a leaf the journal
         // cannot hold must not exist in memory either, or the replayed
-        // history would differ from the live one.
+        // history would differ from the live one. The same goes for a URL
+        // the verifier rejects: before 0.3.6 `javascript:x` was committed,
+        // every later dossier was DIVERGED and `resume` refused the
+        // journal (found by the hostile-input evaluation).
+        if !crate::leaf::is_valid_anchor_url(anchor_url) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("anchor_url must be an http:// or https:// URL, got {anchor_url:?}"),
+            ));
+        }
         if !LeafJournal::anchor_fits(anchor_url, anchor_proof_json) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

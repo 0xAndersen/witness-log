@@ -1,0 +1,67 @@
+name: Overhead budget
+
+# Per-call overhead (Rust append in memory and journaled without fsync,
+# verify of a 10,000-leaf dossier, the Python @step decorator) against the
+# committed baseline in benches/baseline.json. Fails if any metric's
+# machine-normalised median regresses by more than the baseline's budget
+# (20%). See crates/witness-log-network/benches/overhead.rs and
+# benches/python_step.py for what is measured and how it is normalised.
+#
+# Runner: GitHub-hosted ubuntu-latest (x86_64). The committed baseline
+# must come from the same runner type: run this workflow manually with
+# update_baseline=true, download the `bench-baseline` artifact and commit
+# it as benches/baseline.json.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update_baseline:
+        description: "Produce a new baseline.json artifact instead of checking"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Overhead budget (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust benchmark
+        run: cargo bench -p witness-log-network --bench overhead -- --out "$GITHUB_WORKSPACE/target/bench-rust.json"
+      - name: Python benchmark
+        run: |
+          pip install maturin
+          (cd crates/witness-log-python && maturin build --release && pip install target/wheels/*.whl)
+          python benches/python_step.py --out target/bench-python.json
+      - name: Check against the committed baseline
+        if: ${{ !inputs.update_baseline }}
+        run: python benches/check_budget.py target/bench-rust.json target/bench-python.json
+      - name: Write a new baseline
+        if: ${{ inputs.update_baseline }}
+        run: |
+          python - <<'EOF'
+          import json
+          b = json.load(open("benches/baseline.json"))
+          b["runner"] = "GitHub-hosted ubuntu-latest"
+          json.dump(b, open("benches/baseline.json", "w"), indent=2)
+          EOF
+          python benches/check_budget.py --update target/bench-rust.json target/bench-python.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.update_baseline && 'bench-baseline' || 'bench-results' }}
+          path: |
+            target/bench-rust.json
+            target/bench-python.json
+            benches/baseline.json

@@ -114,7 +114,7 @@ fn cmd_verify_evidence(args: &[String]) -> ExitCode {
     let Some(path) = args.first().filter(|a| !a.starts_with("--")) else {
         return usage_err("witness verify-evidence: missing <evidence.json>");
     };
-    let raw = match fs::read_to_string(path) {
+    let raw = match crate::read_input(path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{path}: {e}");
@@ -310,6 +310,21 @@ fn cmd_init(args: &[String]) -> ExitCode {
     };
     if !valid_key_name(&name) {
         return usage_err("witness init: key name must be non-empty, without spaces or '+'");
+    }
+    // An empty --org was scored by verifiers as an operator of its own,
+    // and a non-http --url produced an entry no client can submit to;
+    // both were accepted before 0.3.6.
+    if flag(args, "--org").is_some_and(|o| o.trim().is_empty()) {
+        return usage_err(
+            "witness init: --org must be non-empty (verifiers count operators by it)",
+        );
+    }
+    if let Some(u) = flag(args, "--url") {
+        if !(u.starts_with("http://") || u.starts_with("https://")) {
+            return usage_err(&format!(
+                "witness init: --url must start with http:// or https://, got {u:?}"
+            ));
+        }
     }
     let dir = PathBuf::from(dir);
     if dir.join("witness.key").exists() {
@@ -950,6 +965,20 @@ fn cmd_submit(args: &[String]) -> ExitCode {
     let Some(journal) = args.first().filter(|a| !a.starts_with("--")) else {
         return usage_err("witness submit: missing <journal>");
     };
+    // Every other argument is a known flag followed by its value. 0.3.5
+    // ignored anything else, so `--mni 2` silently meant `--min 1`.
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--directory" | "--out" | "--state" | "--min" => i += 2,
+            other => {
+                return usage_err(&format!(
+                    "witness submit: unexpected argument {other:?} \
+                     (flags: --directory, --out, --state, --min)"
+                ))
+            }
+        }
+    }
     let Some(dir_path) = flag(args, "--directory") else {
         return usage_err("witness submit: --directory <witnesses.json> is required");
     };
@@ -975,7 +1004,7 @@ fn cmd_submit(args: &[String]) -> ExitCode {
             log.tree_size()
         );
     }
-    let directory: WitnessDirectory = match fs::read_to_string(&dir_path)
+    let directory: WitnessDirectory = match crate::read_input(&dir_path)
         .map_err(|e| e.to_string())
         .and_then(|s| crate::parse_directory(&s))
     {

@@ -38,7 +38,7 @@ pub struct ShowOptions {
 /// `--sign-with <journal>` the journal's identity key signs the body, so
 /// the output is a note `c2sp verify` accepts.
 pub fn run_show(dossier_path: &str, origin: &str, opts: &ShowOptions) -> ExitCode {
-    let raw = match std::fs::read_to_string(dossier_path) {
+    let raw = match crate::read_input(dossier_path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("could not read {dossier_path}: {e}");
@@ -170,7 +170,7 @@ pub fn run_show(dossier_path: &str, origin: &str, opts: &ShowOptions) -> ExitCod
 /// Verify a C2SP signed note against one or more verifier keys, and
 /// report any cosignatures found.
 pub fn run_verify(note_path: &str, vkey_strings: &[String]) -> ExitCode {
-    let raw = match std::fs::read_to_string(note_path) {
+    let raw = match crate::read_input(note_path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("could not read {note_path}: {e}");

@@ -38,6 +38,15 @@ lets a fabricated or tampered dossier reach a stronger verdict than it
 should (see `THREAT_MODEL.md`'s verdict table) is a security issue, not
 a bug report, regardless of how it's framed.
 
+Also in scope: the MCP server (`witness_log.mcp_server`) and the Python
+`Witnesser`, which take caller-supplied witness directories (0.3.5's MCP
+server followed `file://` URLs from them).
+
+Auditors: [`docs/SECURITY-AUDIT-BRIEF.md`](docs/SECURITY-AUDIT-BRIEF.md)
+scopes the core and the verifier, lists every prior finding with its fix,
+and gives the commands for the test suites, property tests, conformance
+corpus and fuzzers.
+
 Out of scope: the `fuzz/` harness itself finding nothing (fuzzing
 coverage gaps are a bug report, not a vulnerability), and third-party
 dependencies (report those to the dependency's own maintainers; `cargo

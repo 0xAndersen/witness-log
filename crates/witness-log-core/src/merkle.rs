@@ -126,6 +126,14 @@ impl MerkleTree {
         }
     }
 
+    /// Root of the first `tree_size` leaves (an earlier head of this
+    /// tree), or `None` if `tree_size` exceeds the current size. O(n) in
+    /// `tree_size`; `root()` is the O(log n) path for the current head.
+    pub fn root_at(&self, tree_size: u64) -> Option<Hash> {
+        let n = usize::try_from(tree_size).ok()?;
+        Some(Self::subtree_hash(self.leaves.get(0..n)?))
+    }
+
     fn subtree_hash(leaves: &[Hash]) -> Hash {
         // Match on the slice shape rather than on its length and then
         // indexing: the single-leaf case binds the leaf directly, so
