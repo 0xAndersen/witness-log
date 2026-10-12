@@ -1,0 +1,34 @@
+{
+  "name": "@witness-log/node-darwin-arm64",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "witness-log-node.darwin-arm64.node",
+  "files": [
+    "witness-log-node.darwin-arm64.node"
+  ],
+  "description": "witness-log for Node.js: append-only, witnessed Merkle audit logs for AI agents, with the Rust core as a prebuilt native addon. openLog, append, forget, disclose, exportDossier, submit to witnesses, verify offline.",
+  "keywords": [
+    "audit-log",
+    "transparency-log",
+    "merkle",
+    "ai-agents",
+    "ed25519",
+    "napi-rs",
+    "c2sp"
+  ],
+  "homepage": "https://github.com/0xAndersen/witness-log/tree/main/clients/node",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xAndersen/witness-log.git",
+    "directory": "clients/node"
+  },
+  "os": [
+    "darwin"
+  ]
+}

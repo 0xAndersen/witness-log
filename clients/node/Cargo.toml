@@ -1,0 +1,35 @@
+[package]
+name = "witness-log-node"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+repository = "https://github.com/0xAndersen/witness-log"
+authors = ["WitnessLog Contributors"]
+description = "Node.js bindings for witness-log-core, via napi-rs. Published to npm as @witness-log/node."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+witness-log-core = { version = "0.3.6", path = "../../crates/witness-log-core" }
+witness-log-network = { version = "0.3.6", path = "../../crates/witness-log-network" }
+napi = { version = "3", default-features = false, features = ["napi8"] }
+napi-derive = "3"
+ed25519-dalek = "2.1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+[build-dependencies]
+napi-build = "2"
+
+# Its own workspace: the root workspace lists its members explicitly, and
+# this crate's napi dependencies should not be part of the library gate.
+[workspace]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

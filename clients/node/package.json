@@ -1,0 +1,82 @@
+{
+  "name": "@witness-log/node",
+  "version": "0.1.0",
+  "description": "witness-log for Node.js: append-only, witnessed Merkle audit logs for AI agents, with the Rust core as a prebuilt native addon. openLog, append, forget, disclose, exportDossier, submit to witnesses, verify offline.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./native": {
+      "types": "./native/index.d.ts",
+      "default": "./native/index.js"
+    }
+  },
+  "files": [
+    "dist/src/",
+    "native/index.js",
+    "native/index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xAndersen/witness-log.git",
+    "directory": "clients/node"
+  },
+  "homepage": "https://github.com/0xAndersen/witness-log/tree/main/clients/node",
+  "keywords": [
+    "audit-log",
+    "transparency-log",
+    "merkle",
+    "ai-agents",
+    "ed25519",
+    "napi-rs",
+    "c2sp"
+  ],
+  "napi": {
+    "binaryName": "witness-log-node",
+    "packageName": "@witness-log/node",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build:native": "napi build --platform --release --output-dir native --esm",
+    "build:native:debug": "napi build --platform --output-dir native --esm",
+    "build:ts": "tsc -p tsconfig.json",
+    "build": "npm run build:native && npm run build:ts",
+    "pretest": "npm run build:ts",
+    "test": "node --test dist/test/*.test.js",
+    "artifacts": "napi artifacts --output-dir native --npm-dir npm",
+    "create-npm-dirs": "napi create-npm-dirs --npm-dir npm",
+    "prepublishOnly": "napi prepublish --no-gh-release --npm-dir npm"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.10.8",
+    "@types/node": "^22.20.5",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@witness-log/client": "^0.2.0"
+  },
+  "optionalDependencies": {
+    "@witness-log/node-linux-x64-gnu": "0.1.0",
+    "@witness-log/node-linux-arm64-gnu": "0.1.0",
+    "@witness-log/node-darwin-x64": "0.1.0",
+    "@witness-log/node-darwin-arm64": "0.1.0",
+    "@witness-log/node-win32-x64-msvc": "0.1.0"
+  }
+}
