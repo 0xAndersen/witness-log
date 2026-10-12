@@ -28,6 +28,7 @@ permissions:
 jobs:
   build-and-test:
     name: Build & test (Rust workspace)
+    timeout-minutes: 45
     strategy:
       # One platform failing must not cancel the others: the point of the
       # matrix is to see every platform's result on every run.

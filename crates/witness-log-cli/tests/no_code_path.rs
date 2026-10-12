@@ -98,6 +98,10 @@ fn directory(path: &str) -> witness_log_network::WitnessDirectory {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+)]
 fn install_to_witnessed_with_the_cli_alone() {
     let root = tmpdir("flow");
     let net = Testnet::up(&root, 3);
@@ -454,6 +458,10 @@ fn install_to_witnessed_with_the_cli_alone() {
 /// verdict instead (10: cosigned by one operator). `--min 1` is the
 /// explicit opt-out. A 422 refusal is exit 20 whatever `--min` says.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+)]
 fn submit_fails_closed_by_default() {
     let root = tmpdir("closed");
     let net = Testnet::up(&root, 2);
@@ -659,6 +667,10 @@ fn witness_init_json_is_one_object() {
 
 /// `testnet up` twice is refused while the first is running.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "spawns witness child processes; on Windows the test runner's stdout pipe is inherited by them and the test never sees EOF (issue: testnet on Windows)"
+)]
 fn testnet_up_refuses_a_second_start() {
     let root = tmpdir("twice");
     let net = Testnet::up(&root, 2);
