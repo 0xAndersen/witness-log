@@ -24,6 +24,22 @@ mcp = ["mcp>=2"]
 langchain = ["langchain-core>=1.0"]
 crewai = ["crewai>=1.0"]
 openai-agents = ["openai-agents>=0.20"]
+langgraph = ["langgraph>=1.0", "langchain-core>=1.0"]
+google-adk = ["google-adk>=2.0"]
+pydantic-ai = ["pydantic-ai-slim>=2.0"]
+autogen = ["autogen-agentchat>=0.7", "autogen-core>=0.7"]
+llamaindex = ["llama-index-core>=0.14"]
+# Every adapter except crewai (its mcp<2 pin conflicts with the mcp extra).
+all-frameworks = [
+    "langchain-core>=1.0",
+    "langgraph>=1.0",
+    "openai-agents>=0.20",
+    "google-adk>=2.0",
+    "pydantic-ai-slim>=2.0",
+    "autogen-agentchat>=0.7",
+    "autogen-core>=0.7",
+    "llama-index-core>=0.14",
+]
 
 [project.scripts]
 witness-log-mcp = "witness_log.mcp_server:main"
