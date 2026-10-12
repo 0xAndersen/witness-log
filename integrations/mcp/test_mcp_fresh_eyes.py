@@ -83,6 +83,32 @@ async def test_errors_tell_the_agent_what_to_fix(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_intent_then_result_in_two_calls(tmp_path):
+    # 0.3.5 had no way to record a result after acting: calling
+    # append_audit_step "again later" appended a second intent.
+    async with Client(_params(tmp_path)) as c:
+        init = _data(await c.call_tool("initialize_witness_chain", {"session_id": "a"}))
+        i = _data(await c.call_tool("append_audit_step", {"session_id": "a", "intent": "pay", "tool_name": "pay"}))
+        r = _data(
+            await c.call_tool(
+                "record_result",
+                {"session_id": "a", "intent_index": i["intent_index"], "tool_name": "pay", "value": {"ok": True}},
+            )
+        )
+        assert r["result_index"] == i["intent_index"] + 1
+        d = _data(await c.call_tool("export_dossier", {"session_id": "a"}))["dossier"]
+        assert [l["leaf_type"] for l in d["leaves"]] == [1, 2]
+        rep = json.loads(wl.verify_dossier_json(json.dumps(d), 0.66, init["identity_pubkey"]))
+        assert rep["verdict"] == "unanchored"
+        bad = await c.call_tool("record_result", {"session_id": "a", "intent_index": 99, "tool_name": "pay"})
+        assert "no leaf at intent_index 99" in _error_text(bad)
+        bad = await c.call_tool(
+            "record_result", {"session_id": "a", "intent_index": 0, "tool_name": "pay", "outcome": "maybe"}
+        )
+        assert "outcome must be" in _error_text(bad)
+
+
+@pytest.mark.anyio
 async def test_submit_never_reads_local_files(tmp_path):
     secret = tmp_path / "secret.txt"
     secret.write_text("TOP-SECRET-CONTENT")

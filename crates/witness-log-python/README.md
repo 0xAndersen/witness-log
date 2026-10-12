@@ -86,7 +86,7 @@ primitives underneath are `add_checkpoint_body(old_size)` and
 
 | extra | gives you |
 |---|---|
-| `witness-log[mcp]` | the MCP server: `witness-log-mcp` (stdio), nine tools including `submit_to_witnesses` |
+| `witness-log[mcp]` | the MCP server: `witness-log-mcp` (stdio), ten tools including `submit_to_witnesses` |
 | `witness-log[langchain]` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` |
 | `witness-log[openai-agents]` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
 | `witness-log[crewai]` | `witness_log.integrations.crewai.witness_crewai` |

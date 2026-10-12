@@ -1,7 +1,7 @@
 # MCP integration: an audit trail for any MCP host, zero code
 
 The `witness-log` Python package ships an MCP server (`witness-log-mcp`,
-module `witness_log.mcp_server`) that exposes the whole system as nine
+module `witness_log.mcp_server`) that exposes the whole system as ten
 tools over the Model Context Protocol. Any host that speaks MCP (Claude
 Code, Claude Desktop, Cursor, Windsurf, Zed, VS Code Copilot agent mode,
 OpenAI Agents SDK via MCP, custom hosts) can give its agent a witnessable
@@ -14,6 +14,7 @@ launcher.
 |---|---|
 | `initialize_witness_chain(session_id, metadata?)` | create, or resume on boot, a log bound to an Ed25519 identity (idempotent) |
 | `append_audit_step(session_id, intent, tool_name, payload?, state_transition?)` | intent leaf (+ result leaf); returns a signed checkpoint and an inclusion proof |
+| `record_result(session_id, intent_index, tool_name, outcome="ok", value?)` | result leaf for an intent recorded earlier: intent before acting, result after (0.3.6+) |
 | `get_inclusion_proof(session_id, entry_index)` | proof a step is in the tree |
 | `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | the full verifier; tamper alerts; includes the last cosignatures while the head is unchanged |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload |
@@ -45,7 +46,7 @@ Then in `CLAUDE.md`:
 ```
 At the start of every session call initialize_witness_chain with session_id "<project>-<date>".
 Before any tool that changes files, money, or external state, call append_audit_step with the intent;
-after it, call append_audit_step with the result. At the end of the session call submit_to_witnesses
+after it, call record_result with the returned intent_index. At the end of the session call submit_to_witnesses
 and report the verdict.
 ```
 

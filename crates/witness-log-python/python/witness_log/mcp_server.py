@@ -270,7 +270,8 @@ async def append_audit_step(
         tool_name: The tool or action being invoked.
         payload: Arguments or inputs (JSON object, up to 1 MB encoded).
         state_transition: Outcome or new state after the step (JSON
-            object). Omit to record the intent only and call again later.
+            object). Omit to record the intent only, act, then call
+            record_result with the returned intent_index.
 
     Returns: the indices of the leaves written, a signed checkpoint over
     the whole tree (the receipt: anyone holding it can detect a later
@@ -293,6 +294,43 @@ async def append_audit_step(
             "result_index": result_index,
             "checkpoint": json.loads(log.checkpoint()),
             "inclusion_proof": _proof(log, last),
+            **_head(log),
+        }
+
+
+@_tool
+async def record_result(
+    session_id: str,
+    intent_index: int,
+    tool_name: str,
+    outcome: str = "ok",
+    value: Any = None,
+) -> Dict[str, Any]:
+    """Record the result of a step whose intent was recorded earlier.
+
+    The two-call form of append_audit_step: call append_audit_step
+    *before* acting (intent only, no state_transition), act, then call
+    this with the returned `intent_index`. The result leaf commits to
+    `{"tool", "intent_index", "outcome", "value"}`, the same shape the
+    Python `step` decorator writes. `outcome` is "ok" or "error"; `value`
+    is any JSON value (up to 1 MB encoded).
+
+    Returns: the result leaf's index, a signed checkpoint and an
+    inclusion proof for it.
+    """
+    if outcome not in ("ok", "error"):
+        raise ValueError(f'outcome must be "ok" or "error", got {outcome!r}')
+    log, lock = await _get(session_id)
+    payload = _payload_bytes({"tool": tool_name, "intent_index": intent_index, "outcome": outcome, "value": value})
+    async with lock:
+        if not 0 <= intent_index < log.tree_size():
+            raise ValueError(f"no leaf at intent_index {intent_index} (tree size {log.tree_size()})")
+        idx = log.append_result(payload)
+        await asyncio.to_thread(log.sync)
+        return {
+            "result_index": idx,
+            "checkpoint": json.loads(log.checkpoint()),
+            "inclusion_proof": _proof(log, idx),
             **_head(log),
         }
 
