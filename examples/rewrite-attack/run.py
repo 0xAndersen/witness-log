@@ -236,7 +236,7 @@ def main() -> int:
 
         step(7, "Two copies of the log in hand: `witness-log diff`")
         code, out = cli("diff", "honest.json", "rewritten.json", cwd=work)
-        show(out, keep=("Both claim", "signature:", "match root", "identical", "DIVERGENT", "EQUIVOCATION", "Both dossiers"), limit=8)
+        show(out, keep=("Both claim", "signature:", "match root", "identical", "DIVERGENT", "EQUIVOCATION"), limit=8)
         check(code == 30 and "EQUIVOCATION DETECTED" in out, f"diff: exit {code} (30 = equivocation, both copies signed by one key)")
 
         step(8, "Can the rewritten dossier ever reach WITNESSED?")
