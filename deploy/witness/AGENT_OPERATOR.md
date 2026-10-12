@@ -34,16 +34,16 @@ which takes several minutes on first boot. The Docker image
 
 ## 0. Where to run it (free, always-on)
 
-The witness is a 1 MB static binary that needs ~10 MB of RAM, a few MB of
+The witness is a ~2 MB binary (glibc 2.34+) that needs a few MB of RAM, a few MB of
 disk that must persist, and an inbound HTTPS port. Anything that sleeps
 without disk or wipes its disk on redeploy is unsuitable: a witness that
 forgets what it cosigned will contradict itself. Known-good free options:
 
 | provider | tier | notes |
 |---|---|---|
-| Oracle Cloud | Always Free: 2 AMD VMs or 4 ARM OCPUs, 200 GB block storage | the best free always-on choice; `aarch64` binary from the release page |
+| Oracle Cloud | Always Free: 2 AMD micro VMs, or Ampere A1 up to 2 OCPUs / 12 GB; 200 GB block storage | the best free always-on choice; idle Always Free VMs may be reclaimed, so snapshot the state volume; ARM: `cargo install` or the Docker image (no aarch64 Linux binary in v0.3.5) |
 | Google Cloud | e2-micro, 1 per account, always free (US regions) | 30 GB disk persists |
-| AWS | t2/t3.micro, 12 months free | expires; set a reminder |
+| AWS | new accounts: credits on a Free plan that ends after 6 months | temporary; set a reminder |
 | your own hardware | a Raspberry Pi, a NAS, a desk machine | needs a port forward or a tunnel (Cloudflare Tunnel is free) |
 
 Unsuitable: Render/Koyeb/Railway free tiers (ephemeral disk or sleep),

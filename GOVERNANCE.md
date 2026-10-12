@@ -102,6 +102,30 @@ stated here:
   supplementary, not load-bearing, for any quorum involving meaningful
   stakes.
 
+## Founding operators
+
+Organisations that run a witness listed in `registry/witnesses/` with
+`is_project_operated: false`, in the order their first entry was merged.
+The rule for being listed:
+
+- the entry passed `registry/validate.py`, including the live check that
+  its URL serves the registered key;
+- `operator_org` is the organisation that controls the machine and the key
+  (one line per organisation, however many witnesses it runs);
+- the witness was up on the [status page](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md)
+  for at least 7 days after registration.
+
+An organisation stays listed after it stops operating, marked "retired".
+An entry removed for mislabelling or equivocation is removed here too, with
+a one-line note of why.
+
+| # | operator_org | first registered | witness |
+|---|---|---|---|
+
+None yet. The first two are the milestone that makes WITNESSED reachable
+against the public registry:
+[Operator onboarding](https://github.com/0xAndersen/witness-log/blob/main/docs/wiki/Operator-Onboarding.md).
+
 ## Spec governance
 
 - All changes to `spec/SPEC.md` go through a public RFC process from the first pre-1.0 release

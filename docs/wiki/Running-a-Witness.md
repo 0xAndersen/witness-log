@@ -1,10 +1,19 @@
 # Running a witness
 
-A witness is a small always-on service (1 MB binary, ~10 MB RAM, a few MB of
-disk that must persist) that cosigns other people's logs over
+A witness is a small always-on service (~2 MB binary, a few MB of RAM, a
+state directory of a few KB plus one small record per log, which must
+persist) that cosigns other people's logs over
 `c2sp.org/tlog-witness`. Its one job is never to cosign two histories of
 the same log. Every witness adds capacity; a witness run by a **new
 organisation** adds independence, which is what the network needs most.
+
+New operator? Start with [Operator onboarding](Operator-Onboarding): why,
+cost, three two-minute paths, where to host, how to register.
+
+```sh
+docker run -d --name witness-log --restart unless-stopped -p 7380:7380 \
+  -v witness-log:/state -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
+```
 
 Full runbook: [`deploy/witness/OPERATORS.md`](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md).
 Agent-executable version: [`deploy/witness/AGENT_OPERATOR.md`](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/AGENT_OPERATOR.md).
@@ -37,7 +46,9 @@ exchange is needed.
 
 | file | use |
 |---|---|
-| `Dockerfile` | non-root image; volume at `/state` is the whole witness |
+| `Dockerfile.release` + `docker-entrypoint.sh` | the published image `ghcr.io/0xandersen/witness-log` (amd64, arm64); initialises `/state` from `WITNESS_ORG` on first start |
+| `cloud-init.yaml` | paste into a new VM: binary, systemd, Caddy, firewall |
+| `Dockerfile` | from-source, non-root image; volume at `/state` is the whole witness |
 | `docker-compose.yml` | witness + Caddy TLS |
 | `witness-log-witness.service` | hardened systemd unit (one witness) |
 | `witness-log-witness@.service` | template, one instance per name |
@@ -64,9 +75,16 @@ Oracle Cloud Always Free (ARM/AMD VMs, persistent disk) is the best
 zero-cost option; GCP e2-micro works; your own hardware behind Cloudflare
 Tunnel works. Free tiers that sleep or wipe their disk (Render, Koyeb,
 Railway free, HF Spaces, serverless) are unsuitable for the reason above.
+Current terms, prices and sources: [Operator onboarding](Operator-Onboarding#where-to-host-it).
 
 ## Register
 
 Add the entry `init` printed as `registry/witnesses/<org>-<name>.json` in a
 PR. CI validates it and cross-checks the key against your URL. See
 [Getting witnessed](Getting-Witnessed).
+
+## Status
+
+Every registered witness is probed every 10 minutes:
+[STATUS.md](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md),
+[status.json](https://raw.githubusercontent.com/0xAndersen/witness-log/status/status.json).
