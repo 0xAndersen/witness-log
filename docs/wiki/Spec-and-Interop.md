@@ -26,6 +26,18 @@ Consequence: an existing CT-style witness implementation can cosign
 witness-log heads with no witness-log-specific code, and `witness-log c2sp
 show --sign-with <journal> --raw` produces a note any C2SP verifier accepts.
 
+This is checked, not asserted: `clients/go/interop/` verifies the corpus
+vector's note and a freshly exported note (testnet, `submit`, `c2sp
+export`) with the reference libraries the ecosystem runs, `golang.org/x/mod`'s
+signed-note package and `transparency-dev/formats`' cosignature/v1
+verifier (the code behind OmniWitness, Tessera and witness-network.org),
+on every push that touches the Go client. What remains for a public
+witness to cosign a witness-log head is operational, not technical: its
+operator adds the log's origin and vkey to the witness's configuration,
+which is the same step every new log takes with those witnesses. Any
+operator who wants to try is the "run a witness" ask (#1) from the other
+side.
+
 ## Implementing in another language
 
 1. Reproduce `01_leaf_encoding.json` (encoding), `02_merkle_roots.json`, `03_inclusion_proofs.json`, `06_consistency_proof.json` (tree), `11_payload_hash.json` (§8 hash).

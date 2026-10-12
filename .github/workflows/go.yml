@@ -75,3 +75,23 @@ jobs:
           (cd clients/go && go build -o ../../target/witness-log-verify ./cmd/witness-log-verify)
       - name: compare reports
         run: clients/go/testdata/compare-with-rust.sh
+
+  reference-interop:
+    # witness-log's C2SP notes checked by the libraries other transparency
+    # logs and witnesses run (x/mod signed notes, transparency-dev/formats
+    # cosignature/v1), not by witness-log's own parsers: the corpus vector
+    # and a live testnet round through `c2sp export`. Issue #11.
+    name: C2SP notes verify with the reference libraries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/go/interop/go.mod
+          cache-dependency-path: clients/go/interop/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build the CLI
+        run: cargo build -q --release -p witness-log-cli
+      - name: interop tests
+        working-directory: clients/go/interop
+        run: go test ./... -count=1 -v
