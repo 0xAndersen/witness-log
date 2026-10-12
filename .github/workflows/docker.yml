@@ -160,13 +160,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name w -p 7380:7380 -v wstate:/state -e WITNESS_ORG="CI Smoke Test" witness-log:smoke
+          docker run -d --name wl-smoke -p 7380:7380 -v wstate:/state -e WITNESS_ORG="CI Smoke Test" witness-log:smoke
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:7380/health && break; sleep 1; done
           k1=$(curl -fsS http://127.0.0.1:7380/ | jq -r .pubkey_hex)
-          docker kill w && docker start w
+          docker kill wl-smoke && docker start wl-smoke
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:7380/health && break; sleep 1; done
           k2=$(curl -fsS http://127.0.0.1:7380/ | jq -r .pubkey_hex)
-          docker logs w
+          docker logs wl-smoke
           test -n "$k1" && test "$k1" = "$k2"
           test "$(curl -fsS http://127.0.0.1:7380/ | jq -r .software)" = "witness-log ${{ steps.tags.outputs.version }}"
       - name: build and push linux/amd64 + linux/arm64
