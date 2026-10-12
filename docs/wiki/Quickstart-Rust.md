@@ -8,12 +8,29 @@ shape it does. Code first, explanation under it.
 
 MSRV 1.75. No `unsafe`. Dependencies are audited with `cargo deny` in CI.
 
+Everything on this page compiles against this `Cargo.toml`. The three
+crates after the witness-log ones are used directly by the snippets
+(`ed25519_dalek::SigningKey` in §5, `serde_json` in §3 and §6, `hex` if
+you print raw hashes); they are already dependencies of
+`witness-log-core`, so they add nothing to your build, but Rust needs them
+named to let you `use` them:
+
 ```toml
 [dependencies]
-witness-log-core    = "0.3.6" # log, Merkle tree, identity, redaction, journal, C2SP encoding
-witness-log-network = "0.3.6" # witnesses, directories, quorum, dossiers, verification
-# from crates.io; or { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.6" }
+witness-log-core    = "0.3.6"   # log, Merkle tree, identity, redaction, journal, C2SP encoding
+witness-log-network = "0.3.6"   # witnesses, directories, quorum, dossiers, verification
+ed25519-dalek       = "2.1"     # SigningKey, for evidence windows and embedding a witness (§5, §7)
+serde_json          = "1"       # dossiers and directories are serde structs
+hex                 = "0.4"     # only if you print or parse raw 32-byte hashes yourself
+# from crates.io; or, for an unreleased fix:
+# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.3.6" }
 ```
+
+The versions of `ed25519-dalek`, `serde_json` and `hex` match the
+workspace's own (`Cargo.toml` at the repository root), so there is one copy
+of each in your dependency graph. The snippets below, pasted in order into
+one `main.rs`, build and run against these versions; that check is part of
+how this page is maintained.
 
 **Why two crates.** `core` is everything a single process needs to keep a
 provable history of itself, with no I/O beyond a file. `network` is
@@ -124,8 +141,9 @@ Note that the algorithm name and the public key are *inside* the signed
 bytes. An earlier draft had them alongside, and that is the textbook
 setup for an algorithm-downgrade attack: nothing stops an attacker from
 relabelling `sig_alg` after signing. Putting them inside the message closes
-it. The `sig_alg` field exists for crypto-agility (ML-DSA is the named
-candidate) without a format break.
+it. The `sig_alg` field exists for crypto-agility without a format break;
+today the only accepted value is `"ed25519"`, and ML-DSA-44 is planned
+with its identifier reserved but not yet assigned (spec §6).
 
 **`Dossier`.** A plain `serde` struct, so it round-trips to JSON and is
 checked against `spec/dossier.schema.json` in CI. It carries the identity,
@@ -177,10 +195,17 @@ let key = ed25519_dalek::SigningKey::from_bytes(&log.log().identity_bytes());
 let window = log.log().evidence_window(100..200, &key);
 assert!(window.verify().is_ok());
 
-let proof = log.log().inclusion_proof(42);              // leaf 42 is in the current root
-let consistency = log.log().consistency_proof(1_000);   // size 1000 → now, nothing rewritten
-let receipt = log.log().write_receipt(42);              // "I accepted this payload_hash at size N"
+let proof = log.log().inclusion_proof(42);              // Some(path) if leaf 42 exists, else None
+let consistency = log.log().consistency_proof(1_000);   // Some(proof) size 1000 → now; None if 1000 > size
+let receipt = log.log().write_receipt(42);              // Some(receipt): "I accepted this payload_hash at size N"
 ```
+
+`inclusion_proof`, `consistency_proof` and `write_receipt` return `Option`:
+`None` means the index or size does not exist in this tree, not an error.
+`evidence_window` in 0.3.6 **clamps** a range that runs past the tree
+(`100..200` on a 150-leaf log yields 50 entries, silently); 0.4.0 plans to
+refuse an out-of-range window instead, so check `window.entries.len()`
+against what you asked for until then.
 
 **`EvidenceWindow`** answers the commonest compliance request: "show me
 what the agent did between 09:00 and 09:05" without revealing anything
@@ -240,12 +265,15 @@ in words which gate applied.
 ## 7. Run a witness inside your own server
 
 ```rust
-use witness_log_network::tlog_witness::{AddCheckpointRequest, WitnessService};
+use witness_log_network::tlog_witness::{AddCheckpointRequest, WitnessService, WitnessState};
 
+// `persisted_state: WitnessState` is what you wrote to disk last time (serde);
+// `WitnessService::new().export_state()` for a brand-new witness.
 let mut svc = WitnessService::from_state(&persisted_state)?;
-// per POST /add-checkpoint:
-let req = AddCheckpointRequest::parse(&body)?;
-let outcome = svc.handle_add_checkpoint(&req, "witness.example/w1", &signing_key, now_unix);
+// per POST /add-checkpoint, with `body: &str` the request body and
+// `signing_key: &ed25519_dalek::SigningKey` the witness key:
+let req = AddCheckpointRequest::parse(body)?;
+let outcome = svc.handle_add_checkpoint(&req, "witness.example/w1", &signing_key, now_unix_seconds);
 persist(&svc.export_state())?;                 // fsync BEFORE replying
 let (status, (body, content_type)) = (outcome.http_status(), outcome.http_body());
 ```

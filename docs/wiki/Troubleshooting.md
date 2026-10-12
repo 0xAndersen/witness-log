@@ -48,6 +48,43 @@ a reboot, a container that was killed), `JournaledLog.force_unlock(path)`.
 On Linux a lock whose PID is dead is reclaimed automatically; this error
 only appears when the PID is alive.
 
+**`journal is already open: lock file agent.jsonl.lock is held by a live process` and the live process is *you*.**
+The lock records the PID that holds it. If your own process opens the
+same journal twice (a notebook cell re-run, `witness_log.open()` called in
+two places, a test that forgot `log.close()`), the second open sees a lock
+held by a PID that is alive (its own) and refuses, because the lock cannot
+tell "same process, second handle" from "another writer". Keep one handle
+per journal, or `log.close()` the first before opening again. The lock is
+never reclaimed while the PID lives, by design; `force_unlock` works but
+means two handles, which is exactly the fork the lock exists to prevent.
+
+**The Python `OSError` message mentions `JournaledLog::force_unlock`, Rust syntax.**
+Same error as above, raised through the binding; the message text comes
+from the Rust core (0.3.6). In Python the call is
+`witness_log.JournaledLog.force_unlock(path)`. 0.4.0 plans to word the
+message for the language it is raised in.
+
+**`this journal is sealed (header holds only identity_pubkey_hex); resume it with the identity seed`.**
+A sealed journal (`open(..., seal=True)` / `create_sealed`) stores no
+seed, so a plain `open(path)` / `resume(path)` cannot derive the identity.
+Pass the seed every time: `witness_log.open(path, identity_seed=seed)` in
+Python, `JournaledLog::resume_with_identity(path, &seed)` in Rust. A wrong
+seed fails with `supplied identity seed does not match the public key this
+sealed journal was created with`: the header pins the public key, so a
+stranger's seed cannot continue your history. In 0.3.6 the CLI
+(`witness submit`, `c2sp show --sign-with`) cannot open a sealed journal at
+all and exits 2; `--identity-seed-env NAME` / `--identity-seed-file PATH`
+are planned for 0.4.0. Until then export a dossier from Python or Rust and
+submit that, or keep the submitting process the one that holds the seed.
+
+**`evidence_window(start, end)` returned fewer entries than the range.**
+0.3.6 clamps the range to the tree: `evidence_window(100, 200)` on a
+150-leaf log returns 50 entries and does not complain, and a range that
+starts past the end returns an empty window whose `verify()` succeeds
+(nothing to check). Compare `len(window.entries)` with what you asked for.
+0.4.0 plans to refuse an out-of-range window with an error naming the tree
+size.
+
 **`resume` reports `dropped_trailing_lines > 0`.**
 A crash tore the last line. The partial line was discarded and the file
 truncated to the last complete leaf. You lost at most the event in flight.
@@ -100,10 +137,33 @@ CPython ≥3.9 (abi3). Install the one matching `python -c "import sysconfig;pri
 
 ## Submitting to witnesses
 
-**`409` from a witness.**
-Normal. It remembers a different size than your `old`. The CLI and MCP
-server resend automatically with a consistency proof; if you wrote your own
-client, read the body (the witness's size, decimal) and resubmit from it.
+**`409` from a witness (`Content-Type: text/x.tlog.size`, body is a number).**
+Normal: your checkpoint was stale relative to what the witness remembers,
+or your `old` line was wrong. The body is the size it last cosigned for
+your log, in decimal (`4\n`). The CLI and MCP server resend automatically
+with a consistency proof from that size; if you wrote your own client,
+resubmit with `old <that size>` and the proof lines
+`consistency_proof(that_size)`. A 409 loop (the same 409 twice) means your
+journal is *smaller* than what the witness holds: you restored a backup or
+have two writers; see "Two machines, one identity" above. A witness never
+cosigns on a 409; it only tells you where it is.
+
+**`422` from a witness.**
+Two different causes share the code, both "I will not cosign this":
+- *consistency proof failed*, *same size, different root*, or a proof sent
+  from size 0 for a log it already knows: your submitted history does not
+  extend what the witness remembers. If you are the honest operator you
+  restored a backup or ran two writers. If **both** checkpoints were signed
+  by your key the witness has written an evidence file; that is permanent.
+  A bad proof on its own is not recorded as evidence (anyone can attach a
+  junk proof to an honest checkpoint).
+- *unknown origin* on a witness without `--open-enrollment` is a `404`,
+  not a 422; a 422 for a log the witness has never seen means the note's
+  origin is not the canonical `witness-log/<identity hex>` of the key that
+  signed it, or the size-0 checkpoint does not carry the empty-tree root.
+`submit` in 0.3.6 prints the 422 per witness but exits 0 if at least
+`--min` others cosigned (default 1); 0.4.0 plans to exit non-zero on any
+422.
 
 **`422 consistency proof failed`.**
 Your submitted history does not extend what the witness remembers. If you
@@ -116,6 +176,24 @@ The local cache `agent.jsonl.witnesses.json` says a witness holds a larger
 or different head than this journal. This is the guard that stops a
 restored backup from equivocating. Find the current journal; do not delete
 the cache to force it.
+
+**`submit --min N` exits 1 with every witness line showing `✓ cosigned`.**
+`N` is larger than the number of witnesses in the directory, so the gate
+can never be met; 0.3.6 prints the per-witness lines and the summary and
+exits 1 without naming the cause. Check `jq '.witnesses | length'
+trusted.json`. The same happens when the directory is the (empty) public
+registry: `0/0 witnesses cosigned`. 0.4.0 plans to default `--min` to a
+majority of the directory and to say when `--min` exceeds it.
+
+**`select_witnesses(...)` returns a JSON string, not a list / "expected a directory object".**
+The Python helper takes the directory as a JSON *string* (`directory_json`),
+the subject identity hex, and `want`, and returns a JSON string: a bare
+array of directory entries, which `jq -s` or `json.loads` turn into a list.
+Wrap it as `{"witnesses": json.loads(picked)}` before passing it to
+`submit`/`verify` as a directory file, or pass the bare array (both shapes
+are accepted). Passing a Python dict instead of a string raises a type
+error. `select_diverse_witnesses` has the same shape and picks one witness
+per operator only.
 
 **`429` / `503` with `Retry-After`.**
 Rate limited (default 16 connections and 600 enrollments per minute per
@@ -147,6 +225,18 @@ them, so a typo such as `--mni 2` silently meant `--min 1`).
 **`warning: trusted directory entry ... has a malformed pubkey`.**
 That entry can never match a receipt. Fix the directory; `witness init`
 prints a correct entry.
+
+**The registry PR fails: `says operator_org is 'example org', entry says 'Example Org'`.**
+`registry/validate.py` fetches `GET /` from the entry's URL and requires
+`directory_entry.operator_org` to equal the file's `operator_org` byte for
+byte: case, spacing, everything. Fix the file to match what the witness
+serves (it is what you passed to `witness init --org`), or re-`init` with
+the spelling you want. This is a registration rule so the file, the
+witness and the operator agree on one string; the *verifier* folds case
+and collapses whitespace when it scores operators, so `Example Org` and
+`example org` are one operator to a verdict either way, and `verify` prints
+labels lowercased. Public registry URLs must also be `https://` and not a
+loopback address.
 
 **All witnesses in my directory are mine; verdict stays CONSISTENT-UNWITNESSED.**
 Correct. Independence is scored by `operator_org`, and a fleet of 100 under
@@ -203,6 +293,14 @@ Some witnesses were unreachable or rate-limited; the result lists each
 outcome. `min_witnesses` controls whether that counts as success.
 
 ## CI and builds
+
+**`cargo publish` fails with `A verified email address is required to publish crates to crates.io`.**
+Not a code problem. The crates.io account doing the publish (the owner of
+the token in `CARGO_REGISTRY_TOKEN`) has no verified email. Log in to
+crates.io, Account Settings → Email, add and verify an address, then
+re-run the `publish-crates` workflow; no new tag is needed because nothing
+was published. The same message appears for a token that belongs to a
+different account than the one you expected.
 
 **`cargo deny` fails.**
 Run `cargo deny --config deny.toml check` from the workspace root; the
