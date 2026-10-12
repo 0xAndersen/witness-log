@@ -31,9 +31,11 @@ This specification makes the record a cryptographic object:
   snapshots can be proven to be the same history extended (consistency).
   Rewriting, reordering or removing an entry changes the root.
 - **Non-repudiable.** Every checkpoint is signed by the log's long-lived
-  Ed25519 identity key; every leaf by a session key that identity bound.
-  A record a verifier accepts was signed by that identity, and only that
-  identity could have produced it.
+  Ed25519 identity key, and covers every leaf. Leaves are not individually
+  signed: each records the session key that wrote it, and the identity
+  signs a binding for each session key (§5). A record a verifier accepts
+  was committed to by that identity, and only that identity could have
+  produced it.
 - **Witnessed.** Independent third parties cosign checkpoints and refuse
   to cosign a history that does not extend what they already signed. A
   log cannot show one history to one party and another to a second
@@ -67,23 +69,23 @@ and independent third-party witnessing of those checkpoints. See
 `GOVERNANCE.md` for why, and `THREAT_MODEL.md` for exactly what this does
 and does not guarantee.
 
-WitnessLog aims for wire-format compatibility with `draft-maintainer-1f916-agent-record`
-where the underlying primitive is the same (Merkle construction, checkpoint
-signing). Known divergences are noted inline at the point they occur (see
-§3.3's `ExternalAnchor`, which has no counterpart in that draft) rather
-than centralized in one comparison section — a dedicated divergence list
-is tracked as future work, not written yet. Do not treat the absence of
-an inline note as confirmation of full alignment; verify against the
+WitnessLog shares its model and its four verdict names with
+`draft-maintainer-1f916-agent-record` (individual draft, Informational),
+but it is **not** wire-compatible with that draft: the draft uses
+colon-delimited payloads, its own witness countersignature rather than
+C2SP, shared registries rather than per-agent logs, and counts unsigned
+refusals as evidence. The divergence list is maintained in the wiki's
+SCITT mapping page (`docs/wiki/SCITT-Mapping.md`). Verify against the
 draft text directly for anything load-bearing.
 
 ### 1.1 Which layer this is, and which layers it deliberately isn't
 
 Trust infrastructure for autonomous agents decomposes into separable
-layers, not one monolithic system — this is the same conclusion the IETF's
-proposed AUDIT working group has converged on independently (composing
-RATS for attestation, SCITT for transparency, WIMSE for identity, and
-OAuth for authorization, rather than inventing a single system that does
-all four). WitnessLog deliberately occupies the **transparency** layer only:
+layers, not one monolithic system — the decomposition described in
+`draft-kuehlewind-audit-architecture` (an individual draft, not a working
+group document), which composes RATS for attestation, SCITT for
+transparency, WIMSE for identity and OAuth for authorization rather than
+inventing a single system that does all four. WitnessLog deliberately occupies the **transparency** layer only:
 
 - **Attestation** ("is this record authentic?") — a signature check.
   WitnessLog does this minimally, at the leaf and checkpoint level, but does

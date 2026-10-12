@@ -557,14 +557,29 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
                 let pid = pid.trim();
                 // Tell a crashed holder from a live one where the OS lets
                 // us; anywhere else, fail safe and ask the operator.
-                if process_alive(pid) == Some(false) {
+                //
+                // A lock naming OUR OWN pid cannot be held by a live
+                // witness: we have not taken it yet. It was left by an
+                // earlier process that had the same pid -- always the case
+                // in a container (the witness is pid 1 on every start, so
+                // `docker kill` + `start` refused forever) and possible on
+                // a host after a reboot.
+                let own = pid == std::process::id().to_string();
+                if own || process_alive(pid) == Some(false) {
                     // Narrow the race with another restarting process: only
                     // remove the file if it still names the dead pid.
                     let again = fs::read_to_string(&p).unwrap_or_default();
                     if again.trim() == pid {
-                        eprintln!(
-                            "removing stale witness.lock left by pid {pid}, which is no longer running"
-                        );
+                        if own {
+                            eprintln!(
+                                "removing stale witness.lock naming pid {pid}, this process's own pid \
+                                 (left by an earlier run with the same pid, e.g. pid 1 in a container)"
+                            );
+                        } else {
+                            eprintln!(
+                                "removing stale witness.lock left by pid {pid}, which is no longer running"
+                            );
+                        }
                         let _ = fs::remove_file(&p);
                     }
                     continue;
@@ -1236,4 +1251,36 @@ fn submit_one(
         }
     }
     Err("no cosignature after 5 attempts (size changes or rate limiting)".into())
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    /// `docker kill` then `docker start`: the witness is pid 1 both times,
+    /// so the lock left behind names the new process's own pid. Before
+    /// 0.3.6 `process_alive` saw itself and the witness refused to start
+    /// forever (found by the operator-kit work).
+    #[test]
+    fn a_lock_naming_our_own_pid_is_stale() {
+        let dir = std::env::temp_dir().join(format!(
+            "wl-lock-own-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("witness.lock"),
+            format!("{}\n", std::process::id()),
+        )
+        .unwrap();
+        let lock = acquire_lock(&dir).expect("a lock naming our own pid must be taken over");
+        assert!(lock.still_ours());
+        drop(lock);
+        assert!(!dir.join("witness.lock").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

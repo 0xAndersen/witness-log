@@ -109,30 +109,24 @@ fn strict_prefix_is_not_reported_as_equivocation() {
 }
 
 #[test]
-fn divergence_at_leaf_zero_explains_salting_instead_of_accusing() {
-    // Two logs sharing ONE identity but built independently from leaf 0.
-    // Payload hashes are salted per log instance, so these diverge
-    // immediately even with identical content. The tool must explain
-    // that rather than reporting equivocation — a false accusation here
-    // would be a serious defect.
+fn divergence_at_leaf_zero_under_one_identity_is_equivocation() {
+    // Two histories signed by ONE identity key from leaf 0: a whole-history
+    // rewrite, or two journals from the same seed. Under the canonical
+    // origin the key names the log, witnesses refuse the second history
+    // with 422 + evidence, and diff must say the same thing. Before 0.3.6
+    // it printed "usually means these are two SEPARATE logs" and never
+    // "EQUIVOCATION DETECTED", which hid exactly the rewrite an outside
+    // evaluation used to compare witness-log with other tools.
     let (a, b) = common::write_same_identity_separate_logs(b"identical content");
     let (code, out) = run_diff(a.path(), b.path());
-    assert_eq!(
-        code, EXIT_DIVERGED,
-        "still a failure, but for a different reason\n{out}"
-    );
+    assert_eq!(code, EXIT_DIVERGED, "{out}");
+    assert!(out.contains("EQUIVOCATION DETECTED"), "{out}");
+    assert!(out.contains("the very first leaf"), "{out}");
     assert!(
-        out.contains("SEPARATE logs"),
-        "must explain these are separate logs, not an equivocating one: {out}"
+        out.contains("same seed deployed twice"),
+        "must explain the same-seed case: {out}"
     );
-    assert!(
-        out.contains("salted per log instance"),
-        "must explain WHY: {out}"
-    );
-    assert!(
-        !out.contains("EQUIVOCATION DETECTED"),
-        "must NOT accuse two unrelated logs of equivocating: {out}"
-    );
+    assert!(!out.contains("SEPARATE logs"), "{out}");
 }
 
 #[test]

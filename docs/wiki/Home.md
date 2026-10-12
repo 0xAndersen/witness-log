@@ -16,15 +16,15 @@ Python bindings, MCP server, CLI.
 | give Claude Code / Claude Desktop / Cursor / any MCP host an audit trail with zero code | [MCP integration](MCP-Integration) |
 | wire it into LangChain, LangGraph, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex | [Framework guides](Framework-Guides) |
 | use it from TypeScript / Node / Go / anything else | [Other languages](Other-Languages) |
-| follow a complete worked example | [Tutorial: audit a payments agent](Tutorial-Audit-a-Payments-Agent) · [Tutorial: multi-agent handoff](Tutorial-Multi-Agent-Handoff) |
+| follow a complete worked example | [Tutorial: audit a payments agent](Tutorial-Audit-a-Payments-Agent) · [Tutorial: multi-agent handoff](Tutorial-Multi-Agent-Handoff) · [Tutorial: AP2 mandates](Tutorial-AP2-Mandates) |
 | know what WITNESSED actually proves, and read a verify report | [Verification and verdicts](Verification-and-Verdicts) |
 | understand the witness protocol on the wire (200/409/422) | [Witness protocol walkthrough](Witness-Protocol-Walkthrough) |
 | understand erasure, keys and sessions in depth | [Redaction explained](Redaction-Explained) · [Keys and identity](Keys-and-Identity) |
-| run a witness (one, a fleet, or let an agent do it) | [Running a witness](Running-a-Witness) |
+| run a witness in two minutes (docker one-liner, cloud-init paste, binary) | [Operator onboarding](Operator-Onboarding) · [Running a witness](Running-a-Witness) · [live status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) |
 | get my logs WITNESSED | [Getting witnessed](Getting-Witnessed) |
 | use it for GDPR / SOC 2 / EU AI Act / audit evidence | [Compliance](Compliance) |
 | know what it does *not* protect against | [Threat model](Threat-Model) |
-| implement the wire format in another language | [Specification and interoperability](Spec-and-Interop) |
+| implement the wire format in another language, or map it to SCITT | [Specification and interoperability](Spec-and-Interop) · [SCITT mapping](SCITT-Mapping) |
 | operate it in production (backups, keys, locks, scale) | [Operations](Operations) |
 | see the numbers (268 tests, 100 scenarios, 3,000 agents) | [Testing and evidence](Testing-and-Evidence) |
 | fix something that is not working | [Troubleshooting](Troubleshooting) |

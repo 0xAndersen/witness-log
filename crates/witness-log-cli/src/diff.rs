@@ -178,34 +178,24 @@ pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {
                 short(&lb.payload_hash)
             );
             println!();
-            if i == 0 {
-                // Salts are per-log-instance, so two SEPARATELY created logs
-                // never share a payload_hash even for byte-identical content.
-                // Diverging at leaf 0 almost always means the caller compared
-                // two different logs rather than two copies of one log —
-                // worth saying plainly, because the alternative reading
-                // ("this log equivocated from its very first entry") is a
-                // dramatic accusation to leave someone with by mistake.
-                println!(
-                    "  \u{26A0} Divergence at the very first leaf usually means these are two"
-                );
-                println!("  SEPARATE logs, not two copies of one log.");
-                println!();
-                println!("  Payload hashes are salted per log instance (that's what makes");
-                println!("  redaction possible), so two independently-created logs never share");
-                println!("  a payload hash even when the logged content is byte-identical.");
-                println!();
-                println!("  Equivocation means one log, copied to two parties, whose copies");
-                println!("  disagree. If that's what you have, expect an identical prefix");
-                println!("  followed by a divergence — not a divergence at leaf 0.");
-                println!();
-                return ExitCode::from(30);
-            }
+            // Divergence at leaf 0 used to be explained away as "probably two
+            // separate logs". Under the canonical-origin rule
+            // (`witness-log/<identity hex>`, SPEC §9.3) the identity key IS
+            // the log's name: two histories signed by one key are two
+            // histories of one log, whether the operator rewrote it from the
+            // start or ran a second journal from the same seed. Witnesses
+            // treat both identically (422 + evidence), so diff must too. The
+            // hedge also hid the most important case: a whole-history rewrite.
+            let from = if i == 0 {
+                "the very first leaf".to_string()
+            } else {
+                format!("leaf {i} onward")
+            };
             println!("  \u{26A0} EQUIVOCATION DETECTED");
             println!();
             println!("  Both dossiers are validly signed by the same identity. Both are");
             println!("  internally consistent. They commit to different histories from");
-            println!("  leaf {i} onward.");
+            println!("  {from}.");
             println!();
             println!("  Neither copy is \"the wrong one\" — that is precisely the finding.");
             println!("  A log that signs two different histories has equivocated, and no");
@@ -214,6 +204,13 @@ pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {
             println!("  This is what a witness network prevents: witnesses countersign");
             println!("  checkpoints continuously, so a second history cannot be presented");
             println!("  without contradicting a receipt someone already holds.");
+            if i == 0 {
+                println!();
+                println!("  A divergence from the very first leaf is either a whole-history");
+                println!("  rewrite or two journals run from one identity seed (for example the");
+                println!("  same seed deployed twice). The key names the log (SPEC §9.3), so");
+                println!("  witnesses refuse either one the same way; use one identity per log.");
+            }
             println!();
             ExitCode::from(30)
         }

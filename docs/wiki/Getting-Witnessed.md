@@ -36,7 +36,16 @@ witnesses. Three ways to grow it:
    parties who already transact is exactly the property an audit trail wants.
 3. Public witnesses from the Certificate Transparency ecosystem can cosign
    witness-log checkpoints without any witness-log-specific code (same
-   protocol); see [Spec and interop](Spec-and-Interop).
+   protocol and note format); see [Spec and interop](Spec-and-Interop).
+   One practical difference: those witnesses (OmniWitness, litewitness,
+   the witness-network.org lists) are configured one log origin at a time,
+   with the origin and its Ed25519 vkey added by the operator. witness-log
+   origins are per agent (`witness-log/<identity hex>`), so they cosign
+   only the agent logs someone has added to their configuration. Open
+   enrollment, where the origin itself is the key and no configuration is
+   needed, exists only in witness-log's own witness; the quickest path for
+   such an operator is to run it beside their existing witness
+   ([Operator onboarding](Operator-Onboarding)).
 
 ## What a verifier should demand
 

@@ -167,13 +167,16 @@ schemes, x402, UCAN) prove a principal *authorized* an action; none of them
 detects the operator later rewriting its own record of what the agent did
 with that authority. SCITT (RFC 9943) standardises transparency receipts;
 witness-log's leaves, checkpoints and C2SP witnessing are the same shape of
-primitive applied per agent, with erasure and intent/result semantics added.
+primitive applied per agent, with erasure and intent/result semantics added
+([SCITT mapping](docs/wiki/SCITT-Mapping.md)).
 Record the mandate hash as an `AuthorizationEvent` scope (`record_authorization`
 over MCP, `append_authorization_event` in Python or Rust), get the head
 witnessed, and `witness-log bind` later proves both parties committed to the
-same mandate while `verify` proves neither side's history moved. The
+same mandate while `verify` proves neither side's history moved
+([AP2 mandates tutorial](docs/wiki/Tutorial-AP2-Mandates.md), runnable). The
 [Comparison](docs/wiki/Comparison.md) page covers Tessera, immudb, Signet,
-Microsoft AGT and others by property.
+Microsoft AGT, Agent Receipts and SCITT, each with its own page written from
+primary sources; corrections welcome by PR.
 
 ## What makes it different
 
@@ -219,10 +222,16 @@ dossier = log.to_dossier_json()                                  # hand this to 
 print(witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex()))
 ```
 
-[Quickstart: Python](docs/wiki/Quickstart-Python.md) explains every line. For agents that speak MCP,
-[`integrations/mcp`](integrations/mcp) exposes the same capability as nine tools (provision a chain on boot,
-record every step, record handoffs and authorizations between agents, prove any step, erase on request, get
-witnessed) for Claude Code, Claude Desktop, Cursor or any MCP host, with no code.
+[Quickstart: Python](docs/wiki/Quickstart-Python.md) explains every line. To get witnessed while the agent
+runs, without ever blocking it: `w = witness_log.Witnesser(log, "trusted.json", "agent.jsonl")`, call
+`w.request()` after steps (it never blocks or raises), then `w.flush(timeout=30)` and `w.dossier()`.
+
+Framework adapters ship as extras: `pip install "witness-log[langchain]"` (or `[openai-agents]`, `[crewai]`);
+see [Framework guides](docs/wiki/Framework-Guides.md). For agents that speak MCP,
+`pip install "witness-log[mcp]"` then `witness-log-mcp` exposes the same capability as ten tools (provision a
+chain on boot, record each step's intent before acting and its result after, record handoffs and authorizations
+between agents, prove any step, erase on request, get witnessed) for Claude Code, Claude Desktop, Cursor or any
+MCP host, with no code.
 
 ### Rust
 
@@ -261,22 +270,40 @@ assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 | `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
 | `witness-log conform <dir>` | check another implementation against the corpus |
 
-Go, TypeScript and shell integrate by writing the dossier (schema: `spec/dossier.schema.json`), shelling out to
-`verify`, and branching on the exit code: [Other languages](docs/wiki/Other-Languages.md).
+TypeScript: [`clients/typescript`](clients/typescript) (`@witness-log/client`) gives typed verdicts from the CLI
+and `step()`/`verify()` over MCP, with no cryptography reimplemented in JavaScript. Go and shell integrate by
+writing the dossier (schema: `spec/dossier.schema.json`), shelling out to `verify`, and branching on the exit
+code: [Other languages](docs/wiki/Other-Languages.md).
 
 ---
 
 ## Run a witness, get witnessed
 
+**The public registry is empty today.** WITNESSED needs two independent operators, so the first two
+organisations to register unlock it for everyone. One line on any always-on box with a persistent disk:
+
+```sh
+docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witness-log:/state \
+  -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
+```
+
+Or paste [`deploy/witness/cloud-init.yaml`](deploy/witness/cloud-init.yaml) into a new VM's user-data box and
+it comes up with TLS on its own. Start here: [Operator onboarding](docs/wiki/Operator-Onboarding.md). Live
+status of every registered witness: [STATUS.md](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md)
+([JSON](https://raw.githubusercontent.com/0xAndersen/witness-log/status/status.json)).
+
+By hand:
+
 ```sh
 witness-log witness init ./w1 --name w1.example.org/witness --org "Example Org" --url https://w1.example.org --compute hetzner
-witness-log witness serve ./w1 --listen 127.0.0.1:7380 --open-enrollment       # 1 MB binary, ~10 MB RAM
+witness-log witness serve ./w1 --listen 127.0.0.1:7380 --open-enrollment       # ~2 MB binary, a few MB of RAM
 ```
 
 `--open-enrollment` accepts any log whose origin is `witness-log/<its identity key>`: the origin *is* the key, so
 there is no registration and nothing to trust on first use. Then, as an agent:
 
 ```sh
+jq -s '{witnesses: .}' w1.json w2.json > trusted.json       # `witness init` prints each entry as JSON on stdout
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
 witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json      # exit 0 = WITNESSED
 ```
@@ -296,7 +323,8 @@ from it. The registry starts empty: the first independent operator is the one th
 
 ## Evidence
 
-Every push runs 268 Rust tests, the Python and MCP suites, clippy and rustdoc with `-D warnings`,
+Every push runs 290 Rust tests plus proptest properties for inclusion and consistency, the Python and MCP suites,
+the TypeScript client tests, an overhead budget, clippy and rustdoc with `-D warnings`,
 `cargo deny`, the conformance corpus, ten live witnesses through ten scenarios, 100 scenarios against the
 *released* CLI and wheel, and a 200-agent swarm, on Linux, macOS and Windows.
 
@@ -315,7 +343,8 @@ in 0.3.4: a verifier hang on absurd tree sizes, anchor proofs not bound to their
 sub-majority gate silently, `submit` failing on bare paths, cross-agent leaves being Rust-only, and the identity
 seed always on disk. The one test that separated witness-log from every competitor it was run against: when the
 operator rewrote the whole history with its own key, the others accepted it; the witnesses refused (422) and
-produced proof. `examples/swarm/`
+produced proof. Reproduce that one in a second: `python3 examples/rewrite-attack/run.py` (two local witnesses,
+the 422, the evidence file verified, `diff` flagging equivocation). `examples/swarm/`
 reproduces all of it; [Testing and evidence](docs/wiki/Testing-and-Evidence.md) explains what each layer checks.
 
 ---
@@ -333,11 +362,14 @@ witness-log/
 ├── corpus/               # 11 deterministic conformance vectors
 ├── docs/wiki/            # the wiki source (auto-published); docs/assets/ holds the graphics above
 ├── brand/                # logo mark, wordmark, palette
-├── integrations/mcp/     # MCP server: the audit trail as tools for any MCP-capable agent
-├── examples/             # sample dossier, verify_demo.py, live-network/ (10 witnesses), swarm/ (100 scenarios, 3,000 agents)
+├── integrations/mcp/     # MCP server shim (the server ships in the wheel: witness-log-mcp)
+├── clients/typescript/   # @witness-log/client
+├── examples/             # sample dossier, verify_demo.py, rewrite-attack/ (the same-key rewrite, refused),
+│                         # live-network/ (10 witnesses), swarm/ (100 scenarios, 3,000 agents)
 ├── deploy/witness/       # Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
 ├── registry/             # the public witness list (PR-registered, CI-validated) and directory builder
-├── fuzz/                 # cargo-fuzz targets
+├── fuzz/                 # cargo-fuzz targets (scheduled daily)
+├── docs/SECURITY-AUDIT-BRIEF.md  # scoped brief for an independent review of core + verify
 ├── THREAT_MODEL.md       # what this proves, what it doesn't
 ├── GOVERNANCE.md         # federation model, witness recruitment, transition plan
 ├── SECURITY.md           # vulnerability disclosure

@@ -155,7 +155,11 @@ guarantees, and what it doesn't:
   initialised with and `serve` refuses a mismatch, but an empty `logs/`
   is indistinguishable from a new witness. Back up `witness.key`,
   `witness.json` and `logs/` as one unit, always (see
-  `deploy/witness/OPERATORS.md`).
+  `deploy/witness/OPERATORS.md`). The same holds for a consistent but
+  *stale* snapshot: a witness restored to a point before its last
+  cosignature has forgotten those heads and could cosign a fork between
+  the remembered size and the forgotten one. Restore only a snapshot
+  newer than the last cosignature; otherwise retire the key.
 - **Open enrollment cannot be abused to impersonate.** Only canonical
   origins (`witness-log/<identity key>`) are enrolled, and only when the
   checkpoint verifies under the key the origin names.

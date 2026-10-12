@@ -14,7 +14,8 @@
 
 use std::process::ExitCode;
 use witness_log_core::leaf::{
-    verify_authorization_binding, verify_handoff_binding, HandoffDirection, Leaf, LeafType,
+    verify_authorization_binding, verify_handoff_binding, AuthorizationEventKind, HandoffDirection,
+    Leaf, LeafType,
 };
 use witness_log_network::Dossier;
 
@@ -23,6 +24,21 @@ use crate::exit;
 fn load(path: &str) -> Result<Dossier, String> {
     let text = crate::read_input(path).map_err(|e| format!("{path}: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("{path}: not a dossier: {e}"))
+}
+
+/// The same snake_case names the Python and MCP surfaces accept
+/// (`granted_by_me`, ...), never Rust's Debug form (`Some(GrantedByMe)`).
+fn event_name(kind: Option<AuthorizationEventKind>) -> &'static str {
+    use AuthorizationEventKind as K;
+    match kind {
+        Some(K::GrantedByMe) => "granted_by_me",
+        Some(K::GrantedToMe) => "granted_to_me",
+        Some(K::RevokedByMe) => "revoked_by_me",
+        Some(K::RevokedToMe) => "revoked_to_me",
+        Some(K::ScopeChangedByMe) => "scope_changed_by_me",
+        Some(K::ScopeChangedToMe) => "scope_changed_to_me",
+        None => "unknown",
+    }
 }
 
 fn names_other<'a>(leaves: &'a [Leaf], other_identity: &str, tag: u8) -> Vec<&'a Leaf> {
@@ -108,8 +124,8 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
             .find(|lb| verify_authorization_binding(ia, la, ib, lb).is_ok())
         {
             Some(lb) => bound.push(serde_json::json!({
-                "kind": "authorization", "a": ia, "a_leaf": la.index, "a_event": format!("{:?}", la.authorization_event_kind),
-                "b": ib, "b_leaf": lb.index, "b_event": format!("{:?}", lb.authorization_event_kind),
+                "kind": "authorization", "a": ia, "a_leaf": la.index, "a_event": event_name(la.authorization_event_kind),
+                "b": ib, "b_leaf": lb.index, "b_event": event_name(lb.authorization_event_kind),
                 "scope_hash": la.authorization_scope_hash,
             })),
             None => failed.push(serde_json::json!({

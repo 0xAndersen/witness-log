@@ -4,7 +4,7 @@
 Checks shape, 64-hex key, real operator_org, uniqueness, and (unless
 --offline) that the URL answers GET / with the same pubkey_hex.
 """
-import glob, json, os, re, sys, urllib.request
+import glob, json, os, re, sys, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED = {"name", "operator_org", "url", "pubkey", "runtime", "is_project_operated"}
@@ -37,6 +37,12 @@ for path in files:
         problems.append(f"{rel}: is_project_operated must be a boolean")
     if not re.match(r"^https?://", str(e["url"])):
         problems.append(f"{rel}: url must be http(s)")
+    else:
+        host = urllib.parse.urlsplit(str(e["url"])).hostname or ""
+        # `witness init` without --url writes http://127.0.0.1:7380; a registry
+        # entry must be reachable by other people's clients.
+        if host in ("localhost", "0.0.0.0", "::1", "::") or host.startswith("127.") or host.endswith(".localhost"):
+            problems.append(f"{rel}: url {e['url']} is a loopback address; give the public URL clients reach")
     if "+" in e["name"] or any(c.isspace() for c in e["name"]):
         problems.append(f"{rel}: name is a C2SP key name: no whitespace, no '+'")
     if e["pubkey"] in seen_keys:

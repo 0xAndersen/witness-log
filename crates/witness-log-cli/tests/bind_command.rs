@@ -51,12 +51,26 @@ fn bind_matches_handoffs_and_authorizations_and_reports_mismatch() {
         out.contains("handoff bound") && out.contains("authorization bound"),
         "{out}"
     );
+    // Event kinds print as the names the other surfaces accept, not Debug.
+    assert!(
+        out.contains("granted_by_me") && out.contains("granted_to_me"),
+        "{out}"
+    );
+    assert!(!out.contains("Some("), "{out}");
 
     let (code, out, _) = bind(da.path(), db.path(), &["--json"]);
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["bound"].as_array().unwrap().len(), 2);
     assert_eq!(v["failed"].as_array().unwrap().len(), 0);
+    let auth = v["bound"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["kind"] == "authorization")
+        .unwrap();
+    assert_eq!(auth["a_event"], "granted_by_me");
+    assert_eq!(auth["b_event"], "granted_to_me");
 
     // B claims a wider scope than A granted: mismatch, exit 30.
     b.append_authorization_event(AuthorizationEventKind::GrantedToMe, b"max_usd=5000", &ia);
