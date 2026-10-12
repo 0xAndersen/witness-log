@@ -55,7 +55,14 @@ print(log.identity_pubkey_hex())       # e.g. 'f7809c16…0506b3be'
 | `agent.jsonl.lock` | the PID of the process that currently owns the journal | one writer at a time; a second `open` raises `OSError` |
 
 Both data files are created `0600`. Treat them like a private key, because
-they contain one.
+they contain one. For anything beyond a laptop, keep the key out of the
+journal: set `WITNESS_LOG_IDENTITY_SEED_ENV` to the *name* of an
+environment variable holding a 32-byte hex seed (`export AGENT_KEY=$(python
+-c 'import os; print(os.urandom(32).hex())'); export
+WITNESS_LOG_IDENTITY_SEED_ENV=AGENT_KEY`) and `open()` seals the journal:
+the header then holds only the public key, and the same variable must be
+present on every resume. `open(path, seed, seal=True)` is the explicit
+form.
 
 **Identity vs. session.** `open` generated two keypairs. The **identity key**
 is the agent's permanent name: it lives in the journal header and signs
@@ -67,7 +74,11 @@ verifier can prove the chain: this leaf → this session → this identity.
 Why two tiers? So a restart is not a new agent. Run the script again and
 `open` will **resume**: same identity, a new session, a new binding. The
 history is continuous and provably so. Nothing about yesterday's events
-depends on today's process still existing.
+depends on today's process still existing. Within one process, call
+`witness_log.open(path, session="reuse")` to get the object you already
+have open instead of a new session (a resume costs about a millisecond
+and a binding line; a session key never leaves process memory, so reuse
+is in-process only).
 
 If you want the same identity on a different machine, pass
 `identity_seed=log.identity_bytes()` from the original to `open` on the new
@@ -204,6 +215,28 @@ Works for entries written in earlier runs too, because the salts are on
 disk, not in memory. Back up `agent.jsonl.salts` with the journal: lose it
 and you have erased everything.
 
+**The other direction: disclosing one entry.** The same salt lets you
+prove to an auditor what one entry *was* without revealing anything else:
+
+```python
+log = witness_log.open("agent.jsonl", store_payloads=True)   # keep payloads in agent.jsonl.payloads
+i = log.append_intent(witness_log.canonical_json({"tool": "pay", "amount_usd": 250}))
+d = log.disclose(i)          # {"index", "leaf", "payload_hash", "salt", "payload"}
+# the auditor, holding your dossier and nothing else:
+assert witness_log.verify_disclosure(d["leaf"], d["payload"], d["salt"])
+```
+
+`verify_disclosure` recomputes `SHA256(bucket_pad(payload) || salt ||
+index)` (SPEC §8; `witness_log.payload_hash` is that function) and
+compares it with the leaf's `payload_hash`; the dossier verifier has
+already shown the leaf is in the witnessed tree. Without
+`store_payloads=True` you keep the payload yourself and `disclose` returns
+the leaf and salt; with it, `agent.jsonl.payloads` holds every payload
+(`0600`; it is exactly what the tree was built not to hold, so protect it
+like the journal) and `forget(i)` zero-overwrites and drops its record.
+Payloads from `step` are RFC 8785 canonical JSON (`canonical_json`), so a
+verifier in any language can rebuild the bytes from the JSON value.
+
 ---
 
 ## 5. Get witnessed: the step that turns a claim into evidence
@@ -230,8 +263,18 @@ backs off exponentially when witnesses are down, and keeps its state in
 `agent.jsonl.witnesses.json`, the same file and format as the CLI, so
 `witness-log witness submit agent.jsonl --directory directory.json --out
 dossier.json` can take turns with it. In asyncio code use `await
-w.aflush(timeout)`. `witness_log.submit_round(log, directory, state_path)`
-is one synchronous round, for scripts.
+w.aflush(timeout)`.
+
+For a script that just wants the answer, one blocking round:
+
+```python
+out = log.submit("directory.json", want=8, min=2, timeout=10)   # or: await log.asubmit(...)
+print(out["verdict"], out["cosignatures"], "/", out["contacted"])  # witnessed 2 / 2
+json.dump(out["dossier"], open("dossier.json", "w"))
+```
+
+Same resync, `Retry-After` and refuse-to-equivocate rules (that last one
+raises `RuntimeError`); per-witness failures are in `out["outcomes"]`.
 
 Two rules it shares with the CLI: it pins the head it submits (the agent
 may keep appending; the dossier it returns covers exactly the cosigned

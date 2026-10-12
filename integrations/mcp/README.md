@@ -13,10 +13,16 @@ launcher kept for existing configurations.
 | `get_inclusion_proof(session_id, entry_index)` | Proof an entry is in the tree; verifiable offline by any RFC 6962 verifier. |
 | `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | Re-run the full verifier; returns the verdict and any tamper alerts. Includes the cosignatures from the last `submit_to_witnesses` while the chain has not grown; `witnessed_size` / `witnessed_verdict` report the latest witnessed head. |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload; all proofs stay valid. |
-| `export_dossier(session_id)` | The portable record anyone can verify with `witness-log verify`. Carries the last cosignatures when the head is unchanged; otherwise `witnessed_dossier` is the latest witnessed prefix. |
+| `export_dossier(session_id)` | The portable record anyone can verify with `witness-log verify`. Carries the last cosignatures when the head is unchanged; otherwise `witnessed_dossier` is the latest witnessed prefix. Also written to `<session>/dossier.json` (`path`, `sha256`, `bytes`). |
 | `record_handoff(session_id, direction, counterparty_identity_pubkey, state)` | One side of an agent-to-agent handoff (SPEC §3.1): `"sent"` or `"received"`, with the other agent's identity key (64 hex). `witness-log bind a.json b.json` proves both sides committed to the same bytes. |
 | `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | A delegation / scope change / revocation between two agents (SPEC §3.2), logging only. Put an AP2 mandate hash or a UCAN in `scope`; both sides commit to its hash and `bind` matches them. |
 | `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | Get the head cosigned by up to `max_witnesses` diversity-selected witnesses over `c2sp.org/tlog-witness`; WITNESSED needs `min_witnesses` cosignatures from two independent operators. http(s) witness URLs only. |
+| `audit_this_session(session_id)` | `{leaf_count, root, identity, witnessed, last_verdict, witnessed_size, journal}`: where the trail stands, no side effects. |
+
+Eleven tools. `record_authorization.kind` is a JSON-schema enum of the six
+SPEC §3.2 kinds; `scope` is a JSON object (committed as RFC 8785 canonical
+JSON) or a string (its UTF-8 bytes). `export_dossier` also writes
+`<session>/dossier.json` and returns its `path`, `sha256` and `bytes`.
 
 Errors come back as tool errors with the reason (`session_id must be ...`,
 `counterparty must be ... 64 hex characters`), so an agent can correct the
@@ -47,7 +53,10 @@ Client configuration (Claude Desktop, Claude Code, any MCP host):
 
 State lives under `$WITNESS_LOG_HOME` (default `~/.witness-log/mcp`): one
 directory per session with the journal (identity seed in its header,
-mode 0600), `journal.jsonl.witnesses.json` (what each witness last
+mode 0600, unless `WITNESS_LOG_IDENTITY_SEED_ENV` names an environment
+variable holding a 32-byte hex seed, in which case every session is
+sealed to that identity and the seed never touches a journal file),
+`dossier.json` (the last export), `journal.jsonl.witnesses.json` (what each witness last
 cosigned: the same file and format `witness-log witness submit` uses, so
 the CLI can take over a session's witnessing) and
 `journal.jsonl.witnessed.json` (the latest witnessed dossier). Put a
@@ -68,7 +77,11 @@ server over stdio and wraps the tools as `step(name, fn)`, `forget(i)`,
   keeps the hash, not your data; log what you need to prove, not
   secrets). A payload over 1 MB is refused: log a hash of it instead.
 - One process per journal. A second process gets a clear error, never a
-  corrupted log.
+  corrupted log. Within a process each journal is opened once and kept
+  open: a tool call is an append and an fsync, not a resume.
+- To audit an MCP server you already run instead of giving the model
+  tools, `witness-log-mcp-proxy --name <server> --journal <file> -- <server
+  command>` wraps it ([MCP proxy](../../docs/wiki/MCP-Proxy.md)).
 - `submit_to_witnesses` refuses to submit a journal that does not extend
   the head witnesses already cosigned for this identity (a journal
   restored from an old backup), as the CLI does.

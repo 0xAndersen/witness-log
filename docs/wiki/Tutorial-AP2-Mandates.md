@@ -156,10 +156,10 @@ Three things worth noticing:
 
 - **Which bytes.** `authorization_scope_hash` is `SHA-256(scope)`,
   deliberately unsalted so two independently salted logs can be compared.
-  Both sides must hash *identical* bytes. `canonical_json` (sorted keys,
-  no whitespace) is fine when both sides use it; across implementations,
-  hash the exact bytes received on the wire, or use RFC 8785 (JCS), which
-  `canonical_json` is not.
+  Both sides must hash *identical* bytes. `canonical_json` is RFC 8785
+  (JCS) since 0.3.7, so any JCS library in any language produces the same
+  bytes from the same JSON value; across implementations that do not
+  canonicalize, hash the exact bytes received on the wire.
 - **Which mandate.** Use the object that authorised *this* payment: the
   PaymentMandate in AP2 (it names the cart by `payment_details_id`), the
   accepted `PaymentRequirements` plus `PaymentPayload` in x402, the

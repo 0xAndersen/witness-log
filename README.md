@@ -224,14 +224,25 @@ print(witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex()))
 
 [Quickstart: Python](docs/wiki/Quickstart-Python.md) explains every line. To get witnessed while the agent
 runs, without ever blocking it: `w = witness_log.Witnesser(log, "trusted.json", "agent.jsonl")`, call
-`w.request()` after steps (it never blocks or raises), then `w.flush(timeout=30)` and `w.dossier()`.
+`w.request()` after steps (it never blocks or raises), then `w.flush(timeout=30)` and `w.dossier()`. For a
+script, `log.submit("trusted.json")` is one blocking round that returns the dossier and the verdict
+(`await log.asubmit(...)` in asyncio). `log.disclose(i)` hands an auditor one entry's salt (and, with
+`witness_log.open(path, store_payloads=True)`, its payload) so they can check it against the leaf with
+`witness_log.verify_disclosure`; everything else stays hashed. Set `WITNESS_LOG_IDENTITY_SEED_ENV` to the
+name of an environment variable holding a 32-byte hex seed and every journal is sealed (the key never
+touches the journal file); the plain `open("agent.jsonl")` above keeps the key in the journal header, which
+is fine for a laptop and not for anything else.
 
 Framework adapters ship as extras: `pip install "witness-log[langchain]"` (or `[openai-agents]`, `[crewai]`);
 see [Framework guides](docs/wiki/Framework-Guides.md). For agents that speak MCP,
-`pip install "witness-log[mcp]"` then `witness-log-mcp` exposes the same capability as ten tools (provision a
+`pip install "witness-log[mcp]"` then `witness-log-mcp` exposes the same capability as eleven tools (provision a
 chain on boot, record each step's intent before acting and its result after, record handoffs and authorizations
-between agents, prove any step, erase on request, get witnessed) for Claude Code, Claude Desktop, Cursor or any
-MCP host, with no code.
+between agents, prove any step, erase on request, get witnessed, check where the trail stands) for Claude Code,
+Claude Desktop, Cursor or any MCP host, with no code. Two more commands need no code and no MCP extra:
+`witness-log-mcp-proxy --name git --journal git.wlog -- mcp-server-git` wraps any existing stdio MCP server and
+records every tool call as salted hashes ([MCP proxy](docs/wiki/MCP-Proxy.md)), and `witness-log-hook` records
+Claude Code's `PreToolUse`/`PostToolUse` events through a small daemon that holds the journal
+([Hooks](docs/wiki/Hooks.md)).
 
 ### Rust
 

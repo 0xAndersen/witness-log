@@ -1,7 +1,7 @@
 # MCP integration: an audit trail for any MCP host, zero code
 
 The `witness-log` Python package ships an MCP server (`witness-log-mcp`,
-module `witness_log.mcp_server`) that exposes the whole system as ten
+module `witness_log.mcp_server`) that exposes the whole system as eleven
 tools over the Model Context Protocol. Any host that speaks MCP (Claude
 Code, Claude Desktop, Cursor, Windsurf, Zed, VS Code Copilot agent mode,
 OpenAI Agents SDK via MCP, custom hosts) can give its agent a witnessable
@@ -18,10 +18,16 @@ launcher.
 | `get_inclusion_proof(session_id, entry_index)` | proof a step is in the tree |
 | `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | the full verifier; tamper alerts; includes the last cosignatures while the head is unchanged |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload |
-| `export_dossier(session_id)` | the portable proof (with cosignatures when the head is the witnessed one; `witnessed_dossier` otherwise) |
+| `export_dossier(session_id)` | the portable proof (with cosignatures when the head is the witnessed one; `witnessed_dossier` otherwise); also written to `<session>/dossier.json`, returned as `path`, `sha256`, `bytes` |
 | `record_handoff(session_id, direction, counterparty_identity_pubkey, state)` | one side of an agent-to-agent handoff |
-| `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | one side of a delegation or scope change |
+| `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | one side of a delegation or scope change; `kind` is an enum of the six SPEC §3.2 kinds, `scope` a JSON object (committed as RFC 8785 canonical JSON) or a string (its UTF-8 bytes) |
 | `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | get the head cosigned by diversity-selected witnesses |
+| `audit_this_session(session_id)` | `{leaf_count, root, identity, witnessed, last_verdict, witnessed_size, journal}`: where the trail stands, with no side effects (0.3.7+) |
+
+Already running an MCP server you want audited rather than giving the
+model audit tools? [MCP proxy](MCP-Proxy): `witness-log-mcp-proxy --name
+git --journal git.wlog -- mcp-server-git` records every `tools/call`
+without any change to the server or the model's instructions.
 
 Tool errors carry the reason (for example `session_id must be 1-128
 characters ...` or `counterparty must be the other agent's identity public
@@ -50,9 +56,10 @@ after it, call record_result with the returned intent_index. At the end of the s
 and report the verdict.
 ```
 
-A hook does it without relying on the model: `.claude/settings.json`
-`PreToolUse`/`PostToolUse` hooks can call a small Python script on every
-tool call (see [Framework guides](Framework-Guides) → Claude Code hook).
+A hook does it without relying on the model: `witness-log-hook install
+claude-code` prints the `.claude/settings.json` `PreToolUse`/`PostToolUse`
+entries that record every tool call through a daemon holding the journal
+(see [Hooks](Hooks)).
 
 ## Claude Desktop
 
@@ -108,8 +115,26 @@ same `trusted_directory` reports `witnessed` until the next append, and
 
 State: `$WITNESS_LOG_HOME/<session_id>/journal.jsonl` (+ `.salts`), one
 identity per session id, resumed across host restarts, plus
+`dossier.json` (the last `export_dossier`),
 `journal.jsonl.witnesses.json` (the CLI's witness state file, so
 `witness-log witness submit $WITNESS_LOG_HOME/<id>/journal.jsonl ...` can
 take over) and `journal.jsonl.witnessed.json` (the latest witnessed
 dossier). Session ids are restricted to `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`
 and never touch paths outside the home. Witness URLs must be http(s).
+
+Identity: by default each session id gets its own identity, stored in its
+journal header (`0600`). Set `WITNESS_LOG_IDENTITY_SEED_ENV` in the
+server's `env` to the name of a variable holding a 32-byte hex seed and
+every session is sealed to that one identity, with the seed never in a
+journal file:
+
+```json
+{"mcpServers": {"witness-log": {
+  "command": "witness-log-mcp",
+  "env": {"WITNESS_LOG_HOME": "/var/lib/witness-log",
+          "WITNESS_LOG_IDENTITY_SEED_ENV": "AGENT_KEY"}}}}
+```
+
+with `AGENT_KEY` set in the environment the host launches the server
+from. Each journal is opened once per server process and kept open; a
+tool call is an append and an fsync, not a resume.

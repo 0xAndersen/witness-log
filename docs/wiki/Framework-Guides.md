@@ -13,6 +13,8 @@ others, copy the snippet.
 | OpenAI Agents SDK | `pip install "witness-log[openai-agents]"` | `witness_log.integrations.openai_agents.WitnessLogHooks` |
 | CrewAI | `pip install "witness-log[crewai]"` | `witness_log.integrations.crewai.witness_crewai` |
 | MCP hosts | `pip install "witness-log[mcp]"` | `witness-log-mcp` ([MCP integration](MCP-Integration)) |
+| any stdio MCP server, as run | `pip install witness-log` | `witness-log-mcp-proxy` ([MCP proxy](MCP-Proxy)) |
+| Claude Code hooks | `pip install witness-log` | `witness-log-hook` ([Hooks](Hooks)) |
 
 Each adapter is under 100 lines, pairs calls by the framework's own call
 id (so parallel calls of one tool are recorded correctly), commits the same
@@ -167,29 +169,24 @@ for block in response.content:
 
 ## Claude Code hook (records every tool call the model makes)
 
-`.claude/settings.json`:
+```sh
+witness-log-hook install claude-code --journal ~/.witness-log/claude-code.jsonl
+```
+
+prints the `.claude/settings.json` entries (it writes nothing):
 
 ```json
 {"hooks": {
-  "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/wl_hook.py pre"}]}],
-  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/wl_hook.py post"}]}]}}
+  "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal ~/.witness-log/claude-code.jsonl"}]}],
+  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal ~/.witness-log/claude-code.jsonl"}]}]}}
 ```
 
-```python
-# wl_hook.py: reads the hook JSON on stdin, appends a leaf, exits 0
-import json, sys, witness_log
-ev = json.load(sys.stdin)
-log = witness_log.open(".claude/witness.jsonl")
-payload = witness_log.canonical_json({k: ev.get(k) for k in ("tool_name", "tool_input", "tool_response", "session_id")})
-(log.append_intent if sys.argv[1] == "pre" else log.append_result)(payload)
-log.close()
-```
-
-One journal is opened per hook invocation here. The journal admits one
-writer at a time, so if two hooks run at once (parallel tool calls) the
-second `open` raises `OSError` and that event is not recorded; for parallel
-tool use or high call rates, run the MCP server instead and let the agent
-call `append_audit_step`.
+Each hook invocation sends the event to `witness-log-hookd`, a daemon
+that holds the journal open behind a Unix socket (started on first use by
+`--autostart`), so parallel tool calls do not fight over the journal's
+single-writer lock and no session key is minted per call. `PreToolUse`
+becomes an intent leaf, `PostToolUse` a result leaf. Details, the exact
+payload shape, Cursor and Codex: [Hooks](Hooks).
 
 ## After the run: checkpoint, witness, verify
 

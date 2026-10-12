@@ -10,6 +10,7 @@
 - [Quickstart: Rust](Quickstart-Rust)
 - [Quickstart: CLI](Quickstart-CLI)
 - [MCP integration](MCP-Integration)
+  - [MCP proxy](MCP-Proxy) · [Hooks](Hooks)
 - [Framework guides](Framework-Guides)
 - [Other languages](Other-Languages)
 
