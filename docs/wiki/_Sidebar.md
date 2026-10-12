@@ -7,6 +7,7 @@
 
 **Use it**
 - [Quickstart: Python](Quickstart-Python)
+- [Quickstart: TypeScript](Quickstart-TypeScript)
 - [Quickstart: Rust](Quickstart-Rust)
 - [Quickstart: CLI](Quickstart-CLI)
 - [MCP integration](MCP-Integration)

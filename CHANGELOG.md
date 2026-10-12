@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### JavaScript
+
+- **`@witness-log/node` 0.1.0** (`clients/node`): the Rust core as a
+  prebuilt napi-rs addon for Linux x64/arm64, macOS x64/arm64 and Windows
+  x64 (`optionalDependencies`, no toolchain). `openLog(path, {identitySeed,
+  seal, storePayloads})`, `appendIntent`/`appendResult`/`appendMemory`
+  (bytes, string or JSON), `appendHandoff`, `appendAuthorizationEvent`,
+  `appendExternalAnchor`, `forget`, `disclose` (payload hash, salt and,
+  with `storePayloads`, the plaintext), `exportDossier`, `info`, `step`,
+  and `submit(directory, {want, min})` over `fetch` with the same 409
+  resync, Retry-After handling, cosignature checking, state file and
+  equivocation safety rule as the CLI and the Python `Witnesser`.
+  `verifyDossierNative` runs the Rust verifier; `verifyDossier` is
+  re-exported from `@witness-log/client`. Tests include a mocked
+  `tlog-witness` server reaching WITNESSED. Workflow
+  `.github/workflows/npm-node.yml` builds the five platforms and publishes
+  on `node-v*` tags with trusted publishing.
+- **`@witness-log/client` 0.2.0**: `verifyDossier`, an offline verifier in
+  pure TypeScript (`node:crypto`), independent of the Rust code and checked
+  against the conformance corpus: leaf encoding, Merkle root, checkpoint
+  signature, key bindings and revocations, native and C2SP receipts, quorum
+  and operator diversity, the four verdicts and the CLI's exit codes. The
+  pieces (`leafCanonicalBytes`, `merkleRoot`, `verifyInclusion`,
+  `payloadHash`, `verifyDisclosure`, `verifyReceipt`, `evaluateQuorum`, ...)
+  are exported. Known difference, documented: `node:crypto` does not reject
+  small-order Ed25519 components (SPEC §6 strictness); honest signatures
+  are unaffected.
+- **`@witness-log/ai-sdk` 0.1.0** (`clients/ai-sdk`), for the Vercel AI
+  SDK v5: `witnessTools(tools, log)` (intent before `execute`, result
+  after, fail-closed, streaming tools supported), `witnessMiddleware(log)`
+  (`LanguageModelV2Middleware`: tool calls, tool results and generations at
+  the model boundary, `wrapGenerate` and `wrapStream`),
+  `witnessTelemetry(log)` (an OpenTelemetry span exporter for
+  `experimental_telemetry`). Tested against the real `ai` package with
+  `MockLanguageModelV2`.
+- **`create-witness-log` 0.1.0**: `npm create witness-log [dir] [--
+  --template plain|ai-sdk]` generates a project that appends, exports and
+  verifies (both verifiers), with tests; its own test suite generates and
+  runs both templates.
+- `clients/` is now an npm workspace (one lockfile) so the packages link to
+  each other locally; each is still published on its own.
+- Docs: `docs/wiki/Quickstart-TypeScript.md`; READMEs for the three new
+  packages.
+
 ## 0.3.6 — 2026-10-12
 
 Driven by a fresh-eyes evaluation of the published 0.3.5 packages

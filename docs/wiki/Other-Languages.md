@@ -1,29 +1,36 @@
 # Other languages: TypeScript, Go, Java, anything
 
-Native bindings exist for Rust and Python, and a TypeScript client wraps
-the CLI and the MCP server. Everyone else has two routes today, both
-complete, and a third on the [Roadmap](Roadmap).
+Native bindings exist for Rust, Python and Node.js. Everyone else has two
+routes today, both complete, and a third on the [Roadmap](Roadmap).
 
-## TypeScript: `@witness-log/client`
+## TypeScript / Node.js
 
-`clients/typescript` (npm `@witness-log/client`, ESM with types, Node 20+).
-It reimplements no cryptography: `WitnessLogCLI` spawns the `witness-log`
-binary and returns typed verdicts, `WitnessLogMCP` drives the MCP server.
+Three npm packages; the [TypeScript quickstart](Quickstart-TypeScript) walks
+through them.
+
+- `@witness-log/node` (`clients/node`): the Rust core as a prebuilt
+  napi-rs addon. `openLog`, `appendIntent`/`appendResult`/`appendMemory`,
+  `step`, `forget`, `disclose`, `exportDossier`, `submit` to witnesses over
+  `fetch`, `verifyDossier` (pure TypeScript) and `verifyDossierNative` (the
+  Rust verifier). No Rust toolchain, no Python, no CLI.
+- `@witness-log/ai-sdk` (`clients/ai-sdk`): Vercel AI SDK v5.
+  `witnessTools(tools, log)`, `witnessMiddleware(log)`, `witnessTelemetry(log)`.
+- `@witness-log/client` (`clients/typescript`): the pure-TypeScript
+  verifier on its own, plus typed wrappers for the `witness-log` CLI
+  (`WitnessLogCLI`) and the MCP server (`WitnessLogMCP`).
 
 ```ts
-import { WitnessLogCLI, WitnessLogMCP } from "@witness-log/client";
+import { openLog, verifyDossier } from "@witness-log/node";
 
-const wl = await WitnessLogMCP.start({ sessionId: "orders-bot" });   // needs pip install "witness-log[mcp]"
-const refund = await wl.step("stripe.refund", () => stripe.refund(1042), { args: { order: 1042 } });
-const dossier = await wl.exportDossier();
-await wl.close();
-
-const v = await new WitnessLogCLI().verify(dossier, { identity: KEY, directory: "trusted.json" });
+const log = openLog("agent.jsonl");
+const refund = await log.step("stripe.refund", () => stripe.refund(1042), { args: { order: 1042 } });
+const dossier = log.exportDossier();
+const v = verifyDossier(dossier, { identity: log.identityPubkey, directory: trusted, minWitnesses: 2 });
 if (v.verdict !== "WITNESSED") throw new Error(v.verdict);   // v.exitCode is 0/10/20/30
 ```
 
-See the package README for `diff`, `bind`, `submit`, `forget` and the
-server options.
+`npm create witness-log my-agent` generates a working project (plain or
+`--template ai-sdk`).
 
 ## Route 1: MCP (any language with an MCP client)
 

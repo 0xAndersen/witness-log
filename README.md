@@ -270,10 +270,14 @@ assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 | `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
 | `witness-log conform <dir>` | check another implementation against the corpus |
 
-TypeScript: [`clients/typescript`](clients/typescript) (`@witness-log/client`) gives typed verdicts from the CLI
-and `step()`/`verify()` over MCP, with no cryptography reimplemented in JavaScript. Go and shell integrate by
-writing the dossier (schema: `spec/dossier.schema.json`), shelling out to `verify`, and branching on the exit
-code: [Other languages](docs/wiki/Other-Languages.md).
+TypeScript / Node.js: [`clients/node`](clients/node) (`@witness-log/node`) is the Rust core as a prebuilt
+napi-rs addon: `openLog`, append, `forget`, `disclose`, `exportDossier`, `submit` to witnesses, and both verifiers,
+with no Rust toolchain. [`clients/ai-sdk`](clients/ai-sdk) (`@witness-log/ai-sdk`) adds `witnessTools`,
+`witnessMiddleware` and `witnessTelemetry` for the Vercel AI SDK v5; [`clients/typescript`](clients/typescript)
+(`@witness-log/client`) is an offline verifier in pure TypeScript plus typed wrappers for the CLI and the MCP
+server; `npm create witness-log` generates a working project. [Quickstart: TypeScript](docs/wiki/Quickstart-TypeScript.md).
+Go and shell integrate by writing the dossier (schema: `spec/dossier.schema.json`), shelling out to `verify`,
+and branching on the exit code: [Other languages](docs/wiki/Other-Languages.md).
 
 ---
 
@@ -363,7 +367,8 @@ witness-log/
 ├── docs/wiki/            # the wiki source (auto-published); docs/assets/ holds the graphics above
 ├── brand/                # logo mark, wordmark, palette
 ├── integrations/mcp/     # MCP server shim (the server ships in the wheel: witness-log-mcp)
-├── clients/typescript/   # @witness-log/client
+├── clients/              # npm workspace: node/ (@witness-log/node, napi-rs addon), ai-sdk/ (@witness-log/ai-sdk),
+│                         # typescript/ (@witness-log/client, pure-TS verifier + CLI/MCP wrappers), create-witness-log/
 ├── examples/             # sample dossier, verify_demo.py, rewrite-attack/ (the same-key rewrite, refused),
 │                         # live-network/ (10 witnesses), swarm/ (100 scenarios, 3,000 agents)
 ├── deploy/witness/       # Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
