@@ -1,0 +1,202 @@
+name: docker
+
+# Multi-arch witness image: ghcr.io/0xandersen/witness-log:<version> and :latest
+# (linux/amd64, linux/arm64), built from deploy/witness/Dockerfile.release.
+#
+# Binaries come from the GitHub release when it has them (checked against
+# its SHA256SUMS); for an architecture the release lacks, the tag is
+# compiled natively on a runner of that architecture (ubuntu-24.04-arm for
+# arm64), never under QEMU. The Dockerfile only copies files on the target
+# platform, so the multi-arch build needs no emulation either.
+#
+# Triggers: a pushed v* tag (waits for release.yml to publish assets, then
+# falls back to compiling), or a manual run with the tag. A release created
+# by release.yml's own dispatch path creates its tag with the Actions token,
+# which does not trigger this workflow: run it by hand then.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to package, e.g. v0.3.5"
+        required: true
+        type: string
+      latest:
+        description: "Also move :latest to this version"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  IMAGE: ghcr.io/0xandersen/witness-log
+
+jobs:
+  binary:
+    name: binary ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest, triple: x86_64-unknown-linux-gnu }
+          - { arch: arm64, runner: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu }
+    steps:
+      - name: release asset (waits up to 30 min for release.yml)
+        id: fetch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          set -euo pipefail
+          asset="witness-log-${TAG}-${TRIPLE}.tar.gz"
+          mkdir -p out dl
+          for i in $(seq 1 60); do
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > rel.json 2>/dev/null \
+               && jq -e '.assets[] | select(.name=="SHA256SUMS")' rel.json >/dev/null; then
+              if jq -e --arg a "$asset" '.assets[] | select(.name==$a)' rel.json >/dev/null; then
+                cd dl
+                curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
+                curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/SHA256SUMS"
+                grep " ${asset}\$" SHA256SUMS | sha256sum -c -
+                tar xzf "$asset" ./witness-log
+                install -m 0755 witness-log ../out/witness-log
+                echo "source=release ${TAG} ${asset} (sha256 verified)" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "release ${TAG} is published without ${asset}; compiling the tag natively"
+              echo "source=build" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "release ${TAG} not published yet ($i/60)"; sleep 30
+          done
+          echo "release ${TAG} did not appear in 30 min; compiling the tag natively"
+          echo "source=build" >> "$GITHUB_OUTPUT"
+      - if: steps.fetch.outputs.source == 'build'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          path: src
+      - if: steps.fetch.outputs.source == 'build'
+        uses: dtolnay/rust-toolchain@stable
+      - name: compile ${{ matrix.triple }} natively
+        if: steps.fetch.outputs.source == 'build'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd src
+          cargo build --release --locked -p witness-log-cli
+          strip target/release/witness-log
+          install -m 0755 target/release/witness-log ../out/witness-log
+      - name: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          file out/witness-log
+          v=$(out/witness-log --version)
+          echo "$v"
+          test "$v" = "witness-log ${TAG#v}" || { echo "::error::binary says '$v', expected witness-log ${TAG#v}"; exit 1; }
+          echo "${{ matrix.arch }}: ${{ steps.fetch.outputs.source }} -> $v" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.arch }}
+          path: out/witness-log
+          retention-days: 3
+
+  image:
+    needs: binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-amd64
+          path: deploy/witness/bin/amd64
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-arm64
+          path: deploy/witness/bin/arm64
+      - name: tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod 0755 deploy/witness/bin/*/witness-log
+          v="${TAG#v}"
+          tags="${IMAGE}:${v}"
+          latest="${{ github.event_name == 'push' || inputs.latest }}"
+          case "$v" in *-*) latest=false ;; esac   # pre-releases never move :latest
+          [ "$latest" = "true" ] && tags="${tags},${IMAGE}:latest"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "tags: $tags"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build amd64 for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/witness
+          file: deploy/witness/Dockerfile.release
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ env.TAG }}
+          tags: witness-log:smoke
+          load: true
+      - name: smoke test (first start, /health, same key after restart)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name w -p 7380:7380 -v wstate:/state -e WITNESS_ORG="CI Smoke Test" witness-log:smoke
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:7380/health && break; sleep 1; done
+          k1=$(curl -fsS http://127.0.0.1:7380/ | jq -r .pubkey_hex)
+          docker kill w && docker start w
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:7380/health && break; sleep 1; done
+          k2=$(curl -fsS http://127.0.0.1:7380/ | jq -r .pubkey_hex)
+          docker logs w
+          test -n "$k1" && test "$k1" = "$k2"
+          test "$(curl -fsS http://127.0.0.1:7380/ | jq -r .software)" = "witness-log ${{ steps.tags.outputs.version }}"
+      - name: build and push linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/witness
+          file: deploy/witness/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ env.TAG }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.description=c2sp.org/tlog-witness witness for witness-log agent audit logs
+            org.opencontainers.image.version=${{ env.TAG }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0
+            index:org.opencontainers.image.description=c2sp.org/tlog-witness witness for witness-log agent audit logs
+          push: true
+      - name: summary
+        shell: bash
+        run: |
+          {
+            echo "## ${IMAGE}:${{ steps.tags.outputs.version }}"
+            echo "platforms: linux/amd64, linux/arm64; tags: ${{ steps.tags.outputs.tags }}"
+            echo "First push creates a private package: set it public once (package settings, Change visibility)."
+            echo '```'
+            echo 'docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witness-log:/state -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

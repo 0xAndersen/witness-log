@@ -100,9 +100,56 @@ next start removes it itself, with one log line.
 
 ### Docker
 
-`Dockerfile` builds a static-ish image (Debian slim, non-root, read-only
-root filesystem under compose). The volume mounted at `/state` is the
-whole witness. `docker-compose.yml` adds Caddy for TLS.
+One line, any amd64 or arm64 host with Docker:
+
+```sh
+docker run -d --name witness-log --restart unless-stopped -p 7380:7380 \
+  -v witness-log:/state -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
+docker logs witness-log                 # prints the directory entry
+curl -s http://127.0.0.1:7380/health    # ok
+```
+
+On first start with an empty `/state` the image runs `witness init` from
+the environment, writes `/state/entry.json`, prints the entry, then
+serves; every later start serves the existing key. Variables:
+`WITNESS_ORG` (required on first start), `WITNESS_URL` (your public base
+URL; the key name defaults to its host plus `/w1`), `WITNESS_NAME`,
+`WITNESS_COMPUTE`, and `WITNESS_BEHIND_PROXY=1` when a TLS proxy sits in
+front (raises the per-address limits). The volume `witness-log` is the
+whole witness: back it up as one unit (section 3). Arguments replace the
+default and go to the binary: `docker run --rm IMAGE witness info URL`.
+
+The witness is always PID 1 inside a container, so its PID lock file
+cannot tell a killed container's lock from a live one. The entrypoint
+holds an `flock` on `/state/container.lock` for the life of the server: a
+second container on the same volume is refused, and a lock left by a
+killed container is cleared on the next start.
+
+The image is built by `.github/workflows/docker.yml` from the release
+binaries (`Dockerfile.release`, checksum-verified, linux/amd64 and
+linux/arm64). `Dockerfile` builds from source instead (Debian slim,
+non-root, read-only root filesystem under compose); `docker-compose.yml`
+adds Caddy for TLS.
+
+### cloud-init (paste into a new VM)
+
+`cloud-init.yaml` does install, init, systemd, Caddy and firewall at first
+boot; `AGENT_OPERATOR.md` describes it. What is tested, and how:
+
+- `.github/workflows/cloud-init-test.yml` (manual) boots the file in a real
+  Ubuntu 24.04 cloud image under QEMU/KVM on a GitHub runner and checks,
+  from outside the VM, `/health` through Caddy, the binary version, the
+  unit, `entry.json`, that 7380 is not exposed, a cosignature for a
+  journal submitted from the runner, and the same key after a reboot.
+- What no CI can test: the public certificate (the VM has no inbound
+  internet). The test sets `HOST` to a `.invalid` name so Caddy's TLS
+  step fails and the plain-http path, which must work without it, is what
+  gets checked.
+- Offline tolerance: if the public-IP lookup fails the script uses the
+  default-route interface address; if Caddy cannot be downloaded from
+  caddyserver.com it falls back to Caddy's GitHub release (sha512-checked);
+  if Caddy still fails the witness keeps serving on `127.0.0.1:7380` and the
+  log says so.
 
 ## 3. Back up: the key and `logs/` are one object
 
@@ -120,6 +167,13 @@ So:
 - Back up `witness.key`, `witness.json` and `logs/` **together, atomically**
   (filesystem snapshot, or stop the service, copy, start).
 - Restore all three from the **same** snapshot, or none.
+- A consistent snapshot can still be **stale**: if the witness cosigned
+  anything after the snapshot was taken, the restored copy has forgotten
+  those heads and could cosign a fork between the remembered size and the
+  forgotten one. Restore only a snapshot taken after the last cosignature
+  (for example after a clean stop); if the witness served after the newest
+  snapshot you have, retire the key as below. Automatic VM or volume
+  snapshots (daily, hourly) are a reason to retire, not to restore.
 - If `logs/` is lost for good, retire the key: generate a new witness with
   `init` in a fresh directory, publish the new entry, and ask verifiers to
   drop the old one. Do not reuse the key.

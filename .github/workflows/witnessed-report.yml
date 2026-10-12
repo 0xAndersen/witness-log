@@ -1,0 +1,98 @@
+name: witnessed-report
+
+# Manual. Claims the first WITNESSED verdict against the public registry, or
+# claims nothing. registry/witnessed_report.py builds the directory with
+# `registry/build_directory.py --exclude-project`, counts distinct
+# independent operator_org values and stops (green, no file) below 2.
+# Otherwise it writes a real journal, runs `witness-log witness submit`
+# against those witnesses and `witness-log verify --min-witnesses N`, and
+# only on WITNESSED writes examples/swarm/reports/first-independent-witnessed.md,
+# which this workflow commits. The dossier and directory are attached to
+# the run so anyone can re-verify. An existing report is never overwritten.
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_witnesses:
+        description: "--min-witnesses for verify (2 or more)"
+        required: false
+        default: "2"
+        type: string
+      version:
+        description: "witness-log release to use (latest or a tag like v0.3.5)"
+        required: false
+        default: latest
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OUT: examples/swarm/reports/first-independent-witnessed.md
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: release CLI and Python package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_IN: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="$VERSION_IN"
+          if [ "$tag" = latest ]; then tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" -q .tag_name); fi
+          asset="witness-log-$tag-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p cli && cd cli
+          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$asset"
+          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/SHA256SUMS"
+          grep " $asset\$" SHA256SUMS | sha256sum -c -
+          tar xzf "$asset" ./witness-log
+          ./witness-log --version
+          pip install -q "witness-log==${tag#v}"
+      - name: registry
+        run: |
+          python3 registry/validate.py
+          python3 registry/build_directory.py --exclude-project | tee directory.json
+      - name: report
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MIN: ${{ inputs.min_witnesses }}
+        run: |
+          set -euo pipefail
+          if [ -e "$OUT" ]; then
+            echo "$OUT already exists; the first report is never overwritten. Writing to the run summary only."
+            OUT=report-rerun.md
+          fi
+          python3 registry/witnessed_report.py --cli cli/witness-log --min-witnesses "$MIN" --out "$OUT" --work work
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          if [ -f "$OUT" ]; then cat "$OUT" >> "$GITHUB_STEP_SUMMARY"; else
+            echo "Fewer than 2 independent operators are registered; nothing claimed." >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: witnessed-report
+          path: |
+            work/dossier.json
+            work/directory.json
+            work/agent.jsonl
+            ${{ env.OUT }}
+          if-no-files-found: ignore
+      - name: commit the report
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$OUT" != examples/swarm/reports/first-independent-witnessed.md ] || [ ! -f "$OUT" ]; then
+            echo "nothing to commit"; exit 0
+          fi
+          git config user.name "0xAndersen"
+          git config user.email "321999970+0xAndersen@users.noreply.github.com"
+          git add "$OUT"
+          git commit -m "reports: first independent WITNESSED verdict against the public registry"
+          git push

@@ -45,3 +45,29 @@ least two distinct `operator_org` values in the directory *you* pass, so
 the registry is only as useful as the number of organisations in it. It
 starts empty on purpose: the first two independent operators are the
 network's first real milestone.
+
+## Status
+
+`registry/status.py` probes every entry here (`GET /` and `GET /health`,
+and checks the served key against the entry) and keeps 7 days of samples.
+The `status` workflow runs it every 10 minutes and publishes the result to
+the orphan branch `status` (never to main):
+
+- page: <https://github.com/0xAndersen/witness-log/blob/status/STATUS.md>
+- data: <https://raw.githubusercontent.com/0xAndersen/witness-log/status/status.json>
+- samples: <https://raw.githubusercontent.com/0xAndersen/witness-log/status/history.jsonl>
+
+Uptime is a count over `history.jsonl` (probes where `/health` answered
+`ok` and `GET /` served the registered key, divided by probes), so anyone
+can recompute it. Run it yourself: `python3 registry/status.py --out-dir /tmp/status`.
+
+## The first independent WITNESSED
+
+`registry/witnessed_report.py` (run by the manual `witnessed-report`
+workflow) claims the first WITNESSED verdict against this registry or
+claims nothing: with fewer than two distinct independent `operator_org`
+values it stops without writing anything. Otherwise it submits a fresh
+journal to the independent witnesses, verifies with
+`--min-witnesses 2`, and on WITNESSED commits
+`examples/swarm/reports/first-independent-witnessed.md` with the
+commands, operators, cosignatures and verify output.

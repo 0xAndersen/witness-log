@@ -7,21 +7,31 @@
 #
 # Edit the three values under `write_files` → /etc/witness-log/env before
 # pasting. Everything else is automatic:
-#   - installs the latest witness-log release for this CPU, checksum-verified
+#   - installs the witness-log release binary for this CPU, checksum-verified
+#     (if a release has no binary for this CPU, compiles that version from
+#     crates.io instead, which takes several minutes)
 #   - creates a locked-down system user and initialises ONE witness
 #   - serves it under systemd (hardened unit from the repo)
-#   - puts Caddy in front with automatic TLS on <public-ip>.sslip.io
-#     (or your own hostname if you set HOST and point DNS at the box)
+#   - puts Caddy in front: plain http on :80 for any hostname at once, and
+#     automatic TLS on <public-ip>.sslip.io (or your own HOST) once the
+#     certificate is issued; if Caddy cannot be installed the witness
+#     still runs and the log says so
 #   - opens 80/443 in the host firewall (Oracle images ship iptables rules
 #     that block everything but 22; this handles that)
 #   - writes the directory entry to /var/lib/witness-log/w1/entry.json and
-#     serves it at GET / so it can be registered with one workflow run
+#     serves it at GET / so it can be registered from its URL
 #
 # After first boot (3–5 min), check:   curl -s http://<public-ip>/health  → ok
-# Then register it: Actions → register-witness → Run workflow → url.
+# Then register it: open a PR adding GET /'s directory_entry to
+# registry/witnesses/ (or ask the maintainers to run the register-witness
+# workflow with your URL). Progress: /var/log/witness-log-bootstrap.log.
 #
 # Backups: /var/lib/witness-log/w1 is the whole witness (key + memory). Snapshot
 # the directory as one unit; never restore the key without logs/. OPERATORS.md §3.
+#
+# .github/workflows/cloud-init-test.yml boots this file in a real Ubuntu
+# cloud image under QEMU/KVM and checks every step above except the
+# public certificate.
 
 package_update: true
 packages: [curl, ca-certificates, jq, iptables-persistent]
@@ -37,6 +47,7 @@ write_files:
       # ---- optional ----
       HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed)
       WL_VERSION="latest"            # a tag like v0.3.5 to pin, or latest
+      WL_REF="main"                  # repo ref the systemd unit is fetched from
 
   - path: /usr/local/sbin/witness-log-bootstrap
     permissions: "0755"
@@ -44,32 +55,49 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       . /etc/witness-log/env
+      WL_REF="${WL_REF:-main}"
+      REPO=0xAndersen/witness-log
       log(){ echo "[witness-log-bootstrap] $*"; }
 
-      # 1. public IP and hostname
-      IP=$(curl -fsS --max-time 10 https://api.ipify.org || curl -fsS --max-time 10 https://ifconfig.me)
+      # 1. public IP and hostname. The lookup services are a convenience:
+      #    without them (offline, egress-filtered) fall back to the address
+      #    of the interface that holds the default route.
+      IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)
+      if ! [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+        IP=${IP:-127.0.0.1}
+        log "public IP lookup failed; using interface address $IP (set HOST if this box is behind NAT)"
+      fi
       if [ -z "${HOST}" ]; then HOST="${IP}.sslip.io"; fi
-      log "public ip $IP, host $HOST"
+      log "ip $IP, host $HOST"
 
-      # 2. latest release for this CPU, checksum-verified
+      # 2. release binary for this CPU, checksum-verified
       ARCH=$(uname -m)   # x86_64 | aarch64
       if [ "$WL_VERSION" = "latest" ]; then
-        WL_VERSION=$(curl -fsS https://api.github.com/repos/0xAndersen/witness-log/releases/latest | jq -r .tag_name)
+        WL_VERSION=$(curl -fsS "https://api.github.com/repos/${REPO}/releases/latest" | jq -r .tag_name)
       fi
       ASSET="witness-log-${WL_VERSION}-${ARCH}-unknown-linux-gnu"
-      BASE="https://github.com/0xAndersen/witness-log/releases/download/${WL_VERSION}"
+      BASE="https://github.com/${REPO}/releases/download/${WL_VERSION}"
       TMP=$(mktemp -d); cd "$TMP"
-      curl -fsSLO "$BASE/$ASSET.tar.gz"
-      curl -fsSLO "$BASE/SHA256SUMS"
-      sha256sum --ignore-missing -c SHA256SUMS
-      tar xzf "$ASSET.tar.gz"      # the archive is flat: ./witness-log, LICENSE, README.md
-      install -m 0755 ./witness-log /usr/local/bin/witness-log
+      if curl -fsSLO "$BASE/$ASSET.tar.gz"; then
+        curl -fsSLO "$BASE/SHA256SUMS"
+        grep " ${ASSET}.tar.gz\$" SHA256SUMS | sha256sum -c -
+        tar xzf "$ASSET.tar.gz"      # the archive is flat: ./witness-log, LICENSE, README.md
+        install -m 0755 ./witness-log /usr/local/bin/witness-log
+      else
+        log "release ${WL_VERSION} has no ${ARCH} Linux binary; compiling witness-log-cli ${WL_VERSION#v} from crates.io (several minutes)"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential >/dev/null
+        export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path >/dev/null
+        /opt/cargo/bin/cargo install --locked --root /usr/local witness-log-cli --version "${WL_VERSION#v}"
+      fi
       log "installed $(witness-log --version)"
 
       # 3. system user and ONE witness
       id witness-log >/dev/null 2>&1 || useradd --system --home /var/lib/witness-log --shell /usr/sbin/nologin witness-log
       install -d -o witness-log -g witness-log -m 0700 /var/lib/witness-log
       if [ ! -f /var/lib/witness-log/w1/witness.key ]; then
+        # shellcheck disable=SC2024  # root captures the entry on purpose
         sudo -u witness-log witness-log witness init /var/lib/witness-log/w1 \
           --name "${NAME_BASE}.witness/${HOST}" \
           --org "${ORG}" \
@@ -82,27 +110,78 @@ write_files:
 
       # 4. systemd unit from the repo (hardened), enabled
       curl -fsSL -o /etc/systemd/system/witness-log-witness.service \
-        "https://raw.githubusercontent.com/0xAndersen/witness-log/main/deploy/witness/witness-log-witness.service"
+        "https://raw.githubusercontent.com/${REPO}/${WL_REF}/deploy/witness/witness-log-witness.service"
       systemctl daemon-reload
       systemctl enable --now witness-log-witness
-      for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7380/health >/dev/null 2>&1 && break; sleep 1; done
+      for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:7380/health >/dev/null 2>&1 && break; sleep 1; done
       log "witness serving on 127.0.0.1:7380: $(curl -s http://127.0.0.1:7380/health)"
 
-      # 5. Caddy: TLS on $HOST, plus plain http on :80 so the witness works
-      #    even before (or without) a certificate.
+      # 5. Caddy in front. Not fatal: the witness is already serving, and a
+      #    box without Caddy can still be put behind any other proxy.
+      echo "$HOST" > /etc/witness-log/host
+      if ! /usr/local/sbin/witness-log-caddy "$HOST" "$ARCH"; then
+        log "WARNING: Caddy setup failed; the witness runs on 127.0.0.1:7380 without a public proxy"
+      fi
+
+      # 6. host firewall: Oracle's Ubuntu images reject everything but 22 in
+      #    iptables; most other images have no rules. Both end up open.
+      for p in 80 443; do
+        iptables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport $p -j ACCEPT || true
+        ip6tables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || ip6tables -I INPUT 1 -p tcp --dport $p -j ACCEPT || true
+      done
+      netfilter-persistent save >/dev/null 2>&1 || true
+      if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow 22/tcp >/dev/null; ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
+      fi
+
+      # 7. report
+      sleep 3
+      echo "----------------------------------------------------------------"
+      echo "witness-log witness is up."
+      echo "  health:    http://${HOST}/health      (https once the certificate is issued, ~1 min)"
+      echo "  entry:     http://${HOST}/            (JSON, field directory_entry)"
+      echo "  register:  PR adding directory_entry to registry/witnesses/, or ask for register-witness with url = https://${HOST}"
+      echo "  backup:    /var/lib/witness-log/w1 as ONE unit (key + logs/)"
+      echo "----------------------------------------------------------------"
+      curl -s "http://127.0.0.1:7380/" | jq .
+      log "done"
+
+  - path: /usr/local/sbin/witness-log-caddy
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Caddy in front of the witness: plain http on :80 for any Host (works
+      # at once, behind NAT, and before a certificate exists), TLS for $1.
+      set -euo pipefail
+      HOST=$1; ARCH=$2
       CADDY_ARCH=$([ "$ARCH" = "aarch64" ] && echo arm64 || echo amd64)
       if ! command -v caddy >/dev/null; then
-        curl -fsSL -o /usr/local/bin/caddy "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}"
-        chmod 0755 /usr/local/bin/caddy
-        id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
-        install -d -o caddy -g caddy /etc/caddy /var/lib/caddy
+        if ! curl -fsSL --max-time 120 -o /usr/local/bin/caddy.tmp "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}"; then
+          # fallback: the GitHub release, checked against its sha512 list
+          CV=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest 2>/dev/null | jq -r .tag_name || true)
+          CV=${CV#v}; CV=${CV:-2.10.2}
+          D=$(mktemp -d)
+          curl -fsSL -o "$D/c.tgz" "https://github.com/caddyserver/caddy/releases/download/v${CV}/caddy_${CV}_linux_${CADDY_ARCH}.tar.gz"
+          curl -fsSL -o "$D/sums" "https://github.com/caddyserver/caddy/releases/download/v${CV}/caddy_${CV}_checksums.txt"
+          echo "$(grep " caddy_${CV}_linux_${CADDY_ARCH}.tar.gz\$" "$D/sums" | cut -d' ' -f1)  $D/c.tgz" | sha512sum -c -
+          tar xzf "$D/c.tgz" -C "$D" caddy
+          install -m 0755 "$D/caddy" /usr/local/bin/caddy.tmp
+        fi
+        chmod 0755 /usr/local/bin/caddy.tmp
+        /usr/local/bin/caddy.tmp version >/dev/null
+        mv /usr/local/bin/caddy.tmp /usr/local/bin/caddy
         setcap cap_net_bind_service=+ep /usr/local/bin/caddy || true
       fi
+      id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+      install -d -o caddy -g caddy /etc/caddy /var/lib/caddy
       cat > /etc/caddy/Caddyfile <<EOF
       {
           email admin@${HOST}
       }
-      http://${HOST}, http://${IP} {
+      http://${HOST} {
+          reverse_proxy 127.0.0.1:7380
+      }
+      http:// {
           reverse_proxy 127.0.0.1:7380
       }
       https://${HOST} {
@@ -129,27 +208,9 @@ write_files:
       EOF
       systemctl daemon-reload
       systemctl enable --now caddy
-
-      # 6. host firewall: Oracle's Ubuntu images reject everything but 22 in
-      #    iptables; most other images have no rules. Both end up open.
-      for p in 80 443; do
-        iptables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport $p -j ACCEPT
-        ip6tables -C INPUT -p tcp --dport $p -j ACCEPT 2>/dev/null || ip6tables -I INPUT 1 -p tcp --dport $p -j ACCEPT || true
-      done
-      netfilter-persistent save >/dev/null 2>&1 || true
-      command -v ufw >/dev/null && ufw --force enable >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null && ufw allow 22/tcp >/dev/null || true
-
-      # 7. report
-      sleep 3
-      echo "----------------------------------------------------------------"
-      echo "witness-log witness is up."
-      echo "  health:    http://${HOST}/health      (https once the certificate is issued, ~1 min)"
-      echo "  entry:     http://${HOST}/            (JSON, field directory_entry)"
-      echo "  register:  GitHub → Actions → register-witness → Run workflow → url = https://${HOST}"
-      echo "  backup:    /var/lib/witness-log/w1 as ONE unit (key + logs/)"
-      echo "----------------------------------------------------------------"
-      curl -s "http://127.0.0.1:7380/" | jq .
-      echo "$HOST" > /etc/witness-log/host
+      for _ in $(seq 1 20); do curl -fsS http://127.0.0.1/health >/dev/null 2>&1 && exit 0; sleep 1; done
+      echo "caddy did not answer on :80" >&2
+      exit 1
 
 runcmd:
   - [bash, -lc, "/usr/local/sbin/witness-log-bootstrap 2>&1 | tee /var/log/witness-log-bootstrap.log"]

@@ -1,0 +1,203 @@
+name: cloud-init-test
+
+# Boots deploy/witness/cloud-init.yaml, as a user would paste it, in a real
+# Ubuntu 24.04 cloud image under QEMU/KVM on a GitHub-hosted runner, then
+# checks from outside the VM:
+#   - /health answers through Caddy (guest :80 forwarded to runner :8080)
+#   - the installed binary is the expected release, the systemd unit is
+#     active, entry.json exists, the bootstrap log ends in "done"
+#   - the witness port 7380 is NOT reachable from outside the guest
+#   - `witness-log witness submit` from the runner gets a cosignature, and
+#     `witness-log verify` counts it
+#   - after a reboot the same key serves and remembers the log
+# The public certificate cannot be tested (no inbound internet); HOST is
+# set to a .invalid name so Caddy's TLS attempt fails and the plain-http
+# path, which must work without it, is what gets tested.
+#
+# Manual only until it has a record of green runs: it downloads a ~600 MB
+# image and depends on /dev/kvm being exposed on the runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "witness-log release to install in the guest (latest or a tag like v0.3.5)"
+        required: false
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      IMG_URL: https://cloud-images.ubuntu.com/noble/current
+      IMG: noble-server-cloudimg-amd64.img
+      SSH: ssh -i id -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR ubuntu@127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: KVM and QEMU
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils >/dev/null
+          ls -la /dev/kvm
+
+      - name: resolve version
+        id: v
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="${{ inputs.version }}"
+          if [ "$v" = latest ]; then v=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" -q .tag_name); fi
+          echo "tag=$v" >> "$GITHUB_OUTPUT"
+          echo "testing release $v"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.IMG }}
+          key: noble-cloudimg-${{ github.run_id }}
+          restore-keys: noble-cloudimg-
+
+      - name: Ubuntu cloud image (checksum-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o SHA256SUMS "$IMG_URL/SHA256SUMS"
+          if ! grep " \*\?$IMG\$" SHA256SUMS | sed 's/ \*/  /' | sha256sum -c - 2>/dev/null; then
+            curl -fsSL -o "$IMG" "$IMG_URL/$IMG"
+            grep " \*\?$IMG\$" SHA256SUMS | sed 's/ \*/  /' | sha256sum -c -
+          fi
+          qemu-img create -f qcow2 -F qcow2 -b "$IMG" disk.qcow2 10G
+
+      - name: user-data = cloud-init.yaml with test values + an SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keygen -q -t ed25519 -N '' -f id
+          python3 - "${{ steps.v.outputs.tag }}" "${{ github.sha }}" "$(cat id.pub)" <<'EOF'
+          import sys
+          tag, sha, pub = sys.argv[1:4]
+          s = open("deploy/witness/cloud-init.yaml").read()
+          for old, new in [('ORG="Your Organisation"', 'ORG="cloud-init CI"'),
+                           ('NAME_BASE="yourorg"', 'NAME_BASE="ci"'),
+                           ('COMPUTE="oracle-cloud"', 'COMPUTE="github-actions-qemu"'),
+                           ('HOST=""', 'HOST="witness-ci.invalid"'),
+                           ('WL_VERSION="latest"', f'WL_VERSION="{tag}"'),
+                           ('WL_REF="main"', f'WL_REF="{sha}"')]:
+              assert old in s, old
+              s = s.replace(old, new, 1)
+          s += f"\nssh_authorized_keys:\n  - {pub}\n"
+          open("user-data", "w").write(s)
+          EOF
+          python3 -c "import yaml; d=yaml.safe_load(open('user-data')); assert d['runcmd'] and d['write_files']"
+          printf 'instance-id: wl-ci\nlocal-hostname: wl-ci\n' > meta-data
+          cloud-localds seed.img user-data meta-data
+
+      - name: boot
+        run: |
+          qemu-system-x86_64 -enable-kvm -cpu host -m 2048 -smp 2 \
+            -drive file=disk.qcow2,if=virtio \
+            -drive file=seed.img,if=virtio,format=raw \
+            -netdev user,id=n0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:8080-:80,hostfwd=tcp:127.0.0.1:17380-:7380 \
+            -device virtio-net-pci,netdev=n0 \
+            -display none -serial file:serial.log -daemonize -pidfile qemu.pid
+
+      - name: wait for /health through Caddy (up to 15 min)
+        shell: bash
+        run: |
+          for i in $(seq 1 180); do
+            if [ "$(curl -fsS --max-time 3 http://127.0.0.1:8080/health 2>/dev/null)" = ok ]; then echo "healthy after ~$((i*5)) s"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::no /health after 15 min"; tail -60 serial.log; exit 1
+
+      - name: inside the guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          $SSH 'cloud-init status --wait >/dev/null || true; cloud-init status --long || true'
+          $SSH 'sudo tail -25 /var/log/witness-log-bootstrap.log'
+          $SSH 'sudo grep -q "^\[witness-log-bootstrap\] done" /var/log/witness-log-bootstrap.log'
+          want="witness-log ${{ steps.v.outputs.tag }}"; want="${want/ v/ }"
+          got=$($SSH 'witness-log --version')
+          echo "binary: $got (want $want)"; test "$got" = "$want"
+          $SSH 'systemctl is-active witness-log-witness caddy'
+          $SSH 'systemctl show witness-log-witness -p User -p ProtectSystem -p NoNewPrivileges'
+          $SSH 'sudo test -f /var/lib/witness-log/w1/entry.json && sudo jq . /var/lib/witness-log/w1/entry.json'
+          $SSH 'sudo jq -e ".operator_org == \"cloud-init CI\"" /var/lib/witness-log/w1/entry.json'
+          if curl -fsS --max-time 3 http://127.0.0.1:17380/health 2>/dev/null; then
+            echo "::error::port 7380 answers from outside the guest; the unit should listen on 127.0.0.1 only"; exit 1
+          fi
+          echo "7380 is not reachable from outside: ok"
+
+      - name: submit a journal from the runner and verify the cosignature
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${{ steps.v.outputs.tag }}
+          mkdir -p cli && cd cli
+          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/witness-log-$tag-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/SHA256SUMS"
+          grep " witness-log-$tag-x86_64-unknown-linux-gnu.tar.gz\$" SHA256SUMS | sha256sum -c -
+          tar xzf "witness-log-$tag-x86_64-unknown-linux-gnu.tar.gz" ./witness-log
+          cd ..
+          python3 -m venv venv && venv/bin/pip install -q "witness-log==${tag#v}"
+          venv/bin/python - <<'EOF'
+          import witness_log as wl
+          log = wl.open("ci.jsonl")
+          log.append_intent(b"cloud-init test: hello witness")
+          log.append_result(b"ok")
+          log.sync()
+          open("ident", "w").write(log.identity_pubkey_hex())
+          log.close()
+          EOF
+          curl -fsS http://127.0.0.1:8080/ | jq '{witnesses: [.directory_entry | .url = "http://127.0.0.1:8080"]}' > dir.json
+          cat dir.json
+          ./cli/witness-log witness submit ci.jsonl --directory dir.json --out dossier.json --min 1
+          rc=0; ./cli/witness-log verify dossier.json --identity "$(cat ident)" --directory dir.json --min-witnesses 1 --json > verify.json || rc=$?
+          jq '{verdict, receipts: .report.quorum.valid_receipts, operators: .report.quorum.independent_operators_represented}' verify.json
+          # One operator: CONSISTENT-UNWITNESSED (exit 10) is the correct verdict; the cosignature must count.
+          test "$rc" = 10
+          test "$(jq .report.quorum.valid_receipts verify.json)" = 1
+          curl -fsS http://127.0.0.1:8080/ | jq -e '.logs == 1 and .cosigned_since_start >= 1'
+
+      - name: reboot keeps the key and the memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          k1=$(curl -fsS http://127.0.0.1:8080/ | jq -r .pubkey_hex)
+          $SSH 'sudo systemctl reboot' || true
+          sleep 15
+          for _ in $(seq 1 60); do curl -fsS --max-time 3 http://127.0.0.1:8080/health >/dev/null 2>&1 && break; sleep 5; done
+          curl -fsS http://127.0.0.1:8080/ | jq '{pubkey_hex, logs, software}'
+          test "$(curl -fsS http://127.0.0.1:8080/ | jq -r .pubkey_hex)" = "$k1"
+          test "$(curl -fsS http://127.0.0.1:8080/ | jq -r .logs)" = 1
+
+      - name: logs
+        if: always()
+        shell: bash
+        run: |
+          $SSH 'sudo cat /var/log/witness-log-bootstrap.log' > bootstrap.log 2>/dev/null || true
+          $SSH 'sudo journalctl -u witness-log-witness -u caddy --no-pager' > journal.log 2>/dev/null || true
+          kill "$(cat qemu.pid)" 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-init-test-logs
+          path: |
+            serial.log
+            bootstrap.log
+            journal.log
+            user-data
+            dossier.json
+            verify.json
+          if-no-files-found: ignore

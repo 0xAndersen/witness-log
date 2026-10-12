@@ -1,0 +1,66 @@
+# witness-log witness image built from a GitHub release binary (no compiler).
+#
+# Published as ghcr.io/0xandersen/witness-log by .github/workflows/docker.yml:
+#
+#   docker run -d --name witness-log --restart unless-stopped -p 7380:7380 \
+#     -v witness-log:/state -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
+#
+# Build it yourself (context is this directory):
+#
+#   docker build -f deploy/witness/Dockerfile.release --build-arg VERSION=v0.3.5 deploy/witness
+#
+# The binary for each TARGETARCH comes from, in order:
+#   1. bin/<TARGETARCH>/witness-log in the build context, if present (CI puts
+#      a verified or natively built binary there; so can you);
+#   2. the release tarball for VERSION, checked against the release's SHA256SUMS.
+# Every RUN executes on the build platform, so a multi-arch build needs no
+# QEMU: the target-arch stage only copies files.
+#
+# From-source builds: use ./Dockerfile instead. BASE exists so the image can
+# be built where Docker Hub is unreachable (any glibc >= 2.34 image works).
+
+ARG BASE=debian:bookworm-slim
+FROM --platform=$BUILDPLATFORM ${BASE} AS fetch
+ARG TARGETARCH
+ARG VERSION=latest
+ARG REPO=0xAndersen/witness-log
+COPY . /ctx
+RUN set -eu; \
+    mkdir -p /out /state-skel; \
+    if [ -f "/ctx/bin/${TARGETARCH}/witness-log" ]; then \
+      echo "using bin/${TARGETARCH}/witness-log from the build context"; \
+      cp "/ctx/bin/${TARGETARCH}/witness-log" /out/witness-log; \
+    else \
+      apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates >/dev/null; \
+      case "$TARGETARCH" in amd64) triple=x86_64-unknown-linux-gnu ;; arm64) triple=aarch64-unknown-linux-gnu ;; \
+        *) echo "unsupported TARGETARCH $TARGETARCH" >&2; exit 1 ;; esac; \
+      if [ "$VERSION" = latest ]; then \
+        VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1); \
+      fi; \
+      asset="witness-log-${VERSION}-${triple}.tar.gz"; \
+      cd /tmp; \
+      curl -fsSLO "https://github.com/${REPO}/releases/download/${VERSION}/${asset}" \
+        || { echo "release ${VERSION} has no ${asset}; put a binary at bin/${TARGETARCH}/witness-log" >&2; exit 1; }; \
+      curl -fsSLO "https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"; \
+      grep " ${asset}\$" SHA256SUMS | sha256sum -c -; \
+      tar xzf "$asset" ./witness-log; \
+      mv witness-log /out/witness-log; \
+    fi; \
+    chmod 0755 /out/witness-log; \
+    cp /ctx/docker-entrypoint.sh /out/docker-entrypoint.sh; chmod 0755 /out/docker-entrypoint.sh
+
+FROM ${BASE}
+ARG VERSION=latest
+LABEL org.opencontainers.image.title="witness-log witness" \
+      org.opencontainers.image.description="c2sp.org/tlog-witness witness for witness-log agent audit logs" \
+      org.opencontainers.image.source="https://github.com/0xAndersen/witness-log" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=fetch /out/witness-log /usr/local/bin/witness-log
+COPY --from=fetch /out/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --from=fetch --chown=10001:10001 --chmod=0700 /state-skel /state
+USER 10001:10001
+VOLUME ["/state"]
+EXPOSE 7380
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD ["witness-log", "witness", "info", "http://127.0.0.1:7380"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
