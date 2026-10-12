@@ -3,8 +3,9 @@
 ## Before you start
 
 Spec changes (anything touching `spec/SPEC.md` §2–§9) go through a public
-RFC process — open an issue or PR proposing the change and describing the
-compatibility impact before writing the implementation. See
+RFC process: a PR adding `docs/rfcs/RFC-NNNN-<slug>.md` (template and the
+four steps, RFC → corpus vectors → implementation behind a flag → spec
+change, in `docs/rfcs/README.md`) before writing the implementation. See
 `GOVERNANCE.md` for the reasoning.
 
 ## The conformance gate

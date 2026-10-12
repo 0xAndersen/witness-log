@@ -129,9 +129,11 @@ against the public registry:
 ## Spec governance
 
 - All changes to `spec/SPEC.md` go through a public RFC process from the first pre-1.0 release
-  onward: proposed as a PR, open for comment, requiring at least one
-  approval from a maintainer outside the proposing organization once such
-  maintainers exist (see transition triggers below).
+  onward: proposed as a PR adding a document under `docs/rfcs/` (index and
+  the four steps in `docs/rfcs/README.md`), open for comment, requiring at
+  least one approval from a maintainer outside the proposing organization
+  once such maintainers exist (see transition triggers below). An RFC
+  proposes; the spec changes only at the last step, with corpus vectors.
 - The conformance corpus (`/corpus/`) is the actual enforcement mechanism —
   a spec change isn't complete until the corpus is updated and passes
   against a from-scratch reimplementation check (see CONTRIBUTING.md).

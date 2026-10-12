@@ -453,10 +453,19 @@ The STH is signed by the **identity key**, not the session key, so a
 checkpoint remains verifiable after the signing session's process has
 ended.
 
-`sig_alg` is carried on every STH (currently always `"ed25519"`) for
-crypto-agility: this field exists specifically so a future signature
-algorithm can be introduced without breaking the format or invalidating
-historically-issued checkpoints. See `/corpus/04_signed_tree_head.json`.
+`sig_alg` is carried on every STH for crypto-agility: this field exists
+specifically so a future signature algorithm can be introduced without
+breaking the format or invalidating historically-issued checkpoints. See
+`/corpus/04_signed_tree_head.json`.
+
+**Implemented today: `"ed25519"` only.** The reference implementation
+signs and verifies STHs, write receipts (§9.4), key bindings and
+revocations (§5) and native witness receipts (§7) with Ed25519 and
+nothing else. A verifier MUST reject any other `sig_alg` value
+(`SthError::UnsupportedAlgorithm` in the reference implementation; the
+value is also inside the signed message, so relabelling an Ed25519
+signature fails on its own terms as well). No second value has been
+assigned.
 
 **Verification strictness (normative):** verifiers MUST use strict Ed25519
 verification — reject non-canonical scalars per RFC 8032 AND reject
@@ -469,12 +478,22 @@ and two conformant WitnessLog verifiers disagreeing about whether the same
 dossier is valid would be worse than either answer alone. Honestly
 generated signatures are unaffected by this requirement.
 
-**Candidate future values**, not yet implemented: `"ml-dsa-65"` (FIPS 204 /
-Dilithium) and `"falcon-512"` are the two most likely near-term additions
-given their standardization status as of this writing. Naming candidates
-now is meant to give implementers a concrete target to plan storage and
-verification-path sizing around, not a commitment to either — the actual
-migration mechanism itself is still undesigned (§10).
+**Planned, not implemented: ML-DSA-44** (FIPS 204). This is the
+post-quantum algorithm the C2SP transparency ecosystem chose:
+`c2sp.org/tlog-cosignature` v1.1.0 (2026-10-07) specifies ML-DSA-44
+cosignatures and says new deployments SHOULD use them, and
+`c2sp.org/signed-note` v1.1.0 assigns signature type byte `0x06` to
+timestamped ML-DSA-44 checkpoint cosignatures. witness-log's own
+`sig_alg` identifier for ML-DSA-44 is **reserved but unassigned**: no
+string value is fixed by this document, no vector exists in `/corpus/`,
+and no implementation accepts one. Until a spec revision assigns the
+identifier and the corpus vectors, an STH or receipt claiming any
+ML-DSA value is invalid. An earlier draft of this paragraph named
+`"ml-dsa-65"` and `"falcon-512"` as candidates; neither was ever
+implemented and neither is planned. The migration mechanism (how a log
+moves from one identity algorithm to another without breaking
+historically issued checkpoints) is an open question (§10) and is the
+subject of a future RFC under `docs/rfcs/`.
 
 ## 7. Witness receipts
 
@@ -592,6 +611,92 @@ material.
 timestamp correlation, and tree-position metadata are not hidden by this
 scheme. See `THREAT_MODEL.md`.
 
+### 8.1 Worked example: checking a disclosure
+
+A **disclosure** is the holder of a log showing a third party what one
+leaf's payload was: the payload bytes and the leaf's salt. The third party
+checks it by recomputing `payload_hash` and comparing with the leaf in a
+dossier (or an evidence window) whose checkpoint they have already
+verified. Nothing here is new wire format; it is §8 run forwards, and the
+numbers below are corpus vector `11_payload_hash.json`, case `one_byte`,
+so any implementation can reproduce them.
+
+Inputs:
+
+```
+leaf_index  = 1
+payload     = 0x41                                   ("A", 1 byte)
+salt        = 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a   (32 bytes)
+```
+
+Step 1, `bucket_pad(payload)`. `len = 1`, so `B = (floor(1/256)+1)*256 =
+256` and the padded block is 8 + 256 = 264 bytes: the length as a
+big-endian u64, the payload, then 255 zero bytes.
+
+```
+0000000000000001 41 00 00 … 00        (8 + 1 + 255 = 264 bytes)
+```
+
+Step 2, the preimage: `bucket_pad(payload) || salt || leaf_index as u64 BE`,
+264 + 32 + 8 = 304 bytes. Its last 40 bytes are the salt and the index:
+
+```
+… 00 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 0000000000000001
+```
+
+Step 3, `payload_hash = SHA256(preimage)`:
+
+```
+8aa14c4fa46a06fea8177b48cf682fe8636f404200b56337a82ac8868ade6c99
+```
+
+A disclosure of `("A", that salt)` for leaf 1 is accepted when the leaf's
+`payload_hash` field equals this value **and** the leaf is in a verified
+tree; the hash alone proves nothing about position or history. The same
+payload and salt at `leaf_index = 9` hash to
+`be4b3ecf8dd3c8aa6eb6c6c2605bb6c647c3b678c6fe8ce890698607357725dc` (case
+`same_payload_other_index`), which is why a disclosure names the index.
+The empty payload is a real payload (case `empty`:
+`dc77bb84d2b2c6fa34fcefc1b99f257e2ff49031e0c3c182f656aff56e170ac0`), and
+a payload of 256 bytes moves to the next bucket (520-byte padded block,
+cases `exactly_one_bucket`, `bucket_plus_one`).
+
+What a disclosure cannot do: once the salt has been forgotten (§8, a 0x03
+Redaction leaf names the index), no party can produce one, including the
+log's own operator. That is the erasure property. A verifier offered a
+"disclosure" for a redacted index MUST treat it as unverifiable, not as
+false. In Python the check is six lines of `hashlib`; the reference
+implementation exposes it as `witness_log_core::redaction::payload_hash_with_salt`,
+and a `verify_disclosure(leaf, payload, salt)` helper plus a CLI
+`disclose` command are planned for 0.4.0.
+
+### 8.2 Payload bytes and canonicalisation (informative)
+
+This specification hashes **bytes**. How an application turns a structured
+value (a tool call, a JSON object, an AP2 mandate) into bytes is outside
+the wire format, with one practical consequence: every field that is
+compared *across* two logs (`handoff_state_hash` §3.1,
+`authorization_scope_hash` §3.2, and any application-level commitment such
+as a commerce mandate hash carried in a payload) only matches when both
+sides hashed identical bytes. `{"a":1,"b":2}` and `{"b":2,"a":1}` are the
+same JSON value and different SHA-256 inputs.
+
+For JSON the recommended canonicalisation is RFC 8785 (JSON
+Canonicalization Scheme, JCS): sorted members, no insignificant
+whitespace, fixed number and string serialisation. The Python binding's
+`canonical_json` today produces sorted keys with no whitespace but is
+**not** RFC 8785 (it escapes non-ASCII characters as `\uXXXX` where JCS
+emits UTF-8, and float formatting follows Python rather than the JCS
+number rules); the
+0.4.0 release plans to make it JCS and keep the current behaviour as
+`sorted_json`. Implementations in other languages should use a JCS
+library rather than their default JSON encoder when the bytes will be
+compared with another party's. The commerce profiles planned for 0.4.0
+(`docs/wiki/Commerce-Profile.md`) define `mandate_hash = SHA256(JCS(mandate))`
+on this basis. None of this is normative for the tree: a leaf whose
+payload was encoded differently is still a valid leaf; it just will not
+bind to the counterparty's.
+
 ## 9. Dossier export format
 
 A dossier is the offline-verifiable bundle a verifier actually checks:
@@ -702,11 +807,28 @@ them without implementing anything WitnessLog-specific:
 **Rationale.** The hardest problem this specification faces is not
 cryptographic but social: a witness network is worthless until
 independent operators actually run witnesses, and nobody wants to be
-first. That problem was already solved once, over roughly a decade, by
-Certificate Transparency — the operators, the protocols, and the tooling
-(`github.com/transparency-dev/witness`) exist and are running now.
-Speaking their protocol inherits that installed base rather than
-rebuilding it.
+first. Certificate Transparency built that community over roughly a
+decade, and the protocols and tooling that came out of it
+(`c2sp.org/tlog-witness`, `github.com/transparency-dev/witness`) are what
+this section adopts. Speaking their protocol lets an existing witness
+cosign a witness-log checkpoint without implementing anything specific
+to this specification; `witness-log witness serve` can in turn cosign
+any `tlog-checkpoint` log it is configured for.
+
+**What that does and does not give a witness-log today** (state of
+<https://witness-network.org> as checked on 2026-10-12): the shared
+witness configuration service is labelled experimental; it publishes
+`testing` and `staging` log lists and states that a `production` list is
+"not available yet"; every log is admitted by a community maintainer
+after an application that names the origin, an Ed25519 (type `0x01`)
+vkey, the expected checkpoint rate and a contact. Logs are configured by
+origin, one at a time. A witness-log identity is one origin, so a fleet
+of agents is a fleet of applications; the realistic path onto existing
+operators is one aggregate log per organisation, which is RFC-0001 under
+`docs/rfcs/` (a proposal, not part of this specification). Until then,
+the witnesses that cosign witness-log checkpoints are the ones operators
+run with `witness-log witness serve` (open enrollment) or configure by
+hand.
 
 **Checkpoint mapping.** A C2SP checkpoint note text is:
 
@@ -744,7 +866,10 @@ unambiguous.
 `0x04` for timestamped Ed25519 checkpoint cosignatures. The same key
 used for both gets a different key ID for each, which is the domain
 separation the signature-type byte in the key ID preimage exists to
-provide.
+provide. `c2sp.org/signed-note` v1.1.0 also assigns `0x06` to timestamped
+ML-DSA-44 cosignatures; witness-log does not produce or verify those
+yet (§6), and a verifier treats such a line as an unknown signature
+(ignored, not counted) until a spec revision adds it.
 
 **Unknown signatures MUST be ignored.** This is what allows witness
 cosignatures to accumulate on a log's own checkpoint without breaking
@@ -853,6 +978,16 @@ one (an earlier draft of the reference implementation made that mistake).
   transitively via the checkpoint over the whole tree — a leaf can't be
   individually verified without also trusting the tree it's claimed to be
   part of, which is a fine trade-off pre-1.0 but worth revisiting).
+- Algorithm migration: assigning the ML-DSA-44 `sig_alg` identifier (§6)
+  and defining how a log's identity moves to it.
+
+Proposals that would change §2–§9 are written up as RFCs under
+`docs/rfcs/` before any code or corpus change (`docs/rfcs/README.md`
+describes the process). Open at the time of writing: RFC-0001 (per
+organisation fleet checkpoint log), RFC-0002 (verdict strictness and an
+INVALID verdict), RFC-0003 (DNS TXT self-registration of witnesses),
+RFC-0004 (SCITT receipts). An RFC is not part of this specification until
+its text lands here with corpus vectors.
 
 ## Adoption
 

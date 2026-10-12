@@ -29,7 +29,7 @@ witness init` printed it (or `GET /` returns under `directory_entry`):
    when the URL cannot be reached from CI (`--offline` skips it entirely;
    `--require-live` makes unreachable an error, which is what the
    `register-witness` workflow uses). `python -m pytest registry` runs the
-   validator's own tests.
+   script's own tests.
 3. Keep it running. A verifier who adds your entry and sees cosignatures
    from it is the only thing that makes your witness count.
 
