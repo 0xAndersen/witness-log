@@ -32,3 +32,8 @@ fuzz/corpus/
 snapshot*.json
 *.jsonl
 !corpus/*.json
+
+# browser verifier build output
+web/pkg/
+web/pkg-go/
+web/test/_tampered.json

@@ -1,0 +1,193 @@
+{
+  "identity_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+  "leaves": [
+    {
+      "index": 0,
+      "leaf_type": 1,
+      "timestamp_ms": 1791783733284,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "e696f6c41fd5283565f767e59d7a1f8d62c1e897df2e24e22f321827df87e9fd",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 1,
+      "leaf_type": 2,
+      "timestamp_ms": 1791783733284,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "425848615c7bba489a42676737a1531a4f6eb5dd90cda1c4c0b1a918a8e575c4",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 2,
+      "leaf_type": 0,
+      "timestamp_ms": 1791783733284,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "c77ad717443a07a5061cc946e4ca20b34e55594103f161c7a69c49a36c5b48bf",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 3,
+      "leaf_type": 5,
+      "timestamp_ms": 1791783733284,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "8f2baed6e5f485ee9b08a2c8b207ceadf7ec49ca77797e1db84da0039c95a856",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": "Sent",
+      "counterparty_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "handoff_state_hash": "a9d2bd3f18e079673036230ddf2ffded1bd1beaa1de759951c1593a984fac956",
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 4,
+      "leaf_type": 6,
+      "timestamp_ms": 1791783733284,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "778b6b59ee86bf2914cebc113690d456ac1ae81caf3c5cab101c32182af8954b",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "handoff_state_hash": null,
+      "authorization_event_kind": "GrantedByMe",
+      "authorization_scope_hash": "ca41b82403415fd0a932def17248519fe570ded49da33f6a0115558eabd9dbf2",
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 5,
+      "leaf_type": 7,
+      "timestamp_ms": 1791783733285,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "30823f13d985cd502397240f8f7cdbf3914d4922c188f7bc1caade429beb12cc",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": "https://rekor.sigstore.dev/api/v1/log/entries/golden-fixture",
+      "anchor_proof_json": "{\"logIndex\":1,\"integratedTime\":1700000000,\"body\":\"golden fixture, not a real entry\"}",
+      "anchor_proof_hash": "1eb8c46b6584857ca5b63e64f6bc52a1efb033fd6e35a25060515bb7e97c9f45"
+    },
+    {
+      "index": 6,
+      "leaf_type": 3,
+      "timestamp_ms": 1791783733286,
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "payload_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "redacted_index": 2,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    }
+  ],
+  "checkpoint": {
+    "tree_size": 7,
+    "root_hash": "60615ec0151e0f9a274605a7caf47ab75e3384e6d876bcd5c9747edae84caf80",
+    "timestamp_ms": 1791783733965,
+    "sig_alg": "ed25519",
+    "signer_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+    "signature": "b362df87e01e2ca081908ba2db49008cb3b71cfc9fbbcab6824b9c2740947f2d4a6af30ee164951edf6f87a8764c26024f5a51b3fc13283a534b9e6c8c65ab05"
+  },
+  "witness_receipts": [
+    {
+      "witness_pubkey": "81bd3611d221afd424da81f14a700531967e60b99ed05fe8fc487d1a4220e444",
+      "tree_size": 7,
+      "root_hash": "60615ec0151e0f9a274605a7caf47ab75e3384e6d876bcd5c9747edae84caf80",
+      "witnessed_at_ms": 1791783733000,
+      "signature": "4378a3ac144273fec6ee4bc993f5136f9961255fe512fe2e1c3d617ae1ffe25fda614644c3e6d366f83a6bdfa3af936a6a968bc45d4ab7410bee3cd328c1900a",
+      "c2sp_origin": "witness-log/9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e"
+    },
+    {
+      "witness_pubkey": "c2840a90c7c1b5af9543c4c73ff3a605d3598b655569e47c9ad0fc4ff844b4ab",
+      "tree_size": 7,
+      "root_hash": "60615ec0151e0f9a274605a7caf47ab75e3384e6d876bcd5c9747edae84caf80",
+      "witnessed_at_ms": 1791783733000,
+      "signature": "f5371f6b032a5edb23353b55f6702265a412d448921e0c9b8d83e30204b3d8e0baf3e0314b0ab46b6fe3cbe6a08aae68d6f96d177e71ad062266589ef361be04",
+      "c2sp_origin": "witness-log/9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e"
+    }
+  ],
+  "witness_directory": {
+    "witnesses": [
+      {
+        "name": "golden-one.example/witness",
+        "operator_org": "Golden Org One",
+        "url": "http://127.0.0.1:45771",
+        "pubkey": "81bd3611d221afd424da81f14a700531967e60b99ed05fe8fc487d1a4220e444",
+        "runtime": "human",
+        "compute_provider": "provider-one",
+        "is_project_operated": false
+      },
+      {
+        "name": "golden-two.example/witness",
+        "operator_org": "Golden Org Two",
+        "url": "http://127.0.0.1:56409",
+        "pubkey": "c2840a90c7c1b5af9543c4c73ff3a605d3598b655569e47c9ad0fc4ff844b4ab",
+        "runtime": "human",
+        "compute_provider": "provider-two",
+        "is_project_operated": false
+      }
+    ]
+  },
+  "key_bindings": [
+    {
+      "identity_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "session_pubkey": "36457f6845fa4331afd73d275336f70061de8a85980c442f8788975dc3e3cac9",
+      "session_number": 0,
+      "timestamp_ms": 1791783733282,
+      "custody": "undisclosed",
+      "not_after_ms": null,
+      "signature": "f5ac89a1bbe5e3f22fb4b71d59502f4daddfc55c6bbcb84a75e32befb4f05366773079bbed7369d496d12942579edce79cb581903446a6f57690bd9c31090a03"
+    },
+    {
+      "identity_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "session_pubkey": "844ceec1127f0ed39ee86b426f5715ed263291d7d3f3d7d48b4c4a571e191709",
+      "session_number": 1,
+      "timestamp_ms": 1791783733964,
+      "custody": "undisclosed",
+      "not_after_ms": null,
+      "signature": "d556e933f25fb60ac835295abda74857c906c69e7997236d9ac025dcca1faa7b626f19e34f59e5ab2ac59aec39fd2322c2d71de8b2bffb35247d1caab16b5405"
+    }
+  ],
+  "revocations": []
+}

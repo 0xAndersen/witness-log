@@ -1,0 +1,7 @@
+{
+  "leaf_index": 0,
+  "payload_hex": "7b22746f6f6c223a22726561645f696e766f696365222c2261726773223a7b22696e766f696365223a22494e562d30303432227d7d",
+  "salt_hex": "ad6274ebd3d0b3e1af7175905da1a5bd25805e1268eebe89d8ad056ff2768d3f",
+  "forgotten_leaf_index": 2,
+  "note": "leaf 2 was redacted: its salt is gone and no disclosure of it can verify"
+}

@@ -1,0 +1,24 @@
+{
+  "directory_pinned": false,
+  "identity_pinned": false,
+  "identity_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+  "min_witnesses_used": null,
+  "path": "c2sp/a.json",
+  "report": {
+    "bindings_asserted": true,
+    "bindings_valid": true,
+    "checkpoint_signature_valid": true,
+    "claimed_tree_size": 7,
+    "externally_anchored": false,
+    "identity_bound": true,
+    "identity_pinned": false,
+    "internally_consistent": true,
+    "leaf_count": 7,
+    "leaves_structurally_valid": true,
+    "merkle_continuity_valid": true,
+    "quorum": null,
+    "verdict": "unanchored"
+  },
+  "threshold_used": 0.66,
+  "verdict": "UNANCHORED"
+}

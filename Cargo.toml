@@ -4,6 +4,7 @@ members = [
     "crates/witness-log-core",
     "crates/witness-log-network",
     "crates/witness-log-cli",
+    "crates/witness-log-wasm",
 ]
 
 [workspace.package]

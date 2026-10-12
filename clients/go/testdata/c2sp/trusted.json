@@ -1,0 +1,22 @@
+{
+  "witnesses": [
+    {
+      "name": "golden-one.example/witness",
+      "operator_org": "Golden Org One",
+      "url": "http://127.0.0.1:45771",
+      "pubkey": "81bd3611d221afd424da81f14a700531967e60b99ed05fe8fc487d1a4220e444",
+      "runtime": "human",
+      "compute_provider": "provider-one",
+      "is_project_operated": false
+    },
+    {
+      "name": "golden-two.example/witness",
+      "operator_org": "Golden Org Two",
+      "url": "http://127.0.0.1:56409",
+      "pubkey": "c2840a90c7c1b5af9543c4c73ff3a605d3598b655569e47c9ad0fc4ff844b4ab",
+      "runtime": "human",
+      "compute_provider": "provider-two",
+      "is_project_operated": false
+    }
+  ]
+}

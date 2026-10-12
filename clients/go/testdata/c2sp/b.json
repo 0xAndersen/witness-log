@@ -1,0 +1,142 @@
+{
+  "identity_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+  "leaves": [
+    {
+      "index": 0,
+      "leaf_type": 5,
+      "timestamp_ms": 1791783733287,
+      "session_pubkey": "48b3fdc6f52e5b98e069abb356499b0f4891516b475b584fb13f477ac4e4f085",
+      "payload_hash": "ae5e6fe9b4adae73bd9c627dd2102cab18498801cf983d05be17cab9613b4dbb",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": "Received",
+      "counterparty_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "handoff_state_hash": "a9d2bd3f18e079673036230ddf2ffded1bd1beaa1de759951c1593a984fac956",
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 1,
+      "leaf_type": 6,
+      "timestamp_ms": 1791783733288,
+      "session_pubkey": "48b3fdc6f52e5b98e069abb356499b0f4891516b475b584fb13f477ac4e4f085",
+      "payload_hash": "c7a0732b6b17e465cafbeae00ba64b6a186cd07a94340be8e48587bef6fd5ae2",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+      "handoff_state_hash": null,
+      "authorization_event_kind": "GrantedToMe",
+      "authorization_scope_hash": "ca41b82403415fd0a932def17248519fe570ded49da33f6a0115558eabd9dbf2",
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 2,
+      "leaf_type": 1,
+      "timestamp_ms": 1791783733288,
+      "session_pubkey": "48b3fdc6f52e5b98e069abb356499b0f4891516b475b584fb13f477ac4e4f085",
+      "payload_hash": "5c6dff72a9f8545c6cef1e0a4482bf8814308c604e967a828d50841b0bb51c10",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    },
+    {
+      "index": 3,
+      "leaf_type": 2,
+      "timestamp_ms": 1791783733288,
+      "session_pubkey": "48b3fdc6f52e5b98e069abb356499b0f4891516b475b584fb13f477ac4e4f085",
+      "payload_hash": "2894ce1dadf85ee9d0cbdfabf0488bb5766b41bbcb26e7f78785a8054c0c66df",
+      "redacted_index": null,
+      "revoked_identity": null,
+      "handoff_direction": null,
+      "counterparty_pubkey": null,
+      "handoff_state_hash": null,
+      "authorization_event_kind": null,
+      "authorization_scope_hash": null,
+      "anchor_url": null,
+      "anchor_proof_json": null,
+      "anchor_proof_hash": null
+    }
+  ],
+  "checkpoint": {
+    "tree_size": 4,
+    "root_hash": "af5a7e5c33d9eba732c929acce66ace32faa5129a0882d2b72d949eff626fde2",
+    "timestamp_ms": 1791783734013,
+    "sig_alg": "ed25519",
+    "signer_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+    "signature": "17723518c3c226520e9c6964725a33057911b8f5baf3edf40d1ef6459be07fececaec1326e7bf11529d552ff6e700a40193ba4dda585142b778d7fd50dec320b"
+  },
+  "witness_receipts": [
+    {
+      "witness_pubkey": "81bd3611d221afd424da81f14a700531967e60b99ed05fe8fc487d1a4220e444",
+      "tree_size": 4,
+      "root_hash": "af5a7e5c33d9eba732c929acce66ace32faa5129a0882d2b72d949eff626fde2",
+      "witnessed_at_ms": 1791783734000,
+      "signature": "7f054bbc08893fe7c28643b9e5464938e287514bcbbb1b238d6e1eb69b132991ea0eb6281b96c8d8cef0ceebccaa3c7ffd06ebbf0787a93be2d899b47185340d",
+      "c2sp_origin": "witness-log/504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab"
+    },
+    {
+      "witness_pubkey": "c2840a90c7c1b5af9543c4c73ff3a605d3598b655569e47c9ad0fc4ff844b4ab",
+      "tree_size": 4,
+      "root_hash": "af5a7e5c33d9eba732c929acce66ace32faa5129a0882d2b72d949eff626fde2",
+      "witnessed_at_ms": 1791783734000,
+      "signature": "9372540d722e3baa85da56671c253426b65fdaf0231ceaa778ab13db0b8736b4e9d045f986eb7a23e75acdbf124095d5ca7a74d8196b7084bfd9fc509fb55c09",
+      "c2sp_origin": "witness-log/504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab"
+    }
+  ],
+  "witness_directory": {
+    "witnesses": [
+      {
+        "name": "golden-one.example/witness",
+        "operator_org": "Golden Org One",
+        "url": "http://127.0.0.1:45771",
+        "pubkey": "81bd3611d221afd424da81f14a700531967e60b99ed05fe8fc487d1a4220e444",
+        "runtime": "human",
+        "compute_provider": "provider-one",
+        "is_project_operated": false
+      },
+      {
+        "name": "golden-two.example/witness",
+        "operator_org": "Golden Org Two",
+        "url": "http://127.0.0.1:56409",
+        "pubkey": "c2840a90c7c1b5af9543c4c73ff3a605d3598b655569e47c9ad0fc4ff844b4ab",
+        "runtime": "human",
+        "compute_provider": "provider-two",
+        "is_project_operated": false
+      }
+    ]
+  },
+  "key_bindings": [
+    {
+      "identity_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "session_pubkey": "48b3fdc6f52e5b98e069abb356499b0f4891516b475b584fb13f477ac4e4f085",
+      "session_number": 0,
+      "timestamp_ms": 1791783733286,
+      "custody": "undisclosed",
+      "not_after_ms": null,
+      "signature": "f499e13f1a79db63a417c416090f420fc64808ec7383f91049f418d31d59753597c3c495bdbe48af4d3529c9d93c91f22fd99029759edd64e8b66c920c70a904"
+    },
+    {
+      "identity_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
+      "session_pubkey": "8a5421f67ac3db5b8c3598e52b011b83b04e675e8172886870a0428ae32e9d85",
+      "session_number": 1,
+      "timestamp_ms": 1791783734012,
+      "custody": "undisclosed",
+      "not_after_ms": null,
+      "signature": "cb53bcc65491956014887105032515fc8681b1ff552f999919f289a0d88163f549f9c36109dd0dbb7fa1a073224323d2abc2dae18a5ae2cf714210d7e5d91705"
+    }
+  ],
+  "revocations": []
+}

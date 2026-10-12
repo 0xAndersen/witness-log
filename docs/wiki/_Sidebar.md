@@ -11,6 +11,8 @@
 - [Quickstart: CLI](Quickstart-CLI)
 - [MCP integration](MCP-Integration)
 - [Framework guides](Framework-Guides)
+- [Quickstart: Go](Quickstart-Go)
+- [Browser verifier](Browser-Verifier)
 - [Other languages](Other-Languages)
 
 **Tutorials**

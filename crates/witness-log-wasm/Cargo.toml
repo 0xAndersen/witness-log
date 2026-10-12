@@ -1,0 +1,39 @@
+[package]
+name = "witness-log-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "WebAssembly bindings for offline witness-log dossier verification in the browser: verify_dossier, verify_disclosure, bind."
+readme = "README.md"
+keywords = ["transparency-log", "wasm", "audit", "ai-agents", "verification"]
+categories = ["cryptography", "wasm"]
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+witness-log-core = { version = "0.3.6", path = "../witness-log-core" }
+witness-log-network = { version = "0.3.6", path = "../witness-log-network" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+# Pinned exactly: `wasm-bindgen-cli` must be installed at the same version
+# (see .github/workflows/pages.yml and web/README.md). Both compile on the
+# host too, so the whole crate is linted and tested by `cargo test
+# --workspace`; the JS-facing functions are only callable from wasm.
+wasm-bindgen = "=0.2.129"
+serde-wasm-bindgen = "0.6"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# witness-log-core depends on `rand` 0.8 for key generation, which the
+# verifier never calls. getrandom 0.2 still needs the `js` feature to
+# compile for wasm32-unknown-unknown at all.
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+hex = { workspace = true }

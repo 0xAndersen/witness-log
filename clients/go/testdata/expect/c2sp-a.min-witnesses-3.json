@@ -1,0 +1,45 @@
+{
+  "directory_pinned": true,
+  "identity_pinned": false,
+  "identity_pubkey": "9f6da356d5f4759ce7c426bca96ce2ac4a611c1f872faec81492422892324d1e",
+  "min_witnesses_used": 3,
+  "path": "c2sp/a.json",
+  "report": {
+    "bindings_asserted": true,
+    "bindings_valid": true,
+    "checkpoint_signature_valid": true,
+    "claimed_tree_size": 7,
+    "externally_anchored": true,
+    "identity_bound": true,
+    "identity_pinned": false,
+    "internally_consistent": true,
+    "leaf_count": 7,
+    "leaves_structurally_valid": true,
+    "merkle_continuity_valid": true,
+    "quorum": {
+      "compute_diversity_fraction": 1.0,
+      "count_gate": "count >= 3",
+      "distinct_compute_providers_in_directory": 2,
+      "distinct_compute_providers_represented": 2,
+      "distinct_independent_operators": 2,
+      "distinct_operators_in_directory": 2,
+      "distinct_operators_represented": 2,
+      "diversity_fraction": 1.0,
+      "independent_operators_represented": [
+        "golden org one",
+        "golden org two"
+      ],
+      "meets_count_threshold": false,
+      "newest_trusted_witness_ms": 1791783733000,
+      "project_operated_receipts": 0,
+      "quorum_fraction": 1.0,
+      "split_view_resistant": true,
+      "total_directory_witnesses": 2,
+      "tree_size": 7,
+      "valid_receipts": 2
+    },
+    "verdict": "consistent_unwitnessed"
+  },
+  "threshold_used": 0.66,
+  "verdict": "CONSISTENT-UNWITNESSED"
+}

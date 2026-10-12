@@ -270,9 +270,10 @@ assert!(dossier.verify(0.66, &VerifyContext::default()).internally_consistent);
 | `witness-log c2sp show / verify` | C2SP checkpoint bodies and signed notes |
 | `witness-log conform <dir>` | check another implementation against the corpus |
 
-TypeScript: [`clients/typescript`](clients/typescript) (`@witness-log/client`) gives typed verdicts from the CLI
-and `step()`/`verify()` over MCP, with no cryptography reimplemented in JavaScript. Go and shell integrate by
-writing the dossier (schema: `spec/dossier.schema.json`), shelling out to `verify`, and branching on the exit
+Other languages: TypeScript [`clients/typescript`](clients/typescript) (`@witness-log/client`); Go
+[`clients/go`](clients/go), an independent verifier from the spec, corpus-checked against the Rust CLI in CI; and
+the [browser verifier](docs/wiki/Browser-Verifier.md) in [`web/`](web), the Rust verifier compiled to WebAssembly
+so a dossier can be checked without installing anything. Anything else shells out to `verify` and branches on the exit
 code: [Other languages](docs/wiki/Other-Languages.md).
 
 ---
@@ -357,13 +358,16 @@ witness-log/
 │   ├── witness-log-core/      # leaves, Merkle tree, identity, redaction, journal, STH, C2SP encoding
 │   ├── witness-log-network/   # witnesses, directories, selection, receipts, quorum, dossiers, verdicts
 │   ├── witness-log-cli/       # `witness-log`: demo, verify, diff, explain, witness, c2sp, conform
-│   └── witness-log-python/    # PyO3 bindings: pip install witness-log
+│   ├── witness-log-python/    # PyO3 bindings: pip install witness-log
+│   └── witness-log-wasm/      # wasm-bindgen verifier for web/
 ├── spec/                 # SPEC.md (normative wire format) and dossier.schema.json
 ├── corpus/               # 11 deterministic conformance vectors
 ├── docs/wiki/            # the wiki source (auto-published); docs/assets/ holds the graphics above
 ├── brand/                # logo mark, wordmark, palette
 ├── integrations/mcp/     # MCP server shim (the server ships in the wheel: witness-log-mcp)
 ├── clients/typescript/   # @witness-log/client
+├── clients/go/           # Go verifier module + witness-log-verify
+├── web/                  # browser verifier (crates/witness-log-wasm + Go wasm), deployed to Pages
 ├── examples/             # sample dossier, verify_demo.py, rewrite-attack/ (the same-key rewrite, refused),
 │                         # live-network/ (10 witnesses), swarm/ (100 scenarios, 3,000 agents)
 ├── deploy/witness/       # Dockerfile, compose, systemd, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
