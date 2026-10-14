@@ -52,7 +52,12 @@ were used for the confirmation runs.
 
 Run d is what showed the remaining wait was the state lock, not the GIL:
 a no-op timed the same way never passed 0.1 ms while `request()` still
-did. Run e is the code that ships.
+did. Run e is the code that ships ([report](outside-10k-0.5.0-confirmation.md)).
+
+The released 0.5.0 then ran the full 100,000 agents again
+([report](outside-100k-0.5.0-release.md)): 4,655,983 operations, 0
+failures, 0 findings, no CONSISTENT-UNWITNESSED proxy exports, and
+`witnesser.request` at most 1.9 ms over 24,950 calls.
 
 ## Raw report of the 100,000-agent run
 

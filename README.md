@@ -210,7 +210,7 @@ ten scenarios, 103 scenarios against the released CLI and wheel, and a 200-agent
 | [3,000 agents, 100 witnesses](examples/swarm/reports/outside-3000.md) | 325,708 operations, 0 failures |
 | [100,000 agents, 37 personas, every 0.4.0 surface](examples/swarm/reports/outside-100k.md) | 4,644,419 operations; 5 defects found, fixed in 0.4.1 |
 | [100,000 agents against 0.5.0](examples/swarm/reports/outside-100k-0.5.0.md) | 4,631,033 operations, 0 crashes; 3 defects found (GIL held across fsync, proxy export and crash-retry races), fixed in 0.5.0 |
-| [10,000 agents, confirmation of those fixes](examples/swarm/reports/outside-10k-0.5.0-confirmation.md) | 463,153 operations, 0 failures, 0 findings |
+| [100,000 agents against the released 0.5.0](examples/swarm/reports/outside-100k-0.5.0-release.md) | 4,655,983 operations, 0 failures, 0 findings |
 | [same-key rewrite](examples/rewrite-attack/run.py) | refused with evidence (`422`), `diff` flags equivocation |
 
 Two outside evaluations ran witness-log and its competitors on the same workloads; every defect they found is
