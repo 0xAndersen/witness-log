@@ -31,8 +31,8 @@ jobs:
       run:
         working-directory: clients/go
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: clients/go/go.mod
           cache: false # stdlib only: there is no go.sum to key a cache on
@@ -69,8 +69,8 @@ jobs:
     name: Go verdicts agree with the Rust CLI
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: clients/go/go.mod
           cache: false
@@ -90,8 +90,8 @@ jobs:
     name: C2SP notes verify with the reference libraries
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: clients/go/interop/go.mod
           cache-dependency-path: clients/go/interop/go.sum

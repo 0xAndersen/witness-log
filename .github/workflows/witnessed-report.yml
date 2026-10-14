@@ -34,8 +34,8 @@ jobs:
     env:
       OUT: examples/swarm/reports/first-independent-witnessed.md
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: release CLI and Python package
@@ -74,7 +74,7 @@ jobs:
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           if [ -f "$OUT" ]; then cat "$OUT" >> "$GITHUB_STEP_SUMMARY"; else
             echo "Fewer than 2 independent operators are registered; nothing claimed." >> "$GITHUB_STEP_SUMMARY"; fi
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: witnessed-report
