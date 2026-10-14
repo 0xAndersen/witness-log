@@ -37,7 +37,7 @@ jobs:
         os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build (debug)
         run: cargo build --workspace --verbose
@@ -67,7 +67,7 @@ jobs:
     name: Minimum supported Rust version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Read MSRV from Cargo.toml
         id: msrv
         run: |
@@ -97,7 +97,7 @@ jobs:
     name: Clippy + rustfmt
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -114,7 +114,7 @@ jobs:
     name: Conformance corpus drift check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Regenerate corpus
         run: |
@@ -136,9 +136,9 @@ jobs:
         # PyO3 "interpreter too new" failure ships unnoticed.
         python: ["3.9", "3.13"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Install maturin and pytest
@@ -192,7 +192,7 @@ jobs:
           python examples/swarm/outside.py --agents 200 --directory directory.json --out swarm-report/outside --processes 4 --threads 12 --operator-serve-seconds 60
           kill $(cat a.pid) $(cat b.pid)
         if: matrix.python != '3.9'
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: swarm-report-py${{ matrix.python }}
@@ -215,9 +215,9 @@ jobs:
       matrix:
         env: [langchain-openai-agents, crewai]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -244,8 +244,8 @@ jobs:
     name: Witness registry entries
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install pytest
@@ -257,7 +257,7 @@ jobs:
     name: Supply chain audit (advisories + licenses)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:

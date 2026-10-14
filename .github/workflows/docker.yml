@@ -80,7 +80,7 @@ jobs:
           echo "release ${TAG} did not appear in 30 min; compiling the tag natively"
           echo "source=build" >> "$GITHUB_OUTPUT"
       - if: steps.fetch.outputs.source == 'build'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           path: src
@@ -104,7 +104,7 @@ jobs:
           echo "$v"
           test "$v" = "witness-log ${TAG#v}" || { echo "::error::binary says '$v', expected witness-log ${TAG#v}"; exit 1; }
           echo "${{ matrix.arch }}: ${{ steps.fetch.outputs.source }} -> $v" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.arch }}
           path: out/witness-log
@@ -117,12 +117,12 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: bin-amd64
           path: deploy/witness/bin/amd64
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: bin-arm64
           path: deploy/witness/bin/arm64

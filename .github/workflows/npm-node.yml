@@ -62,14 +62,14 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: clients/node
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: npm ci (workspace)
@@ -117,7 +117,7 @@ jobs:
             console.log(a, b);
             if (a !== "UNANCHORED" || b !== "UNANCHORED") process.exit(1);
             log.close();'
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: bindings-${{ matrix.target }}
           path: clients/node/native/*.node
@@ -133,8 +133,8 @@ jobs:
       contents: read
       id-token: write   # OIDC token for npm trusted publishing and provenance
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -153,7 +153,7 @@ jobs:
         run: |
           npm ci
           npm run build -w typescript
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: clients/node/artifacts
       - name: Place the binaries into the platform packages
@@ -191,8 +191,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -230,8 +230,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
