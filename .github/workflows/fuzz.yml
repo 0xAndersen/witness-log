@@ -17,6 +17,7 @@ jobs:
           - fuzz_dossier_verify
           - fuzz_checkpoint_verify
           - fuzz_journal_replay
+          - fuzz_journal_damage
           - fuzz_merkle_proofs
           - fuzz_cli_render
           - fuzz_witness_request
