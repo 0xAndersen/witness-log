@@ -81,12 +81,10 @@ on the exact commit being released.
    ```sh
    git tag -a v0.5.0 -m "witness-log 0.5.0" && git push origin v0.5.0
    ```
-5. Tag the Go module so `go get …/clients/go@vX.Y.Z` resolves to a real
-   version rather than a pseudo-version:
-   ```sh
-   git tag -a clients/go/v0.5.0 -m "witness-log Go client 0.5.0" && git push origin clients/go/v0.5.0
-   ```
-   and the npm packages whose version changed (`ts-v…`, `node-v…`,
+5. The release workflow also tags the Go module (`clients/go/vX.Y.Z`) so
+   `go get …/clients/go@vX.Y.Z` resolves to a real version rather than a
+   pseudo-version; *Go module tag* (Actions → Run workflow) backfills one.
+   Push the tags for the npm packages whose version changed (`ts-v…`, `node-v…`,
    `ai-sdk-v…`, `create-witness-log-v…`; each tag runs its publish job).
 6. Check from a clean machine: `cargo install witness-log-cli && witness-log
    demo`, and `pip install witness-log && python -c "import witness_log"`.

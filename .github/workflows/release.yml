@@ -170,3 +170,10 @@ jobs:
           name: witness-log ${{ env.RELEASE_TAG }}
           files: assets/*
           generate_release_notes: true
+      - name: Tag the Go module so `go get .../clients/go@vX.Y.Z` resolves
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/clients/go/${RELEASE_TAG}" -f sha="${GITHUB_SHA}" \
+            || echo "::notice::clients/go/${RELEASE_TAG} not created (it may already exist)"
