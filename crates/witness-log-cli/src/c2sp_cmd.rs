@@ -15,7 +15,9 @@ use witness_log_network::Dossier;
 
 const EXIT_OK: u8 = 0;
 const EXIT_USAGE: u8 = 2;
-const EXIT_DIVERGED: u8 = 30;
+/// A note that does not verify, or nothing to export: a failed check, not
+/// a contradiction (RFC-0002), so INVALID.
+const EXIT_INVALID: u8 = crate::exit::INVALID;
 
 fn rule() {
     println!("  {}", "─".repeat(66));
@@ -348,12 +350,12 @@ pub fn run_verify(note_path: &str, vkey_strings: &[String]) -> ExitCode {
 
     let verdict = if failed_keys > 0 {
         println!();
-        println!("  ✗ {failed_keys} supplied key(s) did not verify: REJECTED (exit 30)");
-        EXIT_DIVERGED
+        println!("  ✗ {failed_keys} supplied key(s) did not verify: REJECTED (exit 40)");
+        EXIT_INVALID
     } else if verified_keys == 0 {
         println!();
-        println!("  ✗ None of the {} supplied key(s) verified any signature on this note: REJECTED (exit 30)", vkeys.len());
-        EXIT_DIVERGED
+        println!("  ✗ None of the {} supplied key(s) verified any signature on this note: REJECTED (exit 40)", vkeys.len());
+        EXIT_INVALID
     } else {
         EXIT_OK
     };
@@ -548,7 +550,7 @@ pub fn run_export(args: &[String]) -> ExitCode {
         for s in &skipped {
             eprintln!("  skipped {s}");
         }
-        return ExitCode::from(EXIT_DIVERGED);
+        return ExitCode::from(EXIT_INVALID);
     }
     let text = match note.encode() {
         Ok(t) => t,

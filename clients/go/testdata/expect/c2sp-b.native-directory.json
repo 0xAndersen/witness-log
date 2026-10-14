@@ -1,5 +1,7 @@
 {
+  "allow_sub_majority": false,
   "directory_pinned": true,
+  "exit_code": 10,
   "identity_pinned": false,
   "identity_pubkey": "504e140aba44481f18e0a4cf0d7c9ce9065443186e939a20d5734f0b1296c7ab",
   "min_witnesses_used": null,
@@ -9,10 +11,13 @@
     "bindings_valid": true,
     "checkpoint_signature_valid": true,
     "claimed_tree_size": 4,
+    "contradictions": [],
     "externally_anchored": true,
+    "failures": [],
     "identity_bound": true,
     "identity_pinned": false,
     "internally_consistent": true,
+    "known_heads_unchecked": [],
     "leaf_count": 4,
     "leaves_structurally_valid": true,
     "merkle_continuity_valid": true,
@@ -35,8 +40,10 @@
       "tree_size": 4,
       "valid_receipts": 0
     },
+    "split_view_unsafe": false,
     "verdict": "consistent_unwitnessed"
   },
+  "strict": true,
   "threshold_used": 0.66,
   "verdict": "CONSISTENT-UNWITNESSED"
 }

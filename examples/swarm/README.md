@@ -22,8 +22,8 @@ report.
 | category | count | what it covers |
 |---|---|---|
 | install | 6 | `--version`, `--help`, `demo`, package import, stubs, docstrings |
-| cli-verify | 14 | exit codes 0/10/20/30/2, argument validation, `--json` fields, directory formats, `explain`, warnings |
-| tamper | 14 | edited/deleted/reordered leaves, forged timestamps, receipt games, binding expiry, unknown leaf types, impersonation, `diff` |
+| cli-verify | 14 | exit codes 0/10/11/20/30/40/2, argument validation, `--json` fields, directory formats, `explain`, warnings |
+| tamper | 14 | edited/deleted/reordered leaves, forged timestamps, receipt games, binding expiry, unknown leaf types, impersonation (INVALID, exit 40, since 0.5.0; DIVERGED, exit 30, before), `diff` |
 | python | 16 | `open`/`step`, async, redaction across restarts, salt sidecar, locks and crashes, torn tails, corruption, proofs, validation, throughput |
 | witness | 14 | submit/cosign, 409 resync, incremental proofs, same-size and growing forks, stale/replayed heads, origins, forged signatures, rollback guard, C2SP receipts |
 | adversarial | 12 | garbage bodies, methods, size caps, chunked, junk proofs, slowloris, header floods, proof-line and body caps, connection bursts |

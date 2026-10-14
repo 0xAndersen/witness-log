@@ -20,6 +20,8 @@ import {
   hexToBytes,
   bytesToHex,
   EXIT_CODES,
+  EXIT_SPLIT_VIEW_UNSAFE,
+  parseKnownHead,
   type Dossier,
   type DossierReport,
   type DossierVerification,
@@ -45,6 +47,9 @@ export {
   hexToBytes,
   bytesToHex,
   EXIT_CODES,
+  EXIT_SPLIT_VIEW_UNSAFE,
+  parseKnownHead,
+  verifyEquivocationProof,
   LEAF_TYPES,
   type Dossier,
   type DossierReport,
@@ -58,6 +63,8 @@ export {
   type WitnessReceipt,
   type KeyBindingStatement,
   type QuorumResult,
+  type KnownHead,
+  type EquivocationProof,
 } from "@witness-log/client";
 
 /** The raw napi-rs binding, for anything this module does not wrap. */
@@ -469,6 +476,7 @@ const VERDICT_NAME: Record<string, Verdict> = {
   consistent_unwitnessed: "CONSISTENT-UNWITNESSED",
   unanchored: "UNANCHORED",
   diverged: "DIVERGED",
+  invalid: "INVALID",
 };
 
 /**
@@ -486,6 +494,11 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
         threshold: opts.threshold,
         minWitnesses: opts.minWitnesses,
         revocationsJson: opts.revocations === undefined ? undefined : JSON.stringify(opts.revocations),
+        knownHeads: opts.knownHeads?.map((h) => {
+          const k = parseKnownHead(h);
+          return `${k.tree_size}:${k.root_hash}`;
+        }),
+        evidenceJson: opts.evidence === undefined ? undefined : JSON.stringify(opts.evidence),
       }),
     ),
   ) as DossierReport;
@@ -496,15 +509,18 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
   } catch {
     signer = "";
   }
+  const exitCode = report.split_view_unsafe && !opts.allowSubMajority ? EXIT_SPLIT_VIEW_UNSAFE : EXIT_CODES[verdict];
   return {
     verdict,
-    exitCode: EXIT_CODES[verdict],
-    ok: verdict === "WITNESSED",
+    exitCode,
+    ok: verdict === "WITNESSED" && exitCode === 0,
+    splitViewUnsafe: report.split_view_unsafe,
     identityPubkey: signer,
     identityPinned: report.identity_pinned,
     directoryPinned: report.externally_anchored,
     internallyConsistent: report.internally_consistent,
-    failures: [],
+    failures: report.failures,
+    contradictions: report.contradictions,
     report,
   };
 }

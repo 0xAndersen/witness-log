@@ -413,4 +413,44 @@ def test_cross_agent_leaves_and_bindings_from_python(tmp_path):
     d = json.loads(a.to_dossier_json())
     d["leaves"][i]["anchor_proof_json"] = '{"logIndex":2}'
     r = json.loads(witness_log.verify_dossier_json(json.dumps(d), 0.66, ia))
-    assert r["verdict"] == "diverged"
+    assert r["verdict"] == "invalid" and r["failures"]
+
+
+def test_corpus_13_verdicts_known_heads_and_evidence():
+    """RFC-0002 through the binding: known heads and equivocation evidence
+    make a valid dossier "diverged"; a failed check is "invalid"."""
+    import os
+
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "corpus", "13_verdicts.json")
+    if not os.path.exists(path):
+        import pytest
+
+        pytest.skip("corpus not available")
+    v = json.load(open(path))
+    seen = set()
+    for c in v["cases"]:
+        r = json.loads(
+            witness_log.verify_dossier_json(
+                json.dumps(v["dossiers"][c["dossier"]]),
+                c["threshold"],
+                c["expected_identity"],
+                json.dumps(v["trusted_directory"]) if c["trusted_directory"] else None,
+                c["min_witnesses"],
+                None,
+                c["known_heads"],
+                json.dumps([v["evidence"][k] for k in c["evidence"]]),
+            )
+        )
+        e = c["expect"]
+        assert r["verdict"] == e["verdict"], c["name"]
+        assert r["split_view_unsafe"] == e["split_view_unsafe"], c["name"]
+        assert bool(r["failures"]) == e["has_failures"], c["name"]
+        assert len(r["contradictions"]) == e["contradictions"], c["name"]
+        assert len(r["known_heads_unchecked"]) == e["known_heads_unchecked"], c["name"]
+        seen.add(r["verdict"])
+    assert seen == {"witnessed", "consistent_unwitnessed", "unanchored", "diverged", "invalid"}
+    # A malformed known head is the caller's error, not a verdict.
+    import pytest
+
+    with pytest.raises(ValueError):
+        witness_log.verify_dossier_json(json.dumps(v["dossiers"]["full"]), 0.66, None, None, None, None, ["7"])

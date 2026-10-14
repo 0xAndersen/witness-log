@@ -20,7 +20,7 @@ fn now() -> u64 {
 
 /// Finding 01 (CRITICAL): a dossier attributing a fabricated log to a
 /// victim's identity is now caught by the identity-binding check and
-/// reaches Diverged, whether or not the verifier pins an expected identity.
+/// reaches Invalid (Diverged before 0.5.0), whether or not the verifier pins an expected identity.
 #[test]
 fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
     let victim = IdentityKeypair::generate();
@@ -52,8 +52,8 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
     );
     assert_eq!(
         report.verdict,
-        Verdict::Diverged,
-        "identity mismatch must produce Diverged"
+        Verdict::Invalid,
+        "identity mismatch must produce Invalid"
     );
     assert!(!report.is_internally_consistent());
 
@@ -64,9 +64,11 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
         trusted_directory: None,
         min_receipts: None,
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let pinned_report = dossier.verify(0.66, &ctx);
-    assert_eq!(pinned_report.verdict, Verdict::Diverged);
+    assert_eq!(pinned_report.verdict, Verdict::Invalid);
 }
 
 /// Finding 02 (CRITICAL): a fabricated dossier can no longer reach
@@ -294,7 +296,7 @@ fn finding11_silence_proof_no_longer_confuses_receipts_with_checkpoints() {
 
 /// Finding 14 (HIGH): structurally invalid leaves (duplicate indices,
 /// timestamps running backwards, an undefined leaf type tag) are now
-/// rejected by validate_sequence and produce Diverged.
+/// rejected by validate_sequence and produce Invalid.
 #[test]
 fn finding14_structurally_invalid_leaves_no_longer_verify() {
     let identity = IdentityKeypair::generate();
@@ -344,7 +346,7 @@ fn finding14_structurally_invalid_leaves_no_longer_verify() {
         !report.leaves_structurally_valid,
         "malformed leaf sequence must fail structural validation"
     );
-    assert_eq!(report.verdict, Verdict::Diverged);
+    assert_eq!(report.verdict, Verdict::Invalid);
     assert!(
         !report.is_internally_consistent(),
         "duplicate indices, reversed timestamps, and an undefined leaf tag must not verify"
@@ -461,7 +463,7 @@ mod finding06_key_bindings_and_revocations {
             !report.bindings_valid,
             "a leaf from a session with no covering binding must be rejected"
         );
-        assert_eq!(report.verdict, Verdict::Diverged);
+        assert_eq!(report.verdict, Verdict::Invalid);
     }
 
     #[test]

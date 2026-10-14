@@ -85,7 +85,7 @@ def main() -> int:
     h("4. Verification of the edited record")
     report = json.loads(wl.verify_dossier_json(open(dossier_path).read(), 0.66, identity))
     verdict = report["verdict"].upper()
-    colour = RED if verdict == "DIVERGED" else YELLOW
+    colour = RED if verdict == "INVALID" else YELLOW
     print(f"   verdict: {colour}{verdict}{RESET}")
     print(f"   checkpoint signature valid : {report['checkpoint_signature_valid']}")
     print(f"   leaves rebuild signed root : {RED if not report['merkle_continuity_valid'] else ''}"
@@ -97,10 +97,10 @@ def main() -> int:
 
     h("5. Exit codes make this a one-line gate")
     print("   witness-log verify dossier.json --identity <key>   # 0 WITNESSED, 10 CONSISTENT-UNWITNESSED,")
-    print("                                                      # 20 UNANCHORED, 30 DIVERGED")
+    print("                                                      # 20 UNANCHORED, 30 DIVERGED, 40 INVALID")
     print(f"\n   files in {tmp}")
     log.close()
-    return 0 if verdict == "DIVERGED" else 1
+    return 0 if verdict == "INVALID" else 1
 
 
 if __name__ == "__main__":

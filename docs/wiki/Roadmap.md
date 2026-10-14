@@ -7,9 +7,10 @@ Ordered by what changes the product's meaning, not by effort.
    (`deploy-fleet` workflow) gives capacity; independence has to come from
    outside operators: the CT / transparency community, a university lab,
    a competing agent-infrastructure project.
-2. **RFCs 1–4** (`docs/rfcs/`): a fleet checkpoint log, verdict strictness
-   and an INVALID verdict, DNS-TXT self-registration, SCITT receipts. Each
-   lands behind a flag with corpus vectors before the spec changes.
+2. **RFCs 1, 3 and 4** (`docs/rfcs/`): a fleet checkpoint log, DNS-TXT
+   self-registration, SCITT receipts. Each lands behind a flag with corpus
+   vectors before the spec changes. RFC-0002 (verdict strictness and an
+   INVALID verdict) shipped in 0.5.0 with corpus vector 13.
 3. **Independent security review** of core, network and the witness
    (`docs/SECURITY-AUDIT-BRIEF.md`), and a C2SP interop test against a
    public CT-ecosystem witness.

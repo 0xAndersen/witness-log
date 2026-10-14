@@ -8,16 +8,23 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** The four verdicts, as the CLI prints them. */
-export type Verdict = "WITNESSED" | "CONSISTENT-UNWITNESSED" | "UNANCHORED" | "DIVERGED";
+/** The five verdicts, as the CLI prints them. */
+export type Verdict = "WITNESSED" | "CONSISTENT-UNWITNESSED" | "UNANCHORED" | "DIVERGED" | "INVALID";
 
-/** Exit code for each verdict (the CLI's contract). */
+/**
+ * Exit code for each verdict (the CLI's contract). WITNESSED by fewer than
+ * a strict majority of the directory exits 11 instead of 0 unless
+ * `allowSubMajority` (RFC-0002, the default since 0.5.0).
+ */
 export const EXIT_CODES: Readonly<Record<Verdict, number>> = Object.freeze({
   WITNESSED: 0,
   "CONSISTENT-UNWITNESSED": 10,
   UNANCHORED: 20,
   DIVERGED: 30,
+  INVALID: 40,
 });
+
+const VERDICT_EXITS = [0, 10, 11, 20, 30, 40];
 
 /** A dossier: a path to its JSON file, or the parsed object. */
 export type DossierInput = string | Record<string, unknown>;
@@ -40,13 +47,24 @@ export interface VerifyOptions {
   threshold?: number;
   /** Quorum as an absolute count of cosigning witnesses. */
   minWitnesses?: number;
+  /** Accept WITNESSED from fewer than a strict majority of the directory (exit 0, not 11). */
+  allowSubMajority?: boolean;
+  /** Heads you already trust for this identity, as `"<size>:<root hex>"`; not reproduced is DIVERGED. */
+  knownHeads?: string[];
+  /** Witness equivocation proofs (paths or parsed objects); one that verifies for this identity is DIVERGED. */
+  evidence?: Array<string | Record<string, unknown>>;
+  /** Revocation statements you know of (a path, or the parsed array or object). */
+  revocations?: string | Record<string, unknown> | unknown[];
 }
 
 export interface VerifyResult {
   verdict: Verdict;
+  /** 0, 10, 11, 20, 30 or 40 (see `EXIT_CODES`). */
   exitCode: number;
-  /** True only for WITNESSED. */
+  /** True only for WITNESSED with exit 0. */
   ok: boolean;
+  /** WITNESSED by fewer than a strict majority of the directory (exit 11 unless `allowSubMajority`). */
+  splitViewUnsafe: boolean;
   identityPubkey: string;
   identityPinned: boolean;
   directoryPinned: boolean;
@@ -57,7 +75,7 @@ export interface VerifyResult {
 }
 
 export interface DiffResult {
-  /** 0: same history or one a prefix of the other; 30: equivocation or tampering. */
+  /** 0: same history or one a prefix of the other; 30: equivocation; 40: a copy is invalid (tampered). */
   exitCode: number;
   consistent: boolean;
   output: string;
@@ -139,7 +157,7 @@ export class WitnessLogCLI {
     });
   }
 
-  /** Offline verification. Resolves with the verdict for exit 0/10/20/30; rejects on exit 2. */
+  /** Offline verification. Resolves with the verdict for exit 0/10/11/20/30/40; rejects on exit 2. */
   async verify(dossier: DossierInput, opts: VerifyOptions = {}): Promise<VerifyResult> {
     return withTemp(async (tmp) => {
       const args = ["verify", await asFile(tmp, "dossier.json", dossier), "--json"];
@@ -147,31 +165,39 @@ export class WitnessLogCLI {
       if (opts.directory !== undefined) args.push("--directory", await asFile(tmp, "directory.json", opts.directory));
       if (opts.threshold !== undefined) args.push("--threshold", String(opts.threshold));
       if (opts.minWitnesses !== undefined) args.push("--min-witnesses", String(opts.minWitnesses));
+      if (opts.allowSubMajority) args.push("--allow-sub-majority");
+      for (const h of opts.knownHeads ?? []) args.push("--known-head", h);
+      let n = 0;
+      for (const e of opts.evidence ?? []) args.push("--evidence", await asFile(tmp, `evidence-${n++}.json`, e));
+      if (opts.revocations !== undefined) args.push("--revocations", await asFile(tmp, "revocations.json", opts.revocations));
       const r = await this.run(args);
-      if (![0, 10, 20, 30].includes(r.code)) throw usage("verify", r);
+      if (!VERDICT_EXITS.includes(r.code)) throw usage("verify", r);
       const out = JSON.parse(r.stdout) as Record<string, unknown>;
       const verdict = out.verdict as Verdict;
-      if (EXIT_CODES[verdict] !== r.code) {
+      const expected = r.code === 11 ? "WITNESSED" : verdict;
+      if (EXIT_CODES[expected] !== (r.code === 11 ? 0 : r.code) || verdict !== expected) {
         throw new WitnessLogCLIError(`verdict ${verdict} does not match exit code ${r.code}`, r.code, r.stderr);
       }
+      const report = (out.report ?? {}) as Record<string, unknown>;
       return {
         verdict,
         exitCode: r.code,
-        ok: verdict === "WITNESSED",
+        ok: verdict === "WITNESSED" && r.code === 0,
+        splitViewUnsafe: Boolean(report.split_view_unsafe),
         identityPubkey: String(out.identity_pubkey ?? ""),
         identityPinned: Boolean(out.identity_pinned),
         directoryPinned: Boolean(out.directory_pinned),
-        report: (out.report ?? {}) as Record<string, unknown>,
+        report,
         warnings: r.stderr.split("\n").filter((l) => l.trim() !== ""),
       };
     });
   }
 
-  /** Two copies of one log: honest growth (exit 0) or equivocation / tampering (exit 30). */
+  /** Two copies of one log: honest growth (exit 0), equivocation (exit 30) or a tampered copy (exit 40). */
   async diff(a: DossierInput, b: DossierInput): Promise<DiffResult> {
     return withTemp(async (tmp) => {
       const r = await this.run(["diff", await asFile(tmp, "a.json", a), await asFile(tmp, "b.json", b)]);
-      if (r.code !== 0 && r.code !== 30) throw usage("diff", r);
+      if (r.code !== 0 && r.code !== 30 && r.code !== 40) throw usage("diff", r);
       return { exitCode: r.code, consistent: r.code === 0, output: r.stdout };
     });
   }
@@ -231,7 +257,7 @@ async function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-async function asFile(dir: string, name: string, v: string | object): Promise<string> {
+async function asFile(dir: string, name: string, v: string | object | unknown[]): Promise<string> {
   if (typeof v === "string") return v;
   const p = join(dir, name);
   await writeFile(p, JSON.stringify(v), { mode: 0o600 });

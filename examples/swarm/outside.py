@@ -605,8 +605,8 @@ def p_verifier_only(a: Agent):
     with_bad = json.loads(sample)
     with_bad["checkpoint"]["timestamp_ms"] += 1
     rep3 = verify_py(a, json.dumps(with_bad), ident, trusted)
-    if rep3["verdict"] != "diverged":
-        a.notes.append("edited checkpoint not diverged")
+    if rep3["verdict"] != "invalid":
+        a.notes.append(f"edited checkpoint is {rep3['verdict']}, not invalid")
 
 
 def p_rollback_victim(a: Agent):

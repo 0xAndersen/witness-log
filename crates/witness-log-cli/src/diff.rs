@@ -84,7 +84,8 @@ pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {
         println!("  below is explained by a corrupt or forged file — not by equivocation.");
         println!("  Fix or discard the invalid copy, then compare again.");
         println!();
-        return ExitCode::from(30);
+        // 40, not 30: a bad file is not evidence of equivocation (RFC-0002).
+        return ExitCode::from(crate::exit::INVALID);
     }
 
     // Each copy's leaves must reproduce ITS OWN signed root. A copy whose
@@ -114,7 +115,7 @@ pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {
         println!("  between the copies is explained by the tampering — not by");
         println!("  equivocation. Run `witness-log verify` on the bad copy for details.");
         println!();
-        return ExitCode::from(30);
+        return ExitCode::from(crate::exit::INVALID);
     }
 
     // Compare leaf-by-leaf on committed hashes, not on displayed fields:

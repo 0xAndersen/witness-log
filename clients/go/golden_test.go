@@ -120,6 +120,9 @@ func TestGoldenVerifyMatchesRust(t *testing.T) {
 			}
 			// Field-for-field comparison of the report, through JSON so
 			// that number formatting and null handling are compared too.
+			// Failure wording is per-implementation; whether a check
+			// failed is not.
+			goFailed := len(report.Failures) > 0
 			report.Failures = nil
 			gotJSON, err := json.Marshal(report)
 			if err != nil {
@@ -132,6 +135,12 @@ func TestGoldenVerifyMatchesRust(t *testing.T) {
 			if err := json.Unmarshal(want.Report, &exp); err != nil {
 				t.Fatal(err)
 			}
+			rustFailures, _ := exp["failures"].([]any)
+			if goFailed != (len(rustFailures) > 0) {
+				t.Errorf("failures: Go failed=%t, Rust %v", goFailed, rustFailures)
+			}
+			delete(exp, "failures")
+			delete(got, "failures")
 			if !reflect.DeepEqual(got, exp) {
 				for k := range exp {
 					if !reflect.DeepEqual(got[k], exp[k]) {
@@ -156,7 +165,7 @@ func TestGoldenVerifyMatchesRust(t *testing.T) {
 			t.Errorf("expectation %s has no test case", name)
 		}
 	}
-	for _, v := range []string{"WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED"} {
+	for _, v := range []string{"WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "INVALID"} {
 		if verdicts[v] == 0 {
 			t.Errorf("no golden reaches %s", v)
 		}
@@ -299,31 +308,31 @@ func TestGoldenTampering(t *testing.T) {
 	}
 	hash := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	cases := []mutation{
-		{"leaf timestamp edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[1].TimestampMs++ }},
-		{"leaf payload hash edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[0].PayloadHash = hash }},
-		{"leaf removed", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Leaves = d.Leaves[:len(d.Leaves)-1] }},
-		{"leaf appended", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"leaf timestamp edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[1].TimestampMs++ }},
+		{"leaf payload hash edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[0].PayloadHash = hash }},
+		{"leaf removed", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Leaves = d.Leaves[:len(d.Leaves)-1] }},
+		{"leaf appended", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			extra := d.Leaves[0]
 			extra.Index = uint64(len(d.Leaves))
 			d.Leaves = append(d.Leaves, extra)
 		}},
-		{"leaves reordered", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"leaves reordered", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			d.Leaves[0], d.Leaves[1] = d.Leaves[1], d.Leaves[0]
 		}},
-		{"leaves reordered with indices rewritten", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"leaves reordered with indices rewritten", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			d.Leaves[0], d.Leaves[1] = d.Leaves[1], d.Leaves[0]
 			d.Leaves[0].Index, d.Leaves[1].Index = 0, 1
 		}},
-		{"checkpoint root edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.RootHash = hash }},
-		{"checkpoint size edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.TreeSize++ }},
-		{"checkpoint timestamp edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.TimestampMs++ }},
-		{"checkpoint re-attributed", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"checkpoint root edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.RootHash = hash }},
+		{"checkpoint size edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.TreeSize++ }},
+		{"checkpoint timestamp edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Checkpoint.TimestampMs++ }},
+		{"checkpoint re-attributed", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			d.Checkpoint.SignerPubkey = hash
 			d.IdentityPubkey = hash
 		}},
-		{"identity claim edited", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.IdentityPubkey = hash }},
-		{"unknown leaf type", Diverged, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[0].LeafType = 0x09 }},
-		{"anchor proof swapped", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"identity claim edited", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.IdentityPubkey = hash }},
+		{"unknown leaf type", Invalid, "c2sp/trusted.json", func(d *Dossier) { d.Leaves[0].LeafType = 0x09 }},
+		{"anchor proof swapped", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			for i := range d.Leaves {
 				if d.Leaves[i].LeafType == LeafExternalAnchor {
 					s := `{"swapped":true}`
@@ -331,14 +340,14 @@ func TestGoldenTampering(t *testing.T) {
 				}
 			}
 		}},
-		{"binding dropped for a used session", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"binding dropped for a used session", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			d.KeyBindings = d.KeyBindings[:0]
 			d.Revocations = []Revocation{{IdentityPubkey: d.IdentityPubkey, AsOfMs: 1, Reason: "x", Signature: strings.Repeat("00", 64)}}
 		}},
-		{"binding signature edited", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"binding signature edited", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			d.KeyBindings[0].Signature = "00" + d.KeyBindings[0].Signature[2:]
 		}},
-		{"binding expiry before the leaves", Diverged, "c2sp/trusted.json", func(d *Dossier) {
+		{"binding expiry before the leaves", Invalid, "c2sp/trusted.json", func(d *Dossier) {
 			one := uint64(1)
 			d.KeyBindings[0].NotAfterMs = &one
 		}},
@@ -388,11 +397,11 @@ func TestGoldenTampering(t *testing.T) {
 			if r.Verdict != c.want {
 				t.Errorf("verdict %s, want %s (failures: %v)", r.Verdict, c.want, r.Failures)
 			}
-			if (r.Verdict == Diverged) != (len(r.Failures) > 0) {
-				t.Errorf("failures must be listed exactly when DIVERGED: %v", r.Failures)
+			if (r.Verdict == Invalid) != (len(r.Failures) > 0) {
+				t.Errorf("failures must be listed exactly when INVALID: %v", r.Failures)
 			}
-			if r.InternallyConsistent == (r.Verdict == Diverged) {
-				t.Errorf("internally_consistent must be false exactly when DIVERGED")
+			if r.InternallyConsistent == (r.Verdict == Invalid) {
+				t.Errorf("internally_consistent must be false exactly when INVALID")
 			}
 		})
 	}

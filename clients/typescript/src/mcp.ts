@@ -45,7 +45,7 @@ export interface ChainHead {
 }
 
 export interface IntegrityReport {
-  /** Lowercase, as the Python verifier reports it: witnessed, consistent_unwitnessed, unanchored, diverged. */
+  /** Lowercase, as the Python verifier reports it: witnessed, consistent_unwitnessed, unanchored, diverged, invalid. */
   verdict: string;
   tamperAlerts: string[];
   report: Record<string, unknown>;

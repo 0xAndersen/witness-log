@@ -29,7 +29,8 @@ POSTS = [
      "0 WITNESSED: 2+ orgs in YOUR directory cosigned\n"
      "10 CONSISTENT-UNWITNESSED\n"
      "20 UNANCHORED: self-consistent only; a forger gets this far\n"
-     "30 DIVERGED\n\n"
+     "30 DIVERGED\n"
+     "40 INVALID\n\n"
      "The dossier never supplies its own trust inputs."),
     ("the 3,000-agent run", "docs/assets/architecture.png",
      "Load test: 3,000 concurrent agents, 18 personas, 100 witnesses, one two-core host. "

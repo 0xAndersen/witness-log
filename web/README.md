@@ -20,7 +20,7 @@ one toolchain can rebuild the other.
 sh web/build.sh          # needs wasm32 target + wasm-bindgen-cli 0.2.129
 sh web/build-go.sh       # needs Go only
 python3 -m http.server -d web 8000
-python3 web/test/test_page.py   # Playwright: WITNESSED, tampered -> DIVERGED, bind
+python3 web/test/test_page.py   # Playwright: WITNESSED, tampered -> INVALID, bind
 ```
 
 `.github/workflows/pages.yml` builds both engines and deploys this folder to

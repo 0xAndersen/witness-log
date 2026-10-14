@@ -494,7 +494,7 @@ impl Leaf {
 /// The rule [`Leaf::validate`] applies to an ExternalAnchor's
 /// `anchor_url`: an `http://` or `https://` URL. Public so writers can
 /// refuse a bad URL *before* the leaf is committed: a committed leaf that
-/// fails this check makes every later dossier of that log `DIVERGED`, and
+/// fails this check makes every later dossier of that log `INVALID`, and
 /// journal replay refuses it, permanently.
 pub fn is_valid_anchor_url(url: &str) -> bool {
     url.starts_with("https://") || url.starts_with("http://")
@@ -542,7 +542,7 @@ pub enum LeafValidationError {
 ///
 /// Deliberately does NOT check `timestamp_ms` for monotonicity. An
 /// earlier version did, and treated a decreasing timestamp as a hard
-/// verification failure (`Verdict::Diverged`) — which is wrong on two
+/// verification failure (then `Verdict::Diverged`) — which is wrong on two
 /// counts. First, `timestamp_ms` is explicitly documented elsewhere in
 /// this crate (see `Leaf::timestamp_ms`'s own doc comment and
 /// THREAT_MODEL.md) as self-asserted, "not independently attested" —

@@ -177,7 +177,7 @@ itself; it has not proved the dossier describes what actually happened,
 because the agent could have rewritten its own history *and* re-signed a
 new checkpoint. Nobody outside saw the old one. Anchoring the log in
 someone else's memory is what witnesses are for, and that is the next step.
-The four verdicts and what each one proves are in
+The five verdicts and what each one proves are in
 [Verification and verdicts](Verification-and-Verdicts).
 
 ---

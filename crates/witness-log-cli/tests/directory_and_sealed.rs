@@ -590,7 +590,7 @@ fn old_fixture_dossier_still_verifies() {
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["verdict"], "WITNESSED");
-    assert_eq!(v["strict"], false);
+    assert_eq!(v["strict"], true, "strict is the default since 0.5.0");
 }
 
 /// `verify-evidence` is documented in the top-level help, as are the new
@@ -614,8 +614,10 @@ fn help_lists_every_command_and_exit_code() {
         "directory build",
         "directory add",
         "c2sp export",
-        "--strict",
-        "11  verify --strict",
+        "--allow-sub-majority",
+        "--no-strict",
+        "11  WITNESSED by fewer than a",
+        "40  INVALID",
         "20  UNANCHORED; submit",
     ] {
         assert!(help.contains(needle), "help is missing {needle:?}");

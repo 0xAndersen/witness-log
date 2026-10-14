@@ -693,6 +693,7 @@ func TestCorpusComplete(t *testing.T) {
 		"04_signed_tree_head.json": true, "05_redaction_continuity.json": true, "06_consistency_proof.json": true,
 		"07_handoff_attestation.json": true, "08_authorization_event.json": true, "09_external_anchor.json": true,
 		"10_c2sp_checkpoint.json": true, "11_payload_hash.json": true, "12_revocation.json": true,
+		"13_verdicts.json": true,
 	}
 	n := 0
 	for _, e := range entries {
@@ -767,6 +768,90 @@ func TestCorpus12Revocation(t *testing.T) {
 		err := revocationCutOff([]Revocation{rv}, leaves, c.CheckpointTimestampMs, c.CheckpointTreeSize)
 		if (err == nil) != c.Valid {
 			t.Errorf("cut-off case %d: valid=%v want %v (%v)", i, err == nil, c.Valid, err)
+		}
+	}
+}
+
+// TestCorpus13Verdicts runs every verdict case (RFC-0002) through the Go
+// verifier: verdict, exit code and the report fields the vector pins.
+func TestCorpus13Verdicts(t *testing.T) {
+	var v struct {
+		TrustedDirectory json.RawMessage              `json:"trusted_directory"`
+		Dossiers         map[string]json.RawMessage   `json:"dossiers"`
+		Evidence         map[string]EquivocationProof `json:"evidence"`
+		Cases            []struct {
+			Name             string   `json:"name"`
+			Dossier          string   `json:"dossier"`
+			TrustedDirectory bool     `json:"trusted_directory"`
+			ExpectedIdentity *string  `json:"expected_identity"`
+			Threshold        float64  `json:"threshold"`
+			MinWitnesses     *int     `json:"min_witnesses"`
+			KnownHeads       []string `json:"known_heads"`
+			Evidence         []string `json:"evidence"`
+			AllowSubMajority bool     `json:"allow_sub_majority"`
+			Expect           struct {
+				Verdict              string `json:"verdict"`
+				ExitCode             int    `json:"exit_code"`
+				SplitViewUnsafe      bool   `json:"split_view_unsafe"`
+				InternallyConsistent bool   `json:"internally_consistent"`
+				HasFailures          bool   `json:"has_failures"`
+				Contradictions       int    `json:"contradictions"`
+				KnownHeadsUnchecked  int    `json:"known_heads_unchecked"`
+				ValidReceipts        *int   `json:"valid_receipts"`
+			} `json:"expect"`
+		} `json:"cases"`
+	}
+	readCorpus(t, "13_verdicts.json", &v)
+	dir, err := ParseDirectory(v.TrustedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exits := map[int]bool{}
+	for _, c := range v.Cases {
+		d, err := ParseDossier(v.Dossiers[c.Dossier])
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		opts := Options{Threshold: c.Threshold, MinReceipts: c.MinWitnesses}
+		if c.ExpectedIdentity != nil {
+			opts.ExpectedIdentityPubkey = *c.ExpectedIdentity
+		}
+		for _, h := range c.KnownHeads {
+			kh, err := ParseKnownHead(h)
+			if err != nil {
+				t.Fatalf("%s: %v", c.Name, err)
+			}
+			opts.KnownHeads = append(opts.KnownHeads, kh)
+		}
+		for _, k := range c.Evidence {
+			opts.Evidence = append(opts.Evidence, v.Evidence[k])
+		}
+		var trusted *Directory
+		if c.TrustedDirectory {
+			trusted = dir
+		}
+		r := d.Verify(trusted, opts)
+		e := c.Expect
+		got, _ := json.Marshal(r.Verdict)
+		if string(got) != `"`+e.Verdict+`"` {
+			t.Errorf("%s: verdict %s want %s (failures %v)", c.Name, got, e.Verdict, r.Failures)
+		}
+		if code := r.ExitCode(c.AllowSubMajority); code != e.ExitCode {
+			t.Errorf("%s: exit %d want %d", c.Name, code, e.ExitCode)
+		}
+		if r.SplitViewUnsafe != e.SplitViewUnsafe || r.InternallyConsistent != e.InternallyConsistent ||
+			(len(r.Failures) > 0) != e.HasFailures || len(r.Contradictions) != e.Contradictions ||
+			len(r.KnownHeadsUnchecked) != e.KnownHeadsUnchecked {
+			t.Errorf("%s: report %+v, want %+v", c.Name, r, e)
+		}
+		if (r.Quorum == nil) != (e.ValidReceipts == nil) || (r.Quorum != nil && r.Quorum.ValidReceipts != *e.ValidReceipts) {
+			t.Errorf("%s: quorum %+v, want valid_receipts %v", c.Name, r.Quorum, e.ValidReceipts)
+		}
+		exits[e.ExitCode] = true
+	}
+	for _, code := range []int{0, 10, 11, 20, 30, 40} {
+		if !exits[code] {
+			t.Errorf("no case exercises exit %d", code)
 		}
 	}
 }

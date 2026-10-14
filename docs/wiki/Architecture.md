@@ -108,7 +108,7 @@ being audited.
 
 | input | supplied by | if it is wrong |
 |---|---|---|
-| the dossier | the agent (or whoever holds its journal) | internal checks fail → DIVERGED; or it is simply a different, self-consistent log → caught by the next two |
+| the dossier | the agent (or whoever holds its journal) | internal checks fail → INVALID; or it is simply a different, self-consistent log → caught by the next two, or DIVERGED if it contradicts a head or equivocation proof the verifier also brings |
 | the expected identity public key | the verifier, out of band | you verify *some* agent's honest log, not the one you meant; `identity_pinned=false` tells you so |
 | the trusted witness directory | the verifier, out of band | you count receipts from witnesses you have no reason to trust; the fix is to curate the directory |
 

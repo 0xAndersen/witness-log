@@ -1,0 +1,941 @@
+{
+  "cases": [
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "no trusted inputs",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 0,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "witnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "trusted directory, 4 of 4",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 0,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "witnessed"
+      },
+      "expected_identity": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "pinned identity, 4 of 4",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "invalid"
+      },
+      "expected_identity": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "wrong identity",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 10,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "consistent_unwitnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": 5,
+      "name": "gate not met",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "two_of_four",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 11,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": true,
+        "valid_receipts": 2,
+        "verdict": "witnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": 2,
+      "name": "2 of 4 under --min-witnesses 2",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": true,
+      "dossier": "two_of_four",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 0,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": true,
+        "valid_receipts": 2,
+        "verdict": "witnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": 2,
+      "name": "2 of 4, allow sub-majority",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "two_of_four",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 10,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 2,
+        "verdict": "consistent_unwitnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "2 of 4, default threshold",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full_tampered",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "tampered leaf",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full_truncated",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "leaf removed",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full_tampered",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "2:abababababababababababababababababababababababababababababababab"
+      ],
+      "min_witnesses": null,
+      "name": "tampered, contradicted known head is not checked",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "2:58d72d95d19ef9b39284507e3f0ea453eb9735601bcb87586db9f0d7361ee894"
+      ],
+      "min_witnesses": null,
+      "name": "known head reproduced",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 0,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "witnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "4:4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814"
+      ],
+      "min_witnesses": null,
+      "name": "known head at full size reproduced",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "0:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "min_witnesses": null,
+      "name": "empty known head reproduced",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "2:abababababababababababababababababababababababababababababababab"
+      ],
+      "min_witnesses": null,
+      "name": "known head contradicted",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "diverged"
+      },
+      "expected_identity": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "known_heads": [
+        "3:58d72d95d19ef9b39284507e3f0ea453eb9735601bcb87586db9f0d7361ee894"
+      ],
+      "min_witnesses": null,
+      "name": "known head contradicted beats WITNESSED",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 1,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [
+        "9:abababababababababababababababababababababababababababababababab"
+      ],
+      "min_witnesses": null,
+      "name": "known head larger than the dossier",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [
+        "equivocation"
+      ],
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 4,
+        "verdict": "diverged"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "equivocation evidence",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [
+        "stranger_key"
+      ],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "evidence signed by a stranger is ignored",
+      "threshold": 0.66,
+      "trusted_directory": false
+    },
+    {
+      "allow_sub_majority": false,
+      "dossier": "full",
+      "evidence": [
+        "other_identity"
+      ],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "evidence about another identity is ignored",
+      "threshold": 0.66,
+      "trusted_directory": false
+    }
+  ],
+  "description": "Verification vector (SPEC.md §9.2, RFC-0002): run every case through your verifier with the named dossier, the trusted directory when trusted_directory is true, expected_identity, threshold, min_witnesses (when not null, it replaces the threshold gate), known_heads (\"<size>:<root hex>\") and the named evidence proofs; the verdict, exit code and report fields must equal expect. exit_code is the CLI's: 11 when split_view_unsafe and allow_sub_majority is false. has_failures is whether report.failures is non-empty; failure wording is not normative. Every key here is public and for testing only.",
+  "dossiers": {
+    "full": {
+      "checkpoint": {
+        "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+        "sig_alg": "ed25519",
+        "signature": "41b605867e97f773d937447e431c48e2cbc21f38bc3d62a9d876fa5c77686e1cd0fa411e727e6024235270be6e1993ce3db7552c9b8b34039f7ffbb94811430b",
+        "signer_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "identity_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "4040404040404040404040404040404040404040404040404040404040404040",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "4141414141414141414141414141414141414141414141414141414141414141",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "4242424242424242424242424242424242424242424242424242424242424242",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "4343434343434343434343434343434343434343434343434343434343434343",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "e0d90c18fa6055097e11422cc00275dc0f343757dd3b9296b54e21291094d2508d3d577c3bc9cdcf0b91b9f40e0a82d654d67832a4b6fdc150a96c00ad5e610c",
+          "tree_size": 4,
+          "witness_pubkey": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "33e1643a43907a4d40ae47e9325c017610916cec96b558765473004c24cf650a5586a509fa0ee1e5a266259dd94bfbd1e97690e3eb0fdd78750a9031781d960e",
+          "tree_size": 4,
+          "witness_pubkey": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+          "witnessed_at_ms": 1700000011001
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "71e78afd868d3299fd0cb9e343e464dc246ec0a6edef3ef1c1b1c9bebe0078a4badd8d118df338de89ee72eaee8d963efe72497d2aafac34052f32a03279f70c",
+          "tree_size": 4,
+          "witness_pubkey": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+          "witnessed_at_ms": 1700000011002
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "5d36fedbc9c36bd1f5f4269c989cfd50440dedc1a5d23de6d2df2eb4e037930dfaf3f3c5946c6c459bc3e2122ff0050830124432323a5e7be01e9db9e89b4003",
+          "tree_size": 4,
+          "witness_pubkey": "74f85cda34d1c27c4621484731e91579c3d9c6cfc0d94b281aa11e9162058aa9",
+          "witnessed_at_ms": 1700000011003
+        }
+      ]
+    },
+    "full_tampered": {
+      "checkpoint": {
+        "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+        "sig_alg": "ed25519",
+        "signature": "41b605867e97f773d937447e431c48e2cbc21f38bc3d62a9d876fa5c77686e1cd0fa411e727e6024235270be6e1993ce3db7552c9b8b34039f7ffbb94811430b",
+        "signer_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "identity_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "4040404040404040404040404040404040404040404040404040404040404040",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "4242424242424242424242424242424242424242424242424242424242424242",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "4343434343434343434343434343434343434343434343434343434343434343",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "e0d90c18fa6055097e11422cc00275dc0f343757dd3b9296b54e21291094d2508d3d577c3bc9cdcf0b91b9f40e0a82d654d67832a4b6fdc150a96c00ad5e610c",
+          "tree_size": 4,
+          "witness_pubkey": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "33e1643a43907a4d40ae47e9325c017610916cec96b558765473004c24cf650a5586a509fa0ee1e5a266259dd94bfbd1e97690e3eb0fdd78750a9031781d960e",
+          "tree_size": 4,
+          "witness_pubkey": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+          "witnessed_at_ms": 1700000011001
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "71e78afd868d3299fd0cb9e343e464dc246ec0a6edef3ef1c1b1c9bebe0078a4badd8d118df338de89ee72eaee8d963efe72497d2aafac34052f32a03279f70c",
+          "tree_size": 4,
+          "witness_pubkey": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+          "witnessed_at_ms": 1700000011002
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "5d36fedbc9c36bd1f5f4269c989cfd50440dedc1a5d23de6d2df2eb4e037930dfaf3f3c5946c6c459bc3e2122ff0050830124432323a5e7be01e9db9e89b4003",
+          "tree_size": 4,
+          "witness_pubkey": "74f85cda34d1c27c4621484731e91579c3d9c6cfc0d94b281aa11e9162058aa9",
+          "witnessed_at_ms": 1700000011003
+        }
+      ]
+    },
+    "full_truncated": {
+      "checkpoint": {
+        "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+        "sig_alg": "ed25519",
+        "signature": "41b605867e97f773d937447e431c48e2cbc21f38bc3d62a9d876fa5c77686e1cd0fa411e727e6024235270be6e1993ce3db7552c9b8b34039f7ffbb94811430b",
+        "signer_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "identity_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "4040404040404040404040404040404040404040404040404040404040404040",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "4141414141414141414141414141414141414141414141414141414141414141",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "4242424242424242424242424242424242424242424242424242424242424242",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000002000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "e0d90c18fa6055097e11422cc00275dc0f343757dd3b9296b54e21291094d2508d3d577c3bc9cdcf0b91b9f40e0a82d654d67832a4b6fdc150a96c00ad5e610c",
+          "tree_size": 4,
+          "witness_pubkey": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "33e1643a43907a4d40ae47e9325c017610916cec96b558765473004c24cf650a5586a509fa0ee1e5a266259dd94bfbd1e97690e3eb0fdd78750a9031781d960e",
+          "tree_size": 4,
+          "witness_pubkey": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+          "witnessed_at_ms": 1700000011001
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "71e78afd868d3299fd0cb9e343e464dc246ec0a6edef3ef1c1b1c9bebe0078a4badd8d118df338de89ee72eaee8d963efe72497d2aafac34052f32a03279f70c",
+          "tree_size": 4,
+          "witness_pubkey": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+          "witnessed_at_ms": 1700000011002
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "5d36fedbc9c36bd1f5f4269c989cfd50440dedc1a5d23de6d2df2eb4e037930dfaf3f3c5946c6c459bc3e2122ff0050830124432323a5e7be01e9db9e89b4003",
+          "tree_size": 4,
+          "witness_pubkey": "74f85cda34d1c27c4621484731e91579c3d9c6cfc0d94b281aa11e9162058aa9",
+          "witnessed_at_ms": 1700000011003
+        }
+      ]
+    },
+    "two_of_four": {
+      "checkpoint": {
+        "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+        "sig_alg": "ed25519",
+        "signature": "41b605867e97f773d937447e431c48e2cbc21f38bc3d62a9d876fa5c77686e1cd0fa411e727e6024235270be6e1993ce3db7552c9b8b34039f7ffbb94811430b",
+        "signer_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "identity_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "4040404040404040404040404040404040404040404040404040404040404040",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "4141414141414141414141414141414141414141414141414141414141414141",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "4242424242424242424242424242424242424242424242424242424242424242",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "4343434343434343434343434343434343434343434343434343434343434343",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "e0d90c18fa6055097e11422cc00275dc0f343757dd3b9296b54e21291094d2508d3d577c3bc9cdcf0b91b9f40e0a82d654d67832a4b6fdc150a96c00ad5e610c",
+          "tree_size": 4,
+          "witness_pubkey": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "4a65f05d931530d2ebd0aafb2406f378c8f0533bc401cec47814fec56673e814",
+          "signature": "33e1643a43907a4d40ae47e9325c017610916cec96b558765473004c24cf650a5586a509fa0ee1e5a266259dd94bfbd1e97690e3eb0fdd78750a9031781d960e",
+          "tree_size": 4,
+          "witness_pubkey": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+          "witnessed_at_ms": 1700000011001
+        }
+      ]
+    }
+  },
+  "evidence": {
+    "equivocation": {
+      "conflicting_note": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633\n2\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\n\n— witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633 OusM1CbaHTiMdzySJcmV0Hu3PfkuKZ2QT/gsrQImKEgRLFNsBLvP8E8jKECCgClwnr4u8xBLkM7p8LH5l4dcecpXpAs=\n",
+      "earlier_note": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633\n2\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\n\n— witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633 OusM1AR0FsexegPAnlCypTOFZUFpC4CVUNf/luj8iF24zkoSw5zawfPaSLKmvPaveopQ8bZR6LghzKvwgx/wRCG87Qw=\n",
+      "log_vkey": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633+3aeb0cd4+AWbNYIuSi4jlDg7+qjP68cQ87+BylLC4fp/gq6ajz3Yz",
+      "origin": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633"
+    },
+    "other_identity": {
+      "conflicting_note": "witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7\n2\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\n\n— witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7 qHU6F6o8FykvNxlBGrYgfgGThJbx1W53/NLCQ07I3s+aBG/aLlSBTzLZocYymGSvtX2rEUg+IjmAXYo2Nps8CqmBrA8=\n",
+      "earlier_note": "witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7\n2\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\n\n— witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7 qHU6F/Bky9h6ss5URGACEY2uQ3DSo8seCXtY7CtdmSNhKHICe7GVrqDq5FIKBvzEXurCEdIy7CRRvSAVm56pTDb8HgQ=\n",
+      "log_vkey": "witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7+a8753a17+ASCCi/XFvcrLaEhjM2wgL7VZnaSL5VlmFXQhcHBb7Kn3",
+      "origin": "witness-log/20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7"
+    },
+    "stranger_key": {
+      "conflicting_note": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633\n2\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\n\n— witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633 QSK058bBQfr+Qwu/2ggzkNjC6ywrnMuLhW1RE2raxqBRyYNEp4gB3sBVIph0+NU85xO2V/pNj4TSbFuw/R5d3j0n7Ao=\n",
+      "earlier_note": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633\n2\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\n\n— witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633 QSK057cjVV88XYV3IDAKJGkSuePenTDG3/xuWVX8rBk6pE8BhJOeLAwZVzcTk4Niv+qDTBeDX+Vsvzxk7q47Q722vQw=\n",
+      "log_vkey": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633+4122b4e7+AdVCB9oZSXfc9Grb/sK8LnW1LVqKQhhP7f3AACTw4+ja",
+      "origin": "witness-log/66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633"
+    }
+  },
+  "identity_pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+  "trusted_directory": {
+    "witnesses": [
+      {
+        "compute_provider": "corpus-provider-0",
+        "is_project_operated": false,
+        "name": "corpus-witness-0",
+        "operator_org": "corpus-operator-0",
+        "pubkey": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+        "runtime": "human",
+        "url": "https://witness-0.example"
+      },
+      {
+        "compute_provider": "corpus-provider-1",
+        "is_project_operated": false,
+        "name": "corpus-witness-1",
+        "operator_org": "corpus-operator-1",
+        "pubkey": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+        "runtime": "human",
+        "url": "https://witness-1.example"
+      },
+      {
+        "compute_provider": "corpus-provider-2",
+        "is_project_operated": false,
+        "name": "corpus-witness-2",
+        "operator_org": "corpus-operator-2",
+        "pubkey": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+        "runtime": "human",
+        "url": "https://witness-2.example"
+      },
+      {
+        "compute_provider": "corpus-provider-3",
+        "is_project_operated": false,
+        "name": "corpus-witness-3",
+        "operator_org": "corpus-operator-3",
+        "pubkey": "74f85cda34d1c27c4621484731e91579c3d9c6cfc0d94b281aa11e9162058aa9",
+        "runtime": "human",
+        "url": "https://witness-3.example"
+      }
+    ]
+  }
+}

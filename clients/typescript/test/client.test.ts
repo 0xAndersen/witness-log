@@ -141,17 +141,22 @@ describe("@witness-log/client", { skip: existsSync(BIN) ? false : `no CLI at ${B
     assert.equal(v.verdict, "WITNESSED");
   });
 
-  it("tampering is DIVERGED and diff reports it", async () => {
+  it("tampering is INVALID and diff reports it", async () => {
     const d = await wl.exportDossier();
     const t = structuredClone(d) as { leaves: Array<{ payload_hash: string }> };
     t.leaves[2].payload_hash = "00".repeat(32);
     const v = await cli.verify(t, { identity: wl.head.identityPubkey });
-    assert.equal(v.verdict, "DIVERGED");
-    assert.equal(v.exitCode, 30);
+    assert.equal(v.verdict, "INVALID");
+    assert.equal(v.exitCode, 40);
+    assert.ok(Array.isArray(v.report.failures) && (v.report.failures as unknown[]).length > 0);
     const same = await cli.diff(d, d);
     assert.equal(same.consistent, true);
     const diff = await cli.diff(d, t);
-    assert.equal(diff.exitCode, 30);
+    assert.equal(diff.exitCode, 40);
+    // A head this copy does not reproduce is a contradiction: DIVERGED.
+    const contradicted = await cli.verify(d, { knownHeads: [`1:${"ab".repeat(32)}`] });
+    assert.equal(contradicted.verdict, "DIVERGED");
+    assert.equal(contradicted.exitCode, 30);
   });
 
   it("bind matches a handoff between two agents", async () => {

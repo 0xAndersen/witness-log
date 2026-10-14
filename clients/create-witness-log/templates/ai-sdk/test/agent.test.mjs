@@ -40,6 +40,6 @@ test("tool calls become intent/result leaves and the dossier verifies", async ()
   assert.equal(verifyDossierNative(dossier, { identity: log.identityPubkey }).verdict, "UNANCHORED");
   const tampered = structuredClone(dossier);
   tampered.leaves[0].payload_hash = "00".repeat(32);
-  assert.equal(verifyDossier(tampered).verdict, "DIVERGED");
+  assert.equal(verifyDossier(tampered).verdict, "INVALID");
   log.close();
 });

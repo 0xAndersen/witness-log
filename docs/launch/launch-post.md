@@ -45,7 +45,7 @@ Four steps. The README has one graphic per step
  │  ├─ leaf: intent         │  checkpoint│  remembers (N, R) │ cosig.  │  dossier.json        │
  │  └─ leaf: result         │ ─────────► │  checks proof     │ ──────► │  --identity  <yours> │
  │ RFC 6962 tree, root R    │  + proof   │  N→N', persists,  │         │  --directory <yours> │
- │ identity key signs (N,R) │            │  then cosigns     │         │ exit 0/10/20/30      │
+ │ identity key signs (N,R) │            │  then cosigns     │         │ exit 0/10/20/30/40   │
  └──────────────────────────┘            │ witness B (org B) │         └──────────────────────┘
                                          └───────────────────┘
 ```
@@ -139,7 +139,7 @@ timestamps and positions stay visible, and the unlinkability argument has
 not had an external cryptographic review; [`THREAT_MODEL.md`](../../THREAT_MODEL.md)
 says both.
 
-## Four verdicts, as exit codes
+## Five verdicts, as exit codes
 
 ```
 witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json || exit 1
@@ -150,10 +150,13 @@ witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json
 | 0 | WITNESSED | proofs verify; ≥2 independent organisations in *your* directory cosigned |
 | 10 | CONSISTENT-UNWITNESSED | cryptography sound; not enough of your witnesses saw it |
 | 20 | UNANCHORED | self-consistent only; no directory given; a forger can reach this |
-| 30 | DIVERGED | a check failed: altered, fabricated, or not the identity you pinned |
+| 30 | DIVERGED | valid, but contradicts a head you kept (`--known-head`) or a witness's equivocation proof (`--evidence`) |
+| 40 | INVALID | a check failed: altered, fabricated, or not the identity you pinned |
 
 The exit code is the verdict, so a CI gate, a settlement service or another
-agent can branch on it without parsing anything. No network, no account.
+agent can branch on it without parsing anything. A WITNESSED dossier whose
+cosigners are not a majority of your directory exits 11, because a second
+history could have been cosigned by the rest. No network, no account.
 
 ## Numbers you can reproduce
 

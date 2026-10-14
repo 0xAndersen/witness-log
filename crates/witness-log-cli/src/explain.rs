@@ -26,12 +26,13 @@ const VERDICTS: &[VerdictDoc] = &[
     VerdictDoc {
         name: "WITNESSED",
         exit_code: 0,
-        summary: "Strongest verdict. Cryptography and structure check out, AND witnesses run by at least two distinct independent operators, from a directory YOU supplied, cosigned this checkpoint.",
+        summary: "Strongest verdict. Cryptography and structure check out, AND witnesses run by at least two distinct independent operators, from a directory YOU supplied, cosigned this checkpoint. By default (strict) `verify` exits 0 only when the cosigners are also a strict majority of your directory; with fewer it still says WITNESSED but exits 11 (see SPLIT-VIEW).",
         proves: &[
             "the leaves reproduce the signed checkpoint root exactly",
             "if you passed --identity: the checkpoint was signed by that identity. Without --identity the verdict says nothing about whose log this is (the output warns)",
             "valid receipts from witnesses in YOUR trusted directory come from at least two distinct independent operators (project-operated witnesses count as one bucket; witnesses run by the log's own operator count as none)",
-            "the receipt count met your --threshold as a fraction of that directory",
+            "the receipt count met your --threshold as a fraction of that directory (or your --min-witnesses)",
+            "with exit 0 under strict: the cosigners are a strict majority of your directory, so no conflicting history can have been cosigned by a different majority",
         ],
         does_not_prove: &[
             "that the logged content is TRUE — an agent can honestly log a false statement",
@@ -39,6 +40,18 @@ const VERDICTS: &[VerdictDoc] = &[
             "anything stronger than your trusted directory actually is; if every witness in it is secretly one operator, this verdict inherits that weakness",
         ],
         next_step: "Nothing further. This is the ceiling. Read THREAT_MODEL.md for what it still doesn't cover.",
+    },
+    VerdictDoc {
+        name: "SPLIT-VIEW",
+        exit_code: 11,
+        summary: "Not a separate verdict: the report still says WITNESSED. Exit 11 means the cosigners are fewer than a strict majority of the directory you supplied, so the rest of that directory could have cosigned a conflicting history and neither set of witnesses would know. Strict is the default since 0.5.0.",
+        proves: &[
+            "everything WITNESSED proves",
+        ],
+        does_not_prove: &[
+            "that no other history for this identity was cosigned by witnesses in your directory that did not cosign this one",
+        ],
+        next_step: "Verify against the directory the log actually submitted to (a curated subset, not a whole registry), have the log submit to more of your directory (`witness-log submit` asks a majority by default), or accept the weaker guarantee explicitly with --allow-sub-majority (exit 0, warning printed). --no-strict restores the 0.4 behaviour for one release.",
     },
     VerdictDoc {
         name: "CONSISTENT-UNWITNESSED",
@@ -53,7 +66,7 @@ const VERDICTS: &[VerdictDoc] = &[
             "equivocation resistance — a log with no independent witnesses can show one history to you and a different one to someone else, and neither of you can tell",
             "that the checkpoint's own timestamp is accurate; it's self-asserted",
         ],
-        next_step: "Have the log submit its checkpoint to witnesses run by at least two distinct operators that are in your trusted directory (`witness-log witness submit`), lower --threshold if your risk tolerance allows it, or treat this as the honest ceiling for a log that isn't witnessed yet.",
+        next_step: "Have the log submit its checkpoint to witnesses run by at least two distinct operators that are in your trusted directory (`witness-log submit`), lower --threshold if your risk tolerance allows it, or treat this as the honest ceiling for a log that isn't witnessed yet.",
     },
     VerdictDoc {
         name: "UNANCHORED",
@@ -72,14 +85,29 @@ const VERDICTS: &[VerdictDoc] = &[
     VerdictDoc {
         name: "DIVERGED",
         exit_code: 30,
-        summary: "A check FAILED. Something about this dossier does not hold together.",
+        summary: "The dossier is valid on its own, and it contradicts evidence you supplied about the same identity: a head you already trusted (--known-head) that its leaves do not reproduce, or a witness's equivocation proof (--evidence). The identity has shown two different histories. One file on its own is never DIVERGED (since 0.5.0; before that a failed check was reported as DIVERGED, which is now INVALID).",
         proves: &[
-            "one of: a signature is invalid, the leaves do not reproduce the signed root, the claimed identity does not match the signing key, a leaf is structurally malformed, or a key binding is invalid or expired",
+            "the identity signed two different histories: the one in this dossier and the one your known head or evidence file commits to",
+            "the contradiction is cryptographic: both sides verify under the identity's key",
         ],
         does_not_prove: &[
-            "necessarily that someone acted maliciously — a truncated file or a mismatched --identity produces this too. The verdict says a check failed, not why someone caused it to fail.",
+            "which history is the 'true' one — that is precisely the finding",
+            "malice: two journals run from one identity seed (a seed deployed twice) produce the same signal; the key names the log, so either way the identity is no longer trustworthy as one log",
         ],
-        next_step: "Read the check lines above the verdict: the ones marked ✗ failed (a deleted or reordered leaf fails both leaf structure and Merkle continuity). If 'Identity bound' failed, confirm the --identity you passed is the one you actually expected. `--json` carries the same booleans.",
+        next_step: "Treat the identity as compromised or misoperated. `witness-log diff a.json b.json` shows where the histories part; the witness evidence files are portable proof for anyone you need to show.",
+    },
+    VerdictDoc {
+        name: "INVALID",
+        exit_code: 40,
+        summary: "A check FAILED. The file is not valid evidence about the identity: it establishes nothing (since 0.5.0; reported as DIVERGED/30 before).",
+        proves: &[
+            "one of: a signature is invalid, the leaves do not reproduce the signed root, the claimed identity does not match the signing key (or the --identity you pinned), a leaf is structurally malformed, or a key binding or revocation fails",
+        ],
+        does_not_prove: &[
+            "necessarily that someone acted maliciously — a truncated file or a mismatched --identity produces this too. The verdict says a check failed, not why",
+            "anything about the identity's real history: an invalid file cannot show equivocation",
+        ],
+        next_step: "Read the ✗ lines under the verdict (the same text is in `--json` as report.failures). If the identity check failed, confirm the --identity you passed is the one you actually expected.",
     },
 ];
 
@@ -91,7 +119,7 @@ pub fn run_explain(topic: Option<&str>, json: bool) -> ExitCode {
             let found: Vec<&VerdictDoc> = VERDICTS.iter().filter(|v| v.name == needle).collect();
             if found.is_empty() {
                 eprintln!("unknown topic: {t}");
-                eprintln!("  known: witnessed, consistent-unwitnessed, unanchored, diverged");
+                eprintln!("  known: witnessed, split-view, consistent-unwitnessed, unanchored, diverged, invalid");
                 eprintln!("  or run `witness-log explain` for all of them");
                 return ExitCode::from(2);
             }

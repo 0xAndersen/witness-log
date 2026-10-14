@@ -45,9 +45,11 @@ of the directory. JSON Schema in `spec/dossier.schema.json`.
 out-of-band (the public `registry/` is one source). Receipts are scored
 only against it, never against the dossier's own list.
 
-**Verdict (§9.2).** Exactly one of WITNESSED (0), CONSISTENT-UNWITNESSED
-(10), UNANCHORED (20), DIVERGED (30). See
-[Verification and verdicts](Verification-and-Verdicts).
+**Verdict (§9.2).** Exactly one of WITNESSED (0; 11 when the cosigners
+are not a strict majority of the directory), CONSISTENT-UNWITNESSED (10),
+UNANCHORED (20), DIVERGED (30: valid, but contradicts a head or an
+equivocation proof the verifier brought), INVALID (40: a check failed).
+See [Verification and verdicts](Verification-and-Verdicts).
 
 ## The flow, end to end
 

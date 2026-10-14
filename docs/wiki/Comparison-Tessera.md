@@ -39,7 +39,7 @@ an entry is and who may add one. Licensed Apache-2.0.
 | unit | one log per operator, many submitters | one log per agent, one writer |
 | what a verifier gets | public tiles: every entry is readable by anyone | a private dossier per agent: only salted commitments ever leave the machine |
 | witnessing | `tlog-witness` cosignatures gathered by the log before publishing, per a `tlog-policy` | the same protocol; the *verifier* scores receipts against its own directory and requires ≥2 distinct `operator_org` |
-| verification output | proofs and cosigned checkpoints; verdict policy is up to the client | one offline command, four verdicts, exit code is the verdict |
+| verification output | proofs and cosigned checkpoints; verdict policy is up to the client | one offline command, five verdicts, exit code is the verdict |
 | entry schema | none (the personality decides) | eight leaf types: intent, result, memory, redaction, revocation, handoff, authorization, external anchor |
 | erasure | not a library feature; public entries are permanent | salted payload hashes, `forget(i)` deletes the salt, proofs intact, a `0x03` tombstone records it |
 | keys | one log signing key | long-lived identity key + per-run session keys bound to it, custody disclosed |

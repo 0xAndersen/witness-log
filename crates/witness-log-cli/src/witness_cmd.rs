@@ -177,10 +177,10 @@ fn cmd_verify_evidence(args: &[String]) -> ExitCode {
         && witness_log_core::c2sp::identity_from_canonical_origin(&proof.origin).is_none()
     {
         println!("NOT PROVEN: the origin is not canonical, so the log's key cannot be taken from it; pass --vkey <the log's key as you know it>. The key inside the file is not trusted.");
-        ExitCode::from(30)
+        ExitCode::from(crate::exit::INVALID)
     } else {
         println!("NOT PROVEN: the notes do not both verify under the log's key with one origin, one size and two roots. This file is not evidence of equivocation.");
-        ExitCode::from(30)
+        ExitCode::from(crate::exit::INVALID)
     }
 }
 
@@ -1324,6 +1324,8 @@ fn cmd_submit(args: &[String]) -> ExitCode {
         trusted_directory: Some(&directory),
         min_receipts: Some(min),
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let verdict = result
         .dossier

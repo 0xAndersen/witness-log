@@ -40,8 +40,8 @@ pub struct WitnessLog {
     /// leaf traces to an authorized session needs the binding that
     /// authorized it. Without this, any log that has ever restarted
     /// produces a dossier whose pre-restart leaves have no covering
-    /// binding, and verification returns `Diverged` — "evidence of
-    /// tampering" — for an agent that merely rebooted.
+    /// binding, and verification returns `Invalid` (`Diverged` before
+    /// 0.5.0) for an agent that merely rebooted.
     ///
     /// Found by the 1,000-agent cohort simulation, where 10% of agents
     /// followed a crash-restart profile and every one of them was
@@ -353,7 +353,7 @@ impl WitnessLog {
     /// **This, not `current_binding`, is what a dossier should carry.** A
     /// log that has restarted holds leaves authored by session keys that
     /// no longer exist; supplying only the current binding leaves those
-    /// leaves uncovered and verification reports `Diverged`. See
+    /// leaves uncovered and verification reports `Invalid`. See
     /// `prior_bindings`.
     pub fn all_bindings(&self) -> Vec<KeyBindingStatement> {
         let mut out = self.prior_bindings.clone();
@@ -504,7 +504,7 @@ impl WitnessLog {
     /// `append_external_anchor`, but refusing an `anchor_url` that
     /// [`Leaf::validate`] would reject. Prefer this: an invalid anchor
     /// leaf, once committed, makes every later dossier of this log
-    /// `DIVERGED`.
+    /// `INVALID`.
     pub fn try_append_external_anchor(
         &mut self,
         anchor_url: &str,
@@ -644,7 +644,7 @@ impl WitnessLog {
         // this clamp, a single such step during otherwise honest
         // operation would produce a leaf sequence that fails
         // validate_sequence's non-decreasing-timestamp check -- which
-        // Dossier::verify reports as Diverged, the same verdict a
+        // Dossier::verify reports as Invalid, the same verdict a
         // genuinely fabricated dossier gets, with no way to distinguish
         // "this log was tampered with" from "this host's clock hiccuped
         // once." Clamping here means validate_sequence's invariant is
@@ -1096,7 +1096,7 @@ impl WitnessLog {
         // Carry forward every binding the snapshot recorded. Resuming
         // mints a NEW session key, so without this the leaves written by
         // the previous session have no covering binding and a verifier
-        // correctly -- but uselessly -- reports Diverged.
+        // correctly -- but uselessly -- reports Invalid.
         log.prior_bindings = snapshot.key_bindings;
         Ok(log)
     }

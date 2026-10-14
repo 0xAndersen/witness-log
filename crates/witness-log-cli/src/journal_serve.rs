@@ -449,6 +449,8 @@ fn submit(state: &Arc<Mutex<State>>, req: &Request) -> Response {
         trusted_directory: Some(&directory),
         min_receipts: Some(min),
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let verdict = report
         .dossier

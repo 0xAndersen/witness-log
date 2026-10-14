@@ -34,7 +34,7 @@ See also: [Comparison: SCITT](Comparison-SCITT) · [Spec and interop](Spec-and-I
 | equivocation proof file (two log-signed roots, one size) | **Equivocation** (§3), detected by Auditors (§9.7) | concept matches; no SCITT evidence format |
 | dossier (identity, leaves, checkpoint, receipts, bindings) | a set of **Transparent Statements** plus consistency evidence | no SCITT container |
 | verifier's `--directory` and `--identity` | the Relying Party's trust anchors for services and Issuers (§9.3) | good |
-| verdict (WITNESSED / CONSISTENT-UNWITNESSED / UNANCHORED / DIVERGED) | Relying Party validation policy (§7) | SCITT leaves policy to the RP; witness-log fixes four outcomes |
+| verdict (WITNESSED / CONSISTENT-UNWITNESSED / UNANCHORED / DIVERGED / INVALID) | Relying Party validation policy (§7) | SCITT leaves policy to the RP; witness-log fixes five outcomes |
 | `forget(i)`: delete salt, append `0x03` tombstone | §8: services can keep only hashes; the log "cannot be modified, deleted, or reordered" (§5.1.3) | compatible in spirit; SCITT specifies no erasure pattern |
 | `HandoffAttestation` / `AuthorizationEvent` pairs + `bind` | two Issuers' Signed Statements about the same subject | expressible; no binding rule in SCITT |
 | `ExternalAnchor` leaf (`0x07`) | a Receipt from someone else's service | good: a SCITT Receipt is exactly the kind of proof this leaf records |
@@ -153,7 +153,8 @@ future work. This is that list, against **-01** (12 August 2026,
 individual draft, Informational, "1F916 Maintainer, The 1F916 Protocol
 Project"). The draft and witness-log share a model (a CT-style per-agent
 record, witnesses that check consistency before countersigning, a
-verifier-supplied anchor rule, the same four verdict names, a key-custody
+verifier-supplied anchor rule, the same four verdict names (witness-log
+adds a fifth, INVALID, for a failed check), a key-custody
 taxonomy). **They are not wire-compatible today**, and the divergences are
 in exactly the places a second implementation would need to agree on.
 
@@ -164,8 +165,8 @@ in exactly the places a second implementation would need to agree on.
 | 3 | witness countersignature | `1f916.witness.v1:<registry_origin>:<log>:<tree_size>:<root_hex>`; C2SP not referenced | C2SP `cosignature/v1` (timestamped, Ed25519) or native `witness-log-witness-receipt-v2` (§7) |
 | 4 | witness transport | fetch checkpoint, verify, verify consistency, countersign, publish | `c2sp.org/tlog-witness` `POST /add-checkpoint`, persist-before-cosign |
 | 5 | refusals | unsigned refusal records count as evidence against a head | a refusal is never evidence; only two **log-signed** roots for one size are (§9.3, THREAT_MODEL "Accusations") |
-| 6 | "witnessed" | a caller-pinned witness countersignature covers the checkpoint | receipts from ≥2 distinct independent `operator_org` in the verifier's directory, plus a count gate; majority gate advised against split views |
-| 7 | "diverged" | includes "a refusal covers the head" and conflicting witnessed heads | any failed cryptographic, binding, structural or continuity check; equivocation is shown by `diff` / evidence files |
+| 6 | "witnessed" | a caller-pinned witness countersignature covers the checkpoint | receipts from ≥2 distinct independent `operator_org` in the verifier's directory, plus a count gate; since 0.5.0 the CLI exits 11 when the cosigners are not a strict majority of the directory (split view possible) |
+| 7 | "diverged" | includes "a refusal covers the head" and conflicting witnessed heads | since 0.5.0: a valid dossier that contradicts a head the verifier trusts (`--known-head`) or a verifying log-signed equivocation proof (`--evidence`), or two valid conflicting copies (`diff`); a refusal is never enough. A failed cryptographic, binding, structural or continuity check is a separate verdict, INVALID (before 0.5.0 it was "diverged") |
 | 8 | entry types | key bind/rotate/revoke, seals, attestations, disputes/retractions, checkpoints, witness records | intent, result, memory, redaction, revocation, handoff, authorization, external anchor (§2) |
 | 9 | linkage | predecessor hash per event plus Merkle tree | Merkle tree only |
 | 10 | erasure | not addressed | salted `payload_hash`, `forget`, `0x03` tombstone (§8) |

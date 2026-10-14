@@ -191,7 +191,7 @@ async def test_every_tool_over_stdio(tmp_path):
             # Tamper with the exported dossier: the verifier catches it.
             dossier["leaves"][2]["payload_hash"] = "00" * 32
             rep = json.loads(wl.verify_dossier_json(json.dumps(dossier), 0.66, ident))
-            assert rep["verdict"] == "diverged" and rep["merkle_continuity_valid"] is False
+            assert rep["verdict"] == "invalid" and rep["merkle_continuity_valid"] is False
 
         # New process, same home: the chain resumes with the same identity.
         async with Client(params) as client:

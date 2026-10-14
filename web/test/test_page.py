@@ -71,7 +71,7 @@ def run_engine(browser, base, engine, failures):
         if got != want:
             failures.append(f"{engine} with directory: got {got}, want {want}")
 
-        # Tampered dossier -> DIVERGED
+        # Tampered dossier -> INVALID (DIVERGED before 0.5.0)
         tampered = json.loads((GOLD / "a.json").read_text())
         tampered["leaves"][0]["payload_hash"] = "00" * 32
         tmp = WEB / "test" / "_tampered.json"
@@ -80,12 +80,25 @@ def run_engine(browser, base, engine, failures):
             page.set_input_files("#input-dossier", str(tmp))
             page.click("#verify")
             try:
-                page.wait_for_function("document.getElementById('verdict-word').textContent === 'DIVERGED'", timeout=10000)
+                page.wait_for_function("document.getElementById('verdict-word').textContent === 'INVALID'", timeout=10000)
             except Exception:
                 failures.append(f"{engine} tampered: got {page.text_content('#verdict-word')!r}, status={page.text_content('#status')!r}")
             print("tampered:", page.text_content("#verdict-word"))
         finally:
             tmp.unlink(missing_ok=True)
+
+        # A known head the dossier does not reproduce -> DIVERGED (0.5.0)
+        page.set_input_files("#input-dossier", str(GOLD / "a.json"))
+        page.fill("#known-heads", "1:" + "ab" * 32)
+        page.click("#verify")
+        try:
+            page.wait_for_function("document.getElementById('verdict-word').textContent === 'DIVERGED'", timeout=10000)
+        except Exception:
+            failures.append(f"{engine} known head: got {page.text_content('#verdict-word')!r}, status={page.text_content('#status')!r}")
+        print("contradicted known head:", page.text_content("#verdict-word"), page.text_content("#verdict-exit")[:40])
+        if "exit 30" not in (page.text_content("#verdict-exit") or ""):
+            failures.append(f"{engine} known head: {page.text_content('#verdict-exit')!r}")
+        page.fill("#known-heads", "")
 
         # bind a.json with b.json
         page.set_input_files("#input-dossier", str(GOLD / "a.json"))

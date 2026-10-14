@@ -1,5 +1,139 @@
 # Changelog
 
+## 0.5.0 — 2026-10-14
+
+Breaking. RFC-0002 is implemented: a failed check is a new verdict,
+INVALID (exit 40); DIVERGED (exit 30) now means only that a valid dossier
+contradicts evidence the verifier brought; and strict mode is the default,
+so a WITNESSED dossier cosigned by fewer than a strict majority of the
+trusted directory exits 11. No wire-format, leaf-encoding or dossier
+change: every historically issued dossier verifies with the same
+cryptographic result, and only the name and exit code of a failure change.
+SPEC §9.1–§9.2 carry the normative text.
+
+### Breaking
+
+- **Five verdicts; INVALID split from DIVERGED.** `witness-log verify`,
+  `Dossier::verify` and every binding report **INVALID, exit 40**, when a
+  check fails: checkpoint signature, identity (including a wrong
+  `--identity`), leaf structure, key bindings or revocations, Merkle
+  continuity (tampered, reordered, dropped or appended leaves). These were
+  DIVERGED, exit 30. **DIVERGED, exit 30**, is narrowed to a dossier that
+  passes every check and contradicts evidence the verifier supplied: a
+  `--known-head` it does not reproduce, or an `--evidence` witness
+  equivocation proof that verifies for this identity. Without either
+  input, `verify` cannot return DIVERGED. Precedence: INVALID beats
+  everything (contradictions are only checked for a valid file); DIVERGED
+  beats WITNESSED, CONSISTENT-UNWITNESSED and UNANCHORED. Rust:
+  `Verdict::Invalid` is a new variant.
+- **Strict is the default: exit 11.** A WITNESSED verdict whose cosigning
+  witnesses are not a strict majority of the trusted directory exits
+  **11** instead of 0: a conflicting history could have been cosigned by
+  the rest. The verdict word stays WITNESSED. `--allow-sub-majority`
+  accepts it as 0; `--no-strict` restores the 0.4 reading (no 11) for one
+  release and does not turn 40 back into 30; `--strict` is still accepted
+  and does nothing. Unlike the RFC's draft, `--min-witnesses N` with 2N at
+  or below the directory size is not a usage error: the gate applies as
+  written, and a sub-majority WITNESSED result exits 11.
+- **Other commands moved from 30 to 40** (a failed check, not a
+  contradiction): `diff` when either copy is invalid or tampered (two
+  valid, conflicting copies still exit 30); `c2sp verify` when a supplied
+  key does not verify or none does ("REJECTED (exit 40)"); `c2sp export`
+  with nothing to export; `witness verify-evidence` NOT PROVEN (PROVEN is
+  still 0). `demo --tamper` exits 40, and `submit --allow-partial` exits
+  40 for a dossier that fails a check. A `bind` mismatch stays 30.
+- **Report and JSON.** The report (`verify --json`, field `report`) gains
+  `split_view_unsafe` (bool), `failures` (why INVALID; empty otherwise;
+  wording not normative), `contradictions` (why DIVERGED) and
+  `known_heads_unchecked` (`"<size>:<root>"`); `report.verdict` adds
+  `"invalid"`. The top-level `verify --json` object gains `strict`,
+  `allow_sub_majority` and `exit_code`. Rust: `VerifyContext` gains
+  `known_heads` and `evidence`, so a struct literal needs both.
+- **TypeScript (`@witness-log/client`).** The `Verdict` type adds
+  `"INVALID"` and `EXIT_CODES` gains `INVALID: 40`. `verifyDossier`
+  returns INVALID, not DIVERGED, for a malformed or tampered dossier, and
+  `failures` is filled for INVALID; `exitCode` can be 11 or 40; `ok` is
+  true only for WITNESSED with exit 0. `WitnessLogCLI.diff` returns
+  `exitCode` 40 for a tampered copy.
+- **Go.** `Verdict` adds `Invalid` (`ExitInvalid` 40,
+  `ExitSplitViewUnsafe` 11). `VerifyDossier` returns `Invalid`, not
+  `Diverged`, for unparseable input, and `Report.Failures` is filled for
+  `Invalid` and always serialised. `witness-log-verify` exits 11 and 40
+  like the Rust CLI.
+- Python (`verify_dossier_json`), Node (`verifyDossierNative`), wasm and
+  the browser verifier report `invalid` / INVALID where they reported
+  `diverged` / DIVERGED for a failed check; the MCP server's
+  `verify_chain_integrity` verdict list adds `invalid`.
+
+### Added
+
+- **`verify --known-head <size>:<root hex>`** (repeatable): a head the
+  verifier already trusts for this identity. A dossier whose first
+  `<size>` leaves give a different root is DIVERGED. A head larger than
+  the dossier cannot be checked; it is listed in
+  `report.known_heads_unchecked`, not an error.
+- **`verify --evidence <file>`** (repeatable): a witness equivocation
+  proof, as `witness serve` writes it (`{"kind":"equivocation","proof":{...}}`)
+  or bare. It counts only if it verifies under the key named by the
+  canonical origin `witness-log/<identity hex>` (the proof's own
+  `log_vkey` must be that key); then the verdict is DIVERGED.
+- **`verify --allow-sub-majority`** and **`verify --no-strict`** (above).
+- **Corpus vector 13** (`corpus/13_verdicts.json`), a verification vector
+  rather than an encoding vector: whole deterministic dossiers, a trusted
+  directory, three equivocation proofs (one valid for the identity, one
+  signed by a stranger's key under the identity's origin, one valid but
+  about another identity) and 20 cases with the expected verdict, exit
+  code, `split_view_unsafe`, `internally_consistent`, whether `failures`
+  is non-empty, the counts of `contradictions` and
+  `known_heads_unchecked`, and `valid_receipts`. Generated by `cargo run
+  -p witness-log-network --example generate_verdict_corpus`; run by the
+  Rust, Go, TypeScript, Node (native and TypeScript) and wasm verifiers.
+  It is not part of `witness-log conform`, which compares the encoding
+  vectors 01–12.
+- **The same inputs in every binding.** Go: `Options.KnownHeads`,
+  `Options.Evidence`, `ParseKnownHead`, `Report.ExitCode(allowSubMajority)`,
+  `Report.SplitViewUnsafe`, `Failures`, `Contradictions`,
+  `KnownHeadsUnchecked`; `witness-log-verify --known-head`, `--evidence`,
+  `--allow-sub-majority`, `--no-strict`. TypeScript: `verifyDossier(d, {
+  knownHeads, evidence, allowSubMajority })` returns `{ verdict, exitCode,
+  ok, splitViewUnsafe, failures, contradictions, report }`;
+  `WitnessLogCLI.verify` takes `allowSubMajority`, `knownHeads`,
+  `evidence` and `revocations`. Node: `verifyDossierNative` takes the same
+  options and returns the same result. Python: `verify_dossier_json(...,
+  known_heads=None, evidence_json=None)`. wasm: `VerifyOptions` gains
+  `revocations`, `known_heads` and `evidence`, and `exit_code` honours
+  `allow_sub_majority`.
+- **Equivocation proof verification in Go and TypeScript**:
+  `(*EquivocationProof).Verify()` and `verifyEquivocationProof`, keyed by
+  the canonical origin as in Rust; TypeScript also exports
+  `parseKnownHead` and `EXIT_SPLIT_VIEW_UNSAFE` (11).
+- **MCP server**: `verify_chain_integrity` passes the last witnessed head
+  as a known head when the chain has grown since, so a journal rewritten
+  after witnessing reports `diverged`, with a `contradiction:` tamper
+  alert.
+- **`examples/rewrite-attack/run.py` step 9**: `verify rewritten.json
+  --known-head 4:<honest root>` exits 30, and `verify honest.json
+  --evidence <witness evidence file>` exits 30.
+- Docs: SPEC §9.1–§9.2, the CLI reference, Verification and verdicts,
+  the glossary, troubleshooting, the threat model and the client READMEs
+  describe the five verdicts; RFC-0002 is marked Implemented (0.5.0) with
+  the resolution of its open questions.
+
+### Migration
+
+A script that treated exit 30 as "tampered" should treat `>= 30` as "do
+not trust": 40 is a failed check, 30 is a valid file that contradicts
+evidence you supplied, and neither is safe to accept. `-ge 20` still
+means "do not trust this". A script that gates on `== 0` now also rejects
+11, a WITNESSED dossier cosigned by fewer than a strict majority of the
+directory; pass `--allow-sub-majority` if a sub-majority gate is what you
+mean, or verify against a directory of the witnesses you actually submit
+to. `--no-strict` restores the 0.4 reading of 11 for one release.
+`verify --json` consumers that match on `report.verdict` need an
+`"invalid"` arm; TypeScript code that switches over `Verdict` or
+`EXIT_CODES` needs an `INVALID` case, and Go code that switches over
+`Verdict` needs `Invalid`.
+
 ## 0.4.3 — 2026-10-14
 
 Non-breaking. Closes the last open item from security review round 2 and

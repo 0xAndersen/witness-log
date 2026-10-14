@@ -43,7 +43,8 @@ It says: *identity X authorises session Y as session number N, from this
 time, optionally until that time*. It is written into the journal and
 exported in the dossier. A verifier checks that every `session_pubkey` on a
 leaf has a valid binding; otherwise `bindings_asserted` is false or the
-verdict is DIVERGED, depending on whether bindings were present at all.
+verdict is INVALID (DIVERGED before 0.5.0), depending on whether bindings
+were present at all.
 
 So a journal resumed a hundred times has one identity, a hundred sessions,
 a hundred bindings, and an unbroken chain: leaf → session → identity. The

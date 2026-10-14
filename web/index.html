@@ -103,6 +103,7 @@
   .verdict.consistent-unwitnessed { border-color: var(--amber); } .verdict.consistent-unwitnessed .word { color: var(--amber); }
   .verdict.unanchored { border-color: var(--cyan); } .verdict.unanchored .word { color: var(--cyan); }
   .verdict.diverged { border-color: var(--bad); } .verdict.diverged .word { color: var(--bad); }
+  .verdict.invalid { border-color: var(--bad); } .verdict.invalid .word { color: var(--bad); }
 
   .checks { list-style: none; padding: 0; margin: 0 0 32px; display: grid; gap: 6px; max-width: 72ch; }
   .checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: baseline; }
@@ -184,6 +185,10 @@
     <label>or minimum receipts
       <input type="number" id="min-receipts" min="0" step="1" placeholder="—" style="width:7ch">
     </label>
+    <label class="identity">Known heads (optional: &lt;size&gt;:&lt;root hex&gt; you already hold for this identity, separated by spaces)
+      <input type="text" id="known-heads" placeholder="e.g. 4:9f86d081…" spellcheck="false" autocomplete="off">
+    </label>
+    <label><input type="checkbox" id="allow-sub-majority"> accept WITNESSED from fewer than a strict majority</label>
     <button class="primary" id="verify" disabled>Verify</button>
     <button class="quiet" id="clear-directory" hidden>Remove directory</button>
   </div>

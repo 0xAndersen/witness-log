@@ -209,9 +209,12 @@ head the witness has not committed to.
 - **Check it is alive**: `witness-log witness info https://witness.example`
   prints `GET /`.
 - **Check an equivocation file**: `witness-log witness verify-evidence
-  evidence/<file>.json` exits 0 if it proves two signed roots for one size.
+  evidence/<file>.json` exits 0 if it proves two signed roots for one size
+  (PROVEN) and 40 if it does not (NOT PROVEN; 30 before 0.5.0).
   Publish the file; it is self-contained and anyone can check it with the
-  log's public key.
+  log's public key. A verifier holding it passes it to
+  `witness-log verify <dossier> --evidence <file>`, which reports any
+  valid dossier of that identity as DIVERGED (exit 30).
 - **Two processes on one directory** is refused by the lock. If the lock
   names a live PID that is not a witness (PID reuse after a reboot), stop
   everything that could be serving that directory and delete `witness.lock`.

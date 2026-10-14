@@ -77,7 +77,7 @@ mod skeptic {
         leaves.swap(0, 1);
         let d = dossier_with(leaves, &id.public_hex(), cp, &log);
         let r = d.verify(0.0, &VerifyContext::default());
-        assert_eq!(r.verdict, Verdict::Diverged);
+        assert_eq!(r.verdict, Verdict::Invalid);
         // Caught twice: index != position fails structural validation,
         // and the root changes anyway.
         assert!(!r.leaves_structurally_valid);
@@ -135,7 +135,7 @@ mod skeptic {
         d.revocations = vec![revocation];
         let r = d.verify(0.0, &VerifyContext::default());
         assert!(!r.bindings_valid, "a leaf at or after revocation must fail");
-        assert_eq!(r.verdict, Verdict::Diverged);
+        assert_eq!(r.verdict, Verdict::Invalid);
     }
 
     /// A5. Ship a key binding signed by a DIFFERENT identity.
@@ -187,7 +187,7 @@ mod skeptic {
             !r.bindings_valid,
             "a leaf from another log's session must fail binding"
         );
-        assert_eq!(r.verdict, Verdict::Diverged);
+        assert_eq!(r.verdict, Verdict::Invalid);
     }
 
     /// A7. Duplicate a leaf (replay an action).
@@ -659,6 +659,8 @@ mod regulator {
                 trusted_directory: None,
                 min_receipts: None,
                 revocations: &[],
+                known_heads: &[],
+                evidence: &[],
             },
         );
         assert!(r.is_internally_consistent() && r.identity_bound);

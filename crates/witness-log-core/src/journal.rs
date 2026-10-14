@@ -865,7 +865,7 @@ impl JournaledLog {
         // Record this session's binding before any leaf it signs. On
         // replay this is what proves the session key that authored the
         // following leaves was authorized by the identity -- without it,
-        // a restarted log's earlier leaves verify as Diverged.
+        // a restarted log's earlier leaves verify as Invalid.
         journal.append_binding(log.current_binding())?;
         Ok(Self { log, journal })
     }

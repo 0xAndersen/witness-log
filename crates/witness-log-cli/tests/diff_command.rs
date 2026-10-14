@@ -183,7 +183,9 @@ fn a_tampered_copy_is_not_reported_as_equivocation() {
     std::fs::write(b.path(), serde_json::to_string(&v).unwrap()).unwrap();
 
     let (code, out) = run_diff(a.path(), b.path());
-    assert_eq!(code, EXIT_DIVERGED, "{out}");
+    // 40 (INVALID), not 30: a tampered copy is a bad file, not a second
+    // history (RFC-0002).
+    assert_eq!(code, 40, "{out}");
     assert!(
         !out.contains("EQUIVOCATION DETECTED"),
         "a tampered copy must not be called equivocation:\n{out}"

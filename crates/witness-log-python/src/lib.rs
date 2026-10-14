@@ -321,8 +321,15 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// embedded directory. `min_witnesses`, when given, replaces the
 /// fraction with an absolute receipt count: the right gate when the
 /// directory is a registry of many witnesses.
+///
+/// `known_heads` (`"<size>:<root hex>"` strings) are heads the caller
+/// already trusts for this identity, and `evidence_json` is a JSON array
+/// of witness equivocation proofs (bare, or as `witness serve` writes
+/// them); a dossier that contradicts either is "diverged" (RFC-0002).
+/// A dossier that fails a check is "invalid".
 #[pyfunction]
-#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None))]
+#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None))]
+#[allow(clippy::too_many_arguments)]
 fn verify_dossier_json(
     dossier_json: &str,
     threshold: f64,
@@ -330,6 +337,8 @@ fn verify_dossier_json(
     trusted_directory_json: Option<String>,
     min_witnesses: Option<usize>,
     revocations_json: Option<String>,
+    known_heads: Option<Vec<String>>,
+    evidence_json: Option<String>,
 ) -> PyResult<String> {
     if min_witnesses == Some(0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -374,11 +383,42 @@ fn verify_dossier_json(
         }
         Some(s) => serde_json::from_str(s).map_err(malformed_err)?,
     };
+    let known_heads = known_heads
+        .iter()
+        .flatten()
+        .map(|h| {
+            h.parse::<witness_log_network::KnownHead>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("known head {h:?}: {e}"))
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let evidence = match &evidence_json {
+        None => Vec::new(),
+        Some(s) => {
+            let v: serde_json::Value = serde_json::from_str(s).map_err(malformed_err)?;
+            let items = match v {
+                serde_json::Value::Array(a) => a,
+                one => vec![one],
+            };
+            items
+                .into_iter()
+                .map(|v| {
+                    let proof = v.get("proof").cloned().unwrap_or(v);
+                    serde_json::from_value::<witness_log_network::tlog_witness::EquivocationProof>(
+                        proof,
+                    )
+                    .map_err(|e| malformed_err(format!("not an equivocation proof: {e}")))
+                })
+                .collect::<PyResult<Vec<_>>>()?
+        }
+    };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: expected_identity_pubkey.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
         min_receipts: min_witnesses,
         revocations: &revocations,
+        known_heads: &known_heads,
+        evidence: &evidence,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)

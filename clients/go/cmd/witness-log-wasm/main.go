@@ -22,9 +22,13 @@ import (
 const version = "0.4.3"
 
 type verifyOptions struct {
-	ExpectedIdentityPubkey *string  `json:"expected_identity_pubkey"`
-	Threshold              *float64 `json:"threshold"`
-	MinReceipts            *int     `json:"min_receipts"`
+	ExpectedIdentityPubkey *string           `json:"expected_identity_pubkey"`
+	Threshold              *float64          `json:"threshold"`
+	MinReceipts            *int              `json:"min_receipts"`
+	AllowSubMajority       bool              `json:"allow_sub_majority"`
+	Revocations            json.RawMessage   `json:"revocations"`
+	KnownHeads             []string          `json:"known_heads"`
+	Evidence               []json.RawMessage `json:"evidence"`
 }
 
 func fail(msg string) string {
@@ -154,15 +158,40 @@ func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string
 		threshold = *opts.Threshold
 		o.Threshold = threshold
 	}
+	if len(opts.Revocations) > 0 && string(opts.Revocations) != "null" {
+		revs, err := witnesslog.ParseRevocations(opts.Revocations)
+		if err != nil {
+			return fail("revocations: " + err.Error())
+		}
+		o.Revocations = revs
+	}
+	for _, h := range opts.KnownHeads {
+		kh, err := witnesslog.ParseKnownHead(h)
+		if err != nil {
+			return fail("known head: " + err.Error())
+		}
+		o.KnownHeads = append(o.KnownHeads, kh)
+	}
+	for _, raw := range opts.Evidence {
+		var wrapped struct {
+			Proof *witnesslog.EquivocationProof `json:"proof"`
+		}
+		var p witnesslog.EquivocationProof
+		if json.Unmarshal(raw, &wrapped) == nil && wrapped.Proof != nil {
+			p = *wrapped.Proof
+		} else if err := json.Unmarshal(raw, &p); err != nil {
+			return fail("not an equivocation proof: " + err.Error())
+		}
+		o.Evidence = append(o.Evidence, p)
+	}
 	report := d.Verify(dir, o)
-	report.Failures = nil
 	var origin any
 	if pk, err := hex.DecodeString(d.Checkpoint.SignerPubkey); err == nil && len(pk) == 32 {
 		origin = witnesslog.CanonicalOrigin(pk)
 	}
 	out := map[string]any{
 		"verdict":           report.Verdict.String(),
-		"exit_code":         report.Verdict.ExitCode(),
+		"exit_code":         report.ExitCode(opts.AllowSubMajority),
 		"threshold_used":    threshold,
 		"min_receipts_used": opts.MinReceipts,
 		"identity_pinned":   opts.ExpectedIdentityPubkey != nil,

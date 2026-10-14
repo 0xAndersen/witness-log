@@ -200,10 +200,11 @@ A verifier anywhere, offline, runs `witness-log verify dossier.json --identity <
 
 Then exactly one verdict:
 
-- any of 1–5 fails → **DIVERGED** (30)
+- any of 1–5 fails → **INVALID** (40)
+- 1–5 pass, but the leaves do not reproduce a head the verifier passed with `--known-head`, or an `--evidence` file proves this identity signed two roots for one size → **DIVERGED** (30)
 - no directory supplied → **UNANCHORED** (20): consistent, nothing external checked
 - directory supplied, < 2 operators or gate not met → **CONSISTENT-UNWITNESSED** (10)
-- otherwise → **WITNESSED** (0)
+- otherwise → **WITNESSED** (0; the CLI exits 11 instead when the cosigners are not a strict majority of the directory, unless `--allow-sub-majority`)
 
 ## What the proof actually says
 

@@ -43,7 +43,9 @@ use witness_log_network::{Dossier, DossierReport, Verdict, VerifyContext, Witnes
 pub const DEFAULT_QUORUM_THRESHOLD: f64 = 0.66;
 
 /// Caller-controlled verification inputs (SPEC.md §9.1), as JSON:
-/// `{"expected_identity_pubkey": "<hex>", "threshold": 0.66, "min_receipts": 2}`.
+/// `{"expected_identity_pubkey": "<hex>", "threshold": 0.66, "min_receipts": 2,
+///   "allow_sub_majority": false, "revocations": [...],
+///   "known_heads": ["<size>:<root hex>"], "evidence": [{...}]}`.
 /// Every field is optional.
 #[derive(Debug, Default, Deserialize)]
 pub struct VerifyOptions {
@@ -56,15 +58,45 @@ pub struct VerifyOptions {
     /// Absolute receipt-count gate; overrides the fraction when set.
     #[serde(default)]
     pub min_receipts: Option<usize>,
+    /// Accept WITNESSED from fewer than a strict majority of the directory
+    /// as exit 0 (the CLI's `--allow-sub-majority`). Default false: such a
+    /// verdict's `exit_code` is 11, as `witness-log verify` returns.
+    #[serde(default)]
+    pub allow_sub_majority: bool,
+    /// Revocation statements the caller knows of out of band (SPEC.md §5);
+    /// applied even when the dossier omits them.
+    #[serde(default)]
+    pub revocations: Vec<witness_log_core::identity::RevocationStatement>,
+    /// Heads the caller already trusts for this identity, as
+    /// `"<size>:<root hex>"`; one the dossier does not reproduce makes the
+    /// verdict DIVERGED (RFC-0002).
+    #[serde(default)]
+    pub known_heads: Vec<String>,
+    /// Witness equivocation proofs, bare or as `witness serve` writes them
+    /// (`{"kind": "equivocation", "proof": {...}}`); one that verifies for
+    /// this identity makes the verdict DIVERGED.
+    #[serde(default)]
+    pub evidence: Vec<Value>,
 }
 
-/// Exit code the CLI would return for this verdict (0/10/20/30).
+/// Exit code `witness-log verify` (strict, the default) returns for this
+/// report: the verdict's code, or 11 for a WITNESSED verdict whose
+/// cosigners are not a strict majority of the directory.
+pub fn report_exit_code(report: &DossierReport, allow_sub_majority: bool) -> u8 {
+    if report.split_view_unsafe && !allow_sub_majority {
+        return 11;
+    }
+    exit_code(&report.verdict)
+}
+
+/// Exit code for a verdict on its own (0/10/20/30/40).
 pub fn exit_code(verdict: &Verdict) -> u8 {
     match verdict {
         Verdict::Witnessed => 0,
         Verdict::ConsistentUnwitnessed => 10,
         Verdict::Unanchored => 20,
         Verdict::Diverged => 30,
+        Verdict::Invalid => 40,
     }
 }
 
@@ -221,18 +253,37 @@ pub fn verify_dossier_value(
         Some(raw) => Some(parse_directory(raw)?),
         None => None,
     };
+    let known_heads = options
+        .known_heads
+        .iter()
+        .map(|h| {
+            h.parse::<witness_log_network::KnownHead>()
+                .map_err(|e| format!("known head {h:?}: {e}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let evidence = options
+        .evidence
+        .iter()
+        .map(|v| {
+            let proof = v.get("proof").cloned().unwrap_or_else(|| v.clone());
+            serde_json::from_value::<witness_log_network::tlog_witness::EquivocationProof>(proof)
+                .map_err(|e| format!("not an equivocation proof: {e}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let ctx = VerifyContext {
         expected_identity_pubkey: options.expected_identity_pubkey.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: options.min_receipts,
-        revocations: &[],
+        revocations: &options.revocations,
+        known_heads: &known_heads,
+        evidence: &evidence,
     };
     let threshold = options.threshold.unwrap_or(DEFAULT_QUORUM_THRESHOLD);
     let report: DossierReport = dossier.verify(threshold, &ctx);
     let report_value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
     Ok(json!({
         "verdict": report.verdict.to_string(),
-        "exit_code": exit_code(&report.verdict),
+        "exit_code": report_exit_code(&report, options.allow_sub_majority),
         "threshold_used": threshold,
         "min_receipts_used": options.min_receipts,
         "identity_pinned": options.expected_identity_pubkey.is_some(),

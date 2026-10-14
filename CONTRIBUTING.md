@@ -16,17 +16,21 @@ binding, checkpoint signing, witness receipts, or redaction (anything in
 `witness-log-network`), you must:
 
 1. Regenerate the corpus: `cargo run -p witness-log-core --example generate_corpus`
+   (encoding vectors 01–12) and `cargo run -p witness-log-network --example
+   generate_verdict_corpus` (verification vector 13, `13_verdicts.json`)
 2. Confirm the diff against `/corpus/*.json` is either empty (no wire
-   format impact) or is the intended, documented change.
+   format or verdict impact) or is the intended, documented change.
 3. If the wire format changed intentionally, bump the spec version in
    `spec/SPEC.md` and document the change in that file directly — the
    corpus is the enforcement mechanism, the spec text is the human-readable
    explanation, and they should never drift apart.
 
 A from-scratch reimplementation is expected to reproduce every value in
-`/corpus/*.json` exactly, byte for byte, given the described inputs. This
-is what "conformant" means in this project — not "reads like the spec,"
-but "passes the corpus."
+the encoding vectors (`/corpus/01_*.json` to `12_*.json`) exactly, byte for
+byte, given the described inputs, and a verifier to reach the verdict,
+exit code and report fields of every case in the verification vector
+`/corpus/13_verdicts.json`. This is what "conformant" means in this
+project — not "reads like the spec," but "passes the corpus."
 
 ## Local development
 

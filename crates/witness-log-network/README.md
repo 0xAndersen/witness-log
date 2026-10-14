@@ -2,7 +2,8 @@
 
 Witness protocol and dossier verification: peer countersigning of
 checkpoints, quorum evaluation, operator/compute-provider diversity
-scoring, the four-valued verdict system, `WitnessPolicy` (machine-readable
+scoring, the five-valued verdict system (with known heads and equivocation
+evidence as verifier inputs, RFC-0002), `WitnessPolicy` (machine-readable
 pre-action gating), and `silence_proof` (censorship-by-omission detection).
 
 This crate builds on `witness-log-core`'s Merkle log and identity

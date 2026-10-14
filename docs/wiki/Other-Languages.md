@@ -26,7 +26,7 @@ const log = openLog("agent.jsonl");
 const refund = await log.step("stripe.refund", () => stripe.refund(1042), { args: { order: 1042 } });
 const dossier = log.exportDossier();
 const v = verifyDossier(dossier, { identity: log.identityPubkey, directory: trusted, minWitnesses: 2 });
-if (v.verdict !== "WITNESSED") throw new Error(v.verdict);   // v.exitCode is 0/10/20/30
+if (!v.ok) throw new Error(v.verdict);   // ok: WITNESSED with exit 0; v.exitCode is 0/11/10/20/30/40
 ```
 
 `npm create witness-log my-agent` generates a working project (plain or
@@ -78,7 +78,11 @@ specified in `spec/SPEC.md` with test vectors in `corpus/`. For
 cmd := exec.Command("witness-log", "verify", "dossier.json",
     "--identity", key, "--directory", "trusted.json", "--min-witnesses", "2", "--json")
 out, _ := cmd.Output()   // err is non-nil for any non-zero exit; the exit code is the verdict
-switch cmd.ProcessState.ExitCode() { case 0: /* WITNESSED */ case 10, 20: /* not enough */ case 30: /* refuse */ default: /* 2: usage */ }
+switch cmd.ProcessState.ExitCode() {
+case 0: /* WITNESSED by a majority of your directory */
+case 11, 10, 20: /* not enough: sub-majority, unwitnessed, unanchored */
+case 30, 40: /* refuse: contradicts a head or proof you supplied (30), a check failed (40) */
+default: /* 2: usage */ }
 ```
 
 Producing dossiers from another language means implementing §2–§6 of the

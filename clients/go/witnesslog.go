@@ -20,6 +20,7 @@
 package witnesslog
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,8 @@ import (
 	"strings"
 )
 
-// Verdict is the four-valued result of SPEC.md §9.2.
+// Verdict is the five-valued result of SPEC.md §9.2 (RFC-0002 split
+// DIVERGED into DIVERGED and INVALID in 0.5.0).
 type Verdict int
 
 // Verdicts, strongest first. Diverged takes precedence over the others.
@@ -44,9 +46,13 @@ const (
 	// Unanchored: every check passes but no trusted directory was
 	// supplied. This is the ceiling for a fabricated dossier.
 	Unanchored
-	// Diverged: a cryptographic, identity, structural or key-binding check
-	// failed.
+	// Diverged: the dossier is valid but contradicts evidence the verifier
+	// supplied about the same identity (a known head, an equivocation
+	// proof). Since 0.5.0; one file on its own is never Diverged.
 	Diverged
+	// Invalid: a cryptographic, identity, structural, key-binding or
+	// revocation check failed. Reported as Diverged before 0.5.0.
+	Invalid
 )
 
 // MinIndependentOperatorsForWitnessed is the floor at which equivocation
@@ -62,13 +68,18 @@ const (
 	ExitConsistentUnwitnessed = 10
 	ExitUnanchored            = 20
 	ExitDiverged              = 30
+	ExitInvalid               = 40
+	// ExitSplitViewUnsafe is strict mode's (the default) exit for a
+	// Witnessed verdict whose cosigners are not a strict majority of the
+	// directory.
+	ExitSplitViewUnsafe = 11
 	// ExitUsage is for unreadable or unparseable input, distinct from any
 	// verdict about a dossier.
 	ExitUsage = 2
 )
 
-var verdictUpper = [...]string{"WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED"}
-var verdictSnake = [...]string{"witnessed", "consistent_unwitnessed", "unanchored", "diverged"}
+var verdictUpper = [...]string{"WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED", "INVALID"}
+var verdictSnake = [...]string{"witnessed", "consistent_unwitnessed", "unanchored", "diverged", "invalid"}
 
 // String is the CLI's display form (WITNESSED, CONSISTENT-UNWITNESSED, ...).
 func (v Verdict) String() string {
@@ -87,8 +98,20 @@ func (v Verdict) ExitCode() int {
 		return ExitConsistentUnwitnessed
 	case Unanchored:
 		return ExitUnanchored
+	case Diverged:
+		return ExitDiverged
 	}
-	return ExitDiverged
+	return ExitInvalid
+}
+
+// ExitCode is the exit status `witness-log verify` returns for this report
+// under strict mode (the default): the verdict's code, or 11 for a
+// Witnessed verdict that is split-view unsafe unless allowSubMajority.
+func (r *Report) ExitCode(allowSubMajority bool) int {
+	if r.SplitViewUnsafe && !allowSubMajority {
+		return ExitSplitViewUnsafe
+	}
+	return r.Verdict.ExitCode()
 }
 
 // MarshalJSON writes the reference report's snake_case form.
@@ -131,6 +154,78 @@ type Options struct {
 	// or not the dossier carries them; statements for other identities are
 	// ignored (SPEC §5).
 	Revocations []Revocation
+	// KnownHeads the verifier already trusts for this identity; a dossier
+	// whose leaves do not reproduce one is Diverged (RFC-0002).
+	KnownHeads []KnownHead
+	// Evidence holds witness equivocation proofs; one that verifies for
+	// this identity makes the verdict Diverged.
+	Evidence []EquivocationProof
+}
+
+// KnownHead is a (tree size, root) the verifier already trusts.
+type KnownHead struct {
+	TreeSize uint64
+	RootHash Hash
+}
+
+// ParseKnownHead reads "<size>:<root hex>".
+func ParseKnownHead(s string) (KnownHead, error) {
+	size, root, ok := strings.Cut(s, ":")
+	if !ok {
+		return KnownHead{}, fmt.Errorf("expected <size>:<root hex>, got %q", s)
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(size), 10, 64)
+	if err != nil || strings.TrimSpace(size) != strconv.FormatUint(n, 10) {
+		return KnownHead{}, fmt.Errorf("size %q is not a canonical decimal integer", size)
+	}
+	b, err := hex.DecodeString(strings.TrimSpace(root))
+	if err != nil || len(b) != 32 {
+		return KnownHead{}, fmt.Errorf("root %q is not 32 bytes of hex", root)
+	}
+	var h Hash
+	copy(h[:], b)
+	return KnownHead{TreeSize: n, RootHash: h}, nil
+}
+
+// EquivocationProof is a witness's evidence that one log signed two roots
+// for one tree size (the JSON `witness serve` writes under "proof").
+type EquivocationProof struct {
+	Origin          string `json:"origin"`
+	LogVkey         string `json:"log_vkey"`
+	EarlierNote     string `json:"earlier_note"`
+	ConflictingNote string `json:"conflicting_note"`
+}
+
+// Verify checks the proof with the key the canonical origin names: the
+// proof's own log_vkey must be exactly that key, and both notes must
+// verify under it, name the origin, and have one size and two roots.
+func (p *EquivocationProof) Verify() bool {
+	pub, ok := IdentityFromCanonicalOrigin(p.Origin)
+	if !ok {
+		return false
+	}
+	key := NewEd25519VerifierKey(p.Origin, pub)
+	claimed, err := ParseVerifierKey(p.LogVkey)
+	if err != nil || claimed.Name != p.Origin || claimed.SigType != SigTypeEd25519 || !bytes.Equal(claimed.PublicKey, pub) {
+		return false
+	}
+	read := func(text string) *Checkpoint {
+		n, err := ParseC2SPNote(text)
+		if err != nil {
+			return nil
+		}
+		if _, err := n.Verify([]VerifierKey{key}); err != nil {
+			return nil
+		}
+		c, err := CheckpointFromNote(n)
+		if err != nil {
+			return nil
+		}
+		return c
+	}
+	a, b := read(p.EarlierNote), read(p.ConflictingNote)
+	return a != nil && b != nil && a.Origin == p.Origin && b.Origin == p.Origin &&
+		a.TreeSize == b.TreeSize && a.RootHash != b.RootHash
 }
 
 // Quorum mirrors the reference QuorumResult field for field.
@@ -169,12 +264,19 @@ type Report struct {
 	IdentityPinned           bool    `json:"identity_pinned"`
 	InternallyConsistent     bool    `json:"internally_consistent"`
 	Quorum                   *Quorum `json:"quorum"`
-	Verdict                  Verdict `json:"verdict"`
-
+	// SplitViewUnsafe: Witnessed, but the cosigners are not a strict
+	// majority of the directory (RFC-0002).
+	SplitViewUnsafe bool `json:"split_view_unsafe"`
 	// Failures lists, in check order, what failed and why. Empty unless
-	// Verdict is Diverged. Not part of the reference report's JSON; it is
-	// serialised under "failures" so a Go caller can show the reason.
-	Failures []string `json:"failures,omitempty"`
+	// Verdict is Invalid. The wording is this implementation's; the
+	// reference report carries its own under the same key.
+	Failures []string `json:"failures"`
+	// Contradictions lists the known heads and evidence the dossier
+	// contradicts; empty unless Verdict is Diverged.
+	Contradictions []string `json:"contradictions"`
+	// KnownHeadsUnchecked lists known heads larger than the dossier.
+	KnownHeadsUnchecked []string `json:"known_heads_unchecked"`
+	Verdict             Verdict  `json:"verdict"`
 }
 
 // VerifyDossier parses dossierJSON and verifies it offline. directory is
@@ -184,7 +286,7 @@ type Report struct {
 func VerifyDossier(dossierJSON []byte, directory *Directory, opts Options) (Verdict, *Report, error) {
 	d, err := ParseDossier(dossierJSON)
 	if err != nil {
-		return Diverged, nil, err
+		return Invalid, nil, err
 	}
 	report := d.Verify(directory, opts)
 	return report.Verdict, report, nil
@@ -196,7 +298,7 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 	if threshold == 0 {
 		threshold = DefaultThreshold
 	}
-	r := &Report{}
+	r := &Report{Failures: []string{}, Contradictions: []string{}, KnownHeadsUnchecked: []string{}}
 
 	if err := d.Checkpoint.Verify(); err == nil {
 		r.CheckpointSignatureValid = true
@@ -272,8 +374,30 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 	}
 
 	r.InternallyConsistent = r.CheckpointSignatureValid && r.IdentityBound && r.LeavesStructurallyValid && r.BindingsValid && r.MerkleContinuityValid
+	if r.InternallyConsistent {
+		for _, kh := range opts.KnownHeads {
+			if kh.TreeSize > uint64(len(hashes)) {
+				r.KnownHeadsUnchecked = append(r.KnownHeadsUnchecked, fmt.Sprintf("%d:%s", kh.TreeSize, hex.EncodeToString(kh.RootHash[:])))
+				continue
+			}
+			prefix := MerkleRoot(hashes[:kh.TreeSize])
+			if prefix != kh.RootHash {
+				r.Contradictions = append(r.Contradictions, fmt.Sprintf("known head %d:%s is not what this dossier's first %d leaves produce (%s)", kh.TreeSize, hex.EncodeToString(kh.RootHash[:]), kh.TreeSize, hex.EncodeToString(prefix[:])))
+			}
+		}
+		if pub, ok := hexN(d.IdentityPubkey, 32); ok {
+			origin := CanonicalOrigin(pub)
+			for i := range opts.Evidence {
+				if opts.Evidence[i].Origin == origin && opts.Evidence[i].Verify() {
+					r.Contradictions = append(r.Contradictions, "witness evidence: this identity signed two different roots for one tree size ("+origin+")")
+				}
+			}
+		}
+	}
 	switch {
 	case !r.InternallyConsistent:
+		r.Verdict = Invalid
+	case len(r.Contradictions) > 0:
 		r.Verdict = Diverged
 	case !r.ExternallyAnchored:
 		r.Verdict = Unanchored
@@ -284,6 +408,7 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 	default:
 		r.Verdict = ConsistentUnwitnessed
 	}
+	r.SplitViewUnsafe = r.Verdict == Witnessed && (r.Quorum == nil || !r.Quorum.SplitViewResistant)
 	return r
 }
 

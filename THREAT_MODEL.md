@@ -33,7 +33,7 @@ strong result on both.
 
 | Actor / scenario | Capability | WitnessLog's guarantee |
 |---|---|---|
-| **Operator, post-hoc tampering** | Rewrites or deletes leaves already committed to a *local* log file, after the fact. | **Detected**, if a checkpoint (STH) was signed before the tampering and a verifier compares recomputed root against that STH. Detection requires the verifier to have obtained the STH from somewhere the operator couldn't also rewrite (ideally, a witness — see below). |
+| **Operator, post-hoc tampering** | Rewrites or deletes leaves already committed to a *local* log file, after the fact. | **Detected**, if a checkpoint (STH) was signed before the tampering and a verifier compares recomputed root against that STH. Detection requires the verifier to have obtained the STH from somewhere the operator couldn't also rewrite (ideally, a witness — see below). A dossier edited under its old checkpoint is INVALID (exit 40); one re-signed by the same key after the rewrite is internally valid and is DIVERGED (exit 30) only when the verifier supplies the earlier head (`verify --known-head <size>:<root>`) or a witness's equivocation proof (`--evidence`). |
 | **Operator, equivocation** | Shows verifier A one version of history and verifier B a different one, both internally consistent. | **Detected only if witness diversity is real.** A witnessed checkpoint that a genuinely independent third party has countersigned and published is very hard to quietly replace across all verifiers. A single-node log with no independent witnesses, or witnesses that are not actually independent of the operator, provides **no protection** against this. This is the single most important caveat in this document — see "Witness independence" below. |
 | **Compromised host, pre-signature** | Attacker gains code execution on the machine before a leaf is signed/committed. | **Not prevented.** WitnessLog proves what was recorded and that it wasn't altered *after* recording. It cannot prove the recorded content reflects what the agent actually reasoned or that the logging call happened at the time claimed, if the host itself was already compromised. |
 | **Malicious or hallucinating agent** | Logs a false `0x01 ActiveIntent` (e.g. claims it intended X when it didn't) or a false `0x02 ActiveResult`. | **Not prevented.** WitnessLog proves authorship (which session/identity signed it) and ordering (its position in the tree), not truthfulness of the content. |
@@ -92,10 +92,15 @@ receipts exceed half the directory, any two gate-satisfying sets overlap
 in at least one witness, and that witness refused the second history.
 The default `--threshold 0.66` is a majority; `--threshold 0.5`, or
 `--min-witnesses N` with `N <= directory/2`, is not. The verifier reports
-`split_view_resistant` for the dossier in hand and warns when the gate
-itself permits a split; it cannot see the other dossier. Two copies in
-hand are compared with `witness-log diff`, and a split view is still
-equivocation under one key: the two dossiers together are the evidence.
+`split_view_resistant` and `split_view_unsafe` for the dossier in hand and
+warns when the gate itself permits a split; since 0.5.0 `witness-log
+verify` exits 11 (not 0) for a WITNESSED dossier whose cosigners are not a
+strict majority of the directory, unless the caller passes
+`--allow-sub-majority` (RFC-0002). It cannot see the other dossier. Two
+copies in hand are compared with `witness-log diff`, and a split view is
+still equivocation under one key: the two dossiers together are the
+evidence (`diff` exits 30), and a head from one passed to `verify` of the
+other with `--known-head` does the same with one copy.
 (Found by an outside evaluation of 0.3.3; the live test
 `split_view_below_a_majority_is_reported_not_hidden` reproduces it.)
 
@@ -201,7 +206,12 @@ silence proof requires a log-signed `WriteReceipt` naming the exact event.
 Anything less — an unverified checkpoint, an edited copy, a junk proof, a
 plain checkpoint standing in for a receipt — is reported as a bad input,
 not as misbehaviour. The final pre-publish review found three paths that
-did not meet this bar; all are closed in 0.3.1.
+did not meet this bar; all are closed in 0.3.1. Since 0.5.0 the verdicts
+keep the same line: a file that fails a check is INVALID (exit 40), and
+DIVERGED (exit 30) is reserved for a dossier that passes every check and
+contradicts a head the verifier supplied or an equivocation proof that
+verifies under the key named by the identity's canonical origin (never
+the key inside the proof file).
 
 ## What "verified" means when you run `witness-log verify`
 
@@ -232,7 +242,7 @@ cosigned *a* log, not *whose*, and the CLI says so. A gate passes both.
 Timestamps in leaves and checkpoints are self-asserted; a verifier that
 cares about time uses the witnesses' `witnessed_at_ms` (`WitnessPolicy`
 does), and a leaf whose timestamp was edited after signing fails
-structural validation and reads as DIVERGED like any other alteration.
+structural validation and reads as INVALID like any other alteration.
 
 ## Reporting an issue with this model
 

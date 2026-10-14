@@ -86,8 +86,8 @@ fn corpus_01_07_08_09_leaf_hashes_via_summary() {
             assert_eq!(row["leaf_hash"].as_str().unwrap(), want, "{row}");
             assert_eq!(row["structurally_valid"], json!(true), "{row}");
         }
-        assert_eq!(out["verdict"], json!("DIVERGED"));
-        assert_eq!(out["exit_code"], json!(30));
+        assert_eq!(out["verdict"], json!("INVALID"));
+        assert_eq!(out["exit_code"], json!(40));
         assert_eq!(out["report"]["checkpoint_signature_valid"], json!(false));
         assert_eq!(out["report"]["leaves_structurally_valid"], json!(true));
     };
@@ -229,8 +229,8 @@ fn golden_dossiers_reach_every_verdict() {
         ..Default::default()
     };
     let out = verify_dossier_value(&a, Some(&c2sp_dir), &pinned).unwrap();
-    assert_eq!(out["verdict"], json!("DIVERGED"));
-    assert_eq!(out["exit_code"], json!(30));
+    assert_eq!(out["verdict"], json!("INVALID"));
+    assert_eq!(out["exit_code"], json!(40));
     assert_eq!(out["report"]["identity_bound"], json!(false));
     assert_eq!(out["identity_pinned"], json!(true));
 
@@ -247,7 +247,7 @@ fn golden_dossiers_reach_every_verdict() {
     tampered["leaves"][1]["timestamp_ms"] =
         json!(tampered["leaves"][1]["timestamp_ms"].as_u64().unwrap() + 1);
     let out = verify_dossier_value(&tampered.to_string(), Some(&c2sp_dir), &no_opts).unwrap();
-    assert_eq!(out["verdict"], json!("DIVERGED"));
+    assert_eq!(out["verdict"], json!("INVALID"));
     assert_eq!(out["report"]["merkle_continuity_valid"], json!(false));
 
     // Bind the two goldens as `witness-log bind` did.
@@ -333,9 +333,9 @@ fn golden_reports_equal_the_rust_cli_reports() {
         let dossier = fs::read_to_string(td.join(dossier)).unwrap();
         let dir = dir.map(|d| fs::read_to_string(td.join(d)).unwrap());
         let opts = VerifyOptions {
-            expected_identity_pubkey: None,
             threshold,
             min_receipts: min,
+            ..Default::default()
         };
         let out = verify_dossier_value(&dossier, dir.as_deref(), &opts).unwrap();
         assert_eq!(out["report"], expected["report"], "{name}");
@@ -357,4 +357,63 @@ fn sample_dossier_from_the_readme() {
     assert_eq!(out["verdict"], json!("WITNESSED"));
     let out = verify_dossier_value(&d, None, &VerifyOptions::default()).unwrap();
     assert_eq!(out["verdict"], json!("UNANCHORED"));
+}
+
+/// Corpus vector 13: every verdict case, through the wasm verifier's
+/// options (known heads and evidence included).
+#[test]
+fn corpus_13_verdicts() {
+    let v = read_json("corpus/13_verdicts.json");
+    let directory = v["trusted_directory"].to_string();
+    let cases = v["cases"].as_array().unwrap();
+    assert!(cases.len() >= 20);
+    for c in cases {
+        let name = c["name"].as_str().unwrap();
+        let dossier = v["dossiers"][c["dossier"].as_str().unwrap()].to_string();
+        let opts = VerifyOptions {
+            expected_identity_pubkey: c["expected_identity"].as_str().map(str::to_string),
+            threshold: c["threshold"].as_f64(),
+            min_receipts: c["min_witnesses"].as_u64().map(|n| n as usize),
+            allow_sub_majority: c["allow_sub_majority"].as_bool().unwrap(),
+            known_heads: serde_json::from_value(c["known_heads"].clone()).unwrap(),
+            evidence: c["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+                .collect(),
+            ..Default::default()
+        };
+        let dir = c["trusted_directory"]
+            .as_bool()
+            .unwrap()
+            .then_some(directory.as_str());
+        let out = verify_dossier_value(&dossier, dir, &opts).unwrap();
+        let e = &c["expect"];
+        let verdict = out["report"]["verdict"].clone();
+        assert_eq!(verdict, e["verdict"], "{name}");
+        assert_eq!(out["exit_code"], e["exit_code"], "{name}");
+        let r = &out["report"];
+        assert_eq!(r["split_view_unsafe"], e["split_view_unsafe"], "{name}");
+        assert_eq!(
+            r["internally_consistent"], e["internally_consistent"],
+            "{name}"
+        );
+        assert_eq!(
+            !r["failures"].as_array().unwrap().is_empty(),
+            e["has_failures"].as_bool().unwrap(),
+            "{name}"
+        );
+        assert_eq!(
+            json!(r["contradictions"].as_array().unwrap().len()),
+            e["contradictions"],
+            "{name}"
+        );
+        assert_eq!(
+            json!(r["known_heads_unchecked"].as_array().unwrap().len()),
+            e["known_heads_unchecked"],
+            "{name}"
+        );
+        assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
+    }
 }

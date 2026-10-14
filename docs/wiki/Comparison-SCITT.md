@@ -41,7 +41,7 @@ consistency. It is an architecture standard, not a product.
 | receipt | COSE Receipt from the service: "this statement is at this position in my log" | a witness cosignature: "this log's head extends what I saw before" (different statement; see the mapping page) |
 | erasure | not specified; the log "cannot be modified, deleted, or reordered", but statements may be hashes | salted commitments; `forget(i)` keeps every proof |
 | encoding | CBOR/COSE | binary canonical leaves, C2SP signed notes, JSON dossier |
-| verdict | Receipt verification; policy is the Relying Party's | four verdicts, exit code is the verdict |
+| verdict | Receipt verification; policy is the Relying Party's | five verdicts, exit code is the verdict |
 
 The shortest honest description: witness-log is a per-agent transparency log
 whose independence comes from witnessing rather than from a separate

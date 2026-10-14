@@ -117,7 +117,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Regenerate corpus
-        run: cargo run -p witness-log-core --example generate_corpus
+        run: |
+          cargo run -p witness-log-core --example generate_corpus
+          cargo run -p witness-log-network --example generate_verdict_corpus
       - name: Fail if corpus drifted from committed vectors
         run: |
           git diff --exit-code corpus/ || \

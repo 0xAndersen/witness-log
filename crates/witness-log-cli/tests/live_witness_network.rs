@@ -453,8 +453,27 @@ fn split_view_below_a_majority_is_reported_not_hidden() {
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(out.status.code(), Some(0), "{stdout}");
+        // Strict, the default since 0.5.0: WITNESSED by 2 of 4 is a
+        // possible split view, exit 11 (RFC-0002).
+        assert_eq!(out.status.code(), Some(11), "{stdout}");
         assert!(stdout.contains("Split view possible: 2 of 4"), "{stdout}");
+        for accept in ["--allow-sub-majority", "--no-strict"] {
+            let ok = Command::new(BIN)
+                .args([
+                    "verify",
+                    d.to_str().unwrap(),
+                    "--identity",
+                    &identity,
+                    "--directory",
+                    &dir_s,
+                    "--min-witnesses",
+                    "2",
+                    accept,
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(ok.status.code(), Some(0), "{accept}");
+        }
         let json = Command::new(BIN)
             .args([
                 "verify",
@@ -469,7 +488,39 @@ fn split_view_below_a_majority_is_reported_not_hidden() {
             .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
         assert_eq!(v["report"]["quorum"]["split_view_resistant"], false);
+        assert_eq!(v["report"]["split_view_unsafe"], true);
+        assert_eq!(v["exit_code"], 11);
     }
+    // Two valid, conflicting copies: each one names the other's head as
+    // a contradiction once the verifier brings it (--known-head), and the
+    // verdict is DIVERGED, exit 30 (RFC-0002).
+    let head_of = |p: &std::path::Path| -> String {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+        format!(
+            "{}:{}",
+            v["checkpoint"]["tree_size"].as_u64().unwrap(),
+            v["checkpoint"]["root_hash"].as_str().unwrap()
+        )
+    };
+    let (code, out) = run(&[
+        "verify",
+        da.to_str().unwrap(),
+        "--identity",
+        &identity,
+        "--known-head",
+        &head_of(&db),
+    ]);
+    assert_eq!(code, 30, "{out}");
+    let (code, _) = run(&[
+        "verify",
+        da.to_str().unwrap(),
+        "--identity",
+        &identity,
+        "--known-head",
+        &head_of(&da),
+    ]);
+    assert_eq!(code, 20, "its own head is not a contradiction");
     // With the default gate (0.66 of 4 = 3), neither half passes, and the
     // two copies side by side are an equivocation finding.
     let (code, _) = run(&[

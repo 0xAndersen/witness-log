@@ -17,10 +17,15 @@ by signed key bindings. Independent **witnesses** cosign checkpoints over
 head they cosigned, and refuse (422) anything that contradicts it. A
 **dossier** (one JSON file) is verified offline against two inputs the
 verifier supplies itself, the expected identity key and a trusted witness
-directory, and yields one of four verdicts (exit code in parentheses):
-`WITNESSED` (0), `CONSISTENT-UNWITNESSED` (10), `UNANCHORED` (20),
-`DIVERGED` (30). `WITNESSED` requires valid cosignatures from at least two
-distinct `operator_org` values in the verifier's directory. A leaf's
+directory, and yields one of five verdicts (exit code in parentheses):
+`WITNESSED` (0, or 11 when the cosigners are not a strict majority of the
+directory), `CONSISTENT-UNWITNESSED` (10), `UNANCHORED` (20), `DIVERGED`
+(30: valid, but contradicts a head or an equivocation proof the verifier
+supplied), `INVALID` (40: a check failed). `WITNESSED` requires valid
+cosignatures from at least two distinct `operator_org` values in the
+verifier's directory. Since 0.5.0 (RFC-0002) the verifier can also be
+given heads it already trusts (`--known-head`) and witness equivocation
+proofs (`--evidence`); before 0.5.0 every failed check was `DIVERGED`. A leaf's
 payload is committed as `SHA256(bucket_pad(payload) || salt || index)`
 with the salt outside the tree, so deleting the salt erases the content
 without changing any hash.
@@ -56,7 +61,11 @@ There is no `unsafe` in either crate. The core crate denies
 Questions we most want answered:
 
 1. Can any dossier the identity key did not produce verify as anything
-   other than `DIVERGED` when `--identity` is pinned? (`Dossier::verify`)
+   other than `INVALID` when `--identity` is pinned? (`Dossier::verify`)
+   Conversely, can an equivocation proof not signed by the identity's key
+   (a stranger's key under its canonical origin, a proof about another
+   identity) make a valid dossier `DIVERGED`? (`ctx.evidence`,
+   `EquivocationProof::verify`; corpus vector 13 has both cases)
 2. Can `WITNESSED` be reached without cosignatures from two distinct
    operators **in the verifier's directory** (dossier-supplied directories,
    duplicate keys, case/whitespace variants of `operator_org`, project-run
@@ -113,7 +122,7 @@ CHANGELOG entry gives the detail.
 | 0.3.2 | Redaction after restart impossible; `evidence_window(0..u64::MAX)` hang; journal accepted unreplayable leaves; empty payloads unsalted | high | Salts sidecar, bounded windows, pre-append size checks, §8 empty-payload rule |
 | 0.3.4 | Verifier hang on `tree_size > 2^63` | high | Bit arithmetic in `largest_power_of_two_lt_u64`; test at `u64::MAX` |
 | 0.3.4 | Anchor proof JSON not bound to its committed hash | medium | `AnchorProofMismatch`; http(s) URLs only |
-| 0.3.4 | Split views under a sub-majority gate reached WITNESSED silently | medium | `split_view_resistant` in the report; CLI warnings |
+| 0.3.4 | Split views under a sub-majority gate reached WITNESSED silently | medium | `split_view_resistant` in the report; CLI warnings; since 0.5.0 `split_view_unsafe` and exit 11 by default |
 | unreleased | Non-http anchor URL and non-key counterparties committed by the writer, making a log permanently DIVERGED or unbindable; expired TTL sessions kept writing | medium | Refused before the leaf exists; session rotation; `tests/fresh_eyes_regressions.rs` |
 
 ## 4. How to run everything
@@ -133,6 +142,11 @@ PROPTEST_CASES=2000 cargo test -p witness-log-core --test merkle_properties --re
 # CLI against it (a second implementation would run `conform` on its own vectors)
 cargo run -p witness-log-core --example generate_corpus && git diff --exit-code corpus/
 cargo run -p witness-log-cli -- conform corpus --reference corpus
+
+# Verification vector 13 (verdicts, exit codes and report fields for 20
+# cases; not part of `conform`, which compares encoding vectors 01-12)
+cargo run -p witness-log-network --example generate_verdict_corpus && git diff --exit-code corpus/13_verdicts.json
+cargo test -p witness-log-network --test corpus_13_verdicts
 
 # Live protocol runs over real sockets
 cargo build --release -p witness-log-cli

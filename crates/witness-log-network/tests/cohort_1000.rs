@@ -430,6 +430,8 @@ fn cohort_of_1000_under_realistic_conditions() {
             trusted_directory: Some(&directory),
             min_receipts: None,
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         };
         let r = dossier.verify(0.0, &ctx);
         *verdicts.entry(r.verdict.to_string()).or_default() += 1;
@@ -498,8 +500,8 @@ fn cohort_of_1000_under_realistic_conditions() {
         };
         let r = dossier.verify(0.0, &VerifyContext::default());
         f4.check(
-            r.verdict != Verdict::Diverged,
-            format!("clock skew of {skew_ms}ms was treated as tampering (Diverged)"),
+            r.verdict != Verdict::Invalid,
+            format!("clock skew of {skew_ms}ms was treated as tampering (Invalid)"),
         );
     }
     total += f4.report("Phase 4 — clock skew tolerance");
@@ -554,6 +556,8 @@ fn cohort_of_1000_under_realistic_conditions() {
             trusted_directory: Some(&directory),
             min_receipts: None,
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         };
         let r = dossier.verify(0.0, &ctx);
         f5.check(

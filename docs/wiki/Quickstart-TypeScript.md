@@ -134,8 +134,12 @@ and diversity, written from the spec and checked against `/corpus`.
 `verifyDossierNative` is the Rust reference verifier, the same code
 `witness-log verify` runs. Two independent implementations agreeing on
 your dossier is worth more than one; a disagreement is a bug, report it.
-Both return `verdict`, `exitCode` (0/10/20/30, the CLI's contract), `ok`,
-`failures` and `report` (what `witness-log verify --json` prints).
+Both return `verdict`, `exitCode` (0/11/10/20/30/40, the CLI's contract),
+`ok` (WITNESSED with exit 0), `splitViewUnsafe`, `failures` (why INVALID),
+`contradictions` (why DIVERGED) and `report` (what `witness-log verify
+--json` prints). Both take `knownHeads` (`"<size>:<root hex>"` heads you
+kept earlier), `evidence` (witness equivocation proofs) and
+`allowSubMajority` besides `identity`, `directory` and the gates.
 
 `UNANCHORED` means: internally consistent (every leaf reproduces the signed
 root, the signature verifies under the identity, each session key traces to
@@ -145,7 +149,7 @@ That is the ceiling for a dossier on its own; §5 raises it. Try it:
 ```ts
 const t = structuredClone(dossier);
 t.leaves[1].payload_hash = "00".repeat(32);
-console.log(verifyDossier(t).verdict, verifyDossier(t).failures);   // DIVERGED [ 'leaves do not reproduce the signed root' ]
+console.log(verifyDossier(t).verdict, verifyDossier(t).failures);   // INVALID [ 'the leaves do not reproduce the signed root' ]
 ```
 
 ---
@@ -156,7 +160,7 @@ console.log(verifyDossier(t).verdict, verifyDossier(t).failures);   // DIVERGED 
 const d = log.disclose(1);        // { payloadHash, salt, payload, verified: true }: prove what leaf 1 said
 log.forget(1);                    // salt erased from agent.jsonl.salts, payload from .payloads; a 0x03 leaf is appended
 log.disclose(1);                  // { payloadHash, salt: null, payload: null, verified: false }
-verifyDossier(log.exportDossier()).verdict;   // still UNANCHORED, not DIVERGED
+verifyDossier(log.exportDossier()).verdict;   // still UNANCHORED, not INVALID
 ```
 
 The leaf's `payload_hash` is unchanged, so every proof and every checkpoint

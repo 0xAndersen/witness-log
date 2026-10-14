@@ -21,18 +21,29 @@ never parses output.
 
 | code | meaning | produced by |
 |---|---|---|
-| `0` | WITNESSED (verify); success (everything else) | all commands |
-| `10` | CONSISTENT-UNWITNESSED: cryptography sound, witness coverage below the gate or from fewer than two independent operators | `verify`, `submit --allow-partial` |
-| `11` | `verify --strict` only: anything weaker than WITNESSED by a strict majority of the directory | `verify --strict` |
+| `0` | WITNESSED, cosigned by a strict majority of the trusted directory, or accepted under `--allow-sub-majority` / `--no-strict` (verify); success (everything else) | all commands |
+| `10` | CONSISTENT-UNWITNESSED: cryptography sound, witness coverage below the gate or from fewer than two independent operators (verify); nothing to bind (`bind`) | `verify`, `submit --allow-partial`, `bind` |
+| `11` | WITNESSED, but the cosigning witnesses are not a strict majority of the trusted directory: a conflicting history could have been cosigned by the rest (split view). The default since 0.5.0; `--allow-sub-majority` accepts it as 0; `--no-strict` restores the 0.4 behaviour (no 11) for one release | `verify` |
 | `20` | UNANCHORED: internally consistent, no trusted directory supplied (verify); a witness refused the history with 422, or fewer than `--min` cosigned (submit) | `verify`, `submit` |
-| `30` | DIVERGED: a check failed (verify); the notes do not prove equivocation (`verify-evidence`); mismatch (`bind`); a supplied key did not verify or none did (`c2sp verify`); nothing to export (`c2sp export`) | `verify`, `diff`, `bind`, `c2sp verify`, `c2sp export`, `witness verify-evidence` |
+| `30` | DIVERGED: the dossier is valid but contradicts a `--known-head` its leaves do not reproduce, or an `--evidence` equivocation proof that verifies for this identity (verify); two valid, conflicting copies of one log (`diff`); mismatch (`bind`) | `verify`, `diff`, `bind` |
+| `40` | INVALID: a check failed: checkpoint signature, identity (including a wrong `--identity`), leaf structure, key bindings or revocations, or Merkle continuity, as for tampered, reordered, dropped or appended leaves (verify); either copy is invalid or tampered (`diff`); a supplied key did not verify or none did (`c2sp verify`); nothing to export (`c2sp export`); the file does not prove equivocation (`witness verify-evidence`) | `verify`, `diff`, `c2sp verify`, `c2sp export`, `witness verify-evidence`, `submit --allow-partial` |
 | `2` | usage error: unknown flag, missing argument, unreadable or unparseable input | all commands |
 | `1` | the operation itself failed: a file could not be written, a journal is locked, a witness would not start, a lock is held | `log`, `witness init/serve/add-log/info`, `testnet`, `directory` |
 
-Codes 10/20/30 are spaced so `-ge 20` means "do not trust this" without
-reading text. `2` is kept for usage so a typo is never mistaken for a
-verdict. `11` exists only under `--strict`; without that flag `verify`'s
-codes are unchanged from every earlier release.
+Codes 10/20/30/40 are spaced so `-ge 20` means "do not trust this"
+without reading text. 30 and 40 are different facts: 40 is a failed check
+(the file is not valid evidence about the identity); 30 is a valid file
+that contradicts other evidence about the same identity (the identity has
+signed two histories). A script that read 30 as "tampered" before 0.5.0
+should read `-ge 30` as "do not trust this" now. `2` is kept for usage so
+a typo is never mistaken for a verdict.
+
+Before 0.5.0 every failed check exited 30, and `11` was reachable only
+with `verify --strict`. Since 0.5.0 strict is the default: a script that
+gates on `== 0` also rejects a sub-majority WITNESSED (11) unless it
+passes `--allow-sub-majority`. `--no-strict` restores the 0.4 reading
+of a sub-majority WITNESSED (exit 0) for one release; it does not turn
+40 back into 30. `--strict` is still accepted and does nothing.
 
 ---
 
@@ -40,25 +51,42 @@ codes are unchanged from every earlier release.
 
 ```
 witness-log verify <dossier.json> [--identity <hex>] [--directory <trusted.json>]
-                   [--threshold 0.0-1.0 | --min-witnesses N] [--strict] [--json] [--explain]
+                   [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
+                   [--revocations <path>] [--known-head <size>:<root hex>] [--evidence <file>]
+                   [--json] [--explain]
 ```
 
 Offline. Checks the checkpoint signature, identity binding, leaf
-structure, key bindings, Merkle continuity, and, when `--directory` is
-given, witness receipts against *that* directory (never the dossier's
-own).
+structure, key bindings and revocations, Merkle continuity, and, when
+`--directory` is given, witness receipts against *that* directory (never
+the dossier's own). Any failed check is INVALID (40). A valid dossier that
+contradicts a `--known-head` or an `--evidence` proof is DIVERGED (30);
+INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 
 | flag | effect |
 |---|---|
 | `--identity <hex>` | the identity you expect, from outside the file; without it the verdict says nothing about *whose* log this is |
 | `--directory <path>` | the directory you trust, `{"witnesses":[...]}` or a bare array; without it the best verdict is UNANCHORED |
 | `--threshold f` | count gate as a fraction of the directory (default 0.66) |
-| `--min-witnesses N` | count gate as an absolute number; use for large directories |
-| `--strict` | exit 11 unless WITNESSED **and** the cosigning witnesses are a strict majority of the directory (`split_view_resistant`) |
-| `--json` | one JSON object: `verdict`, `report`, `strict`, the inputs used |
+| `--min-witnesses N` | count gate as an absolute number; use for large directories. A gate at or below half the directory is allowed; a WITNESSED result that is not a strict majority exits 11 |
+| `--allow-sub-majority` | accept WITNESSED from fewer than a strict majority of the directory as exit 0 (the split-view warning is still printed) |
+| `--no-strict` | the 0.4 reading: no exit 11, a sub-majority WITNESSED exits 0. Kept for one release; INVALID still exits 40 |
+| `--strict` | accepted for 0.4 scripts; strict has been the default since 0.5.0, so it does nothing |
+| `--revocations <path>` | revocations you know of (one statement or an array); applied whether or not the dossier carries them |
+| `--known-head <size>:<root hex>` | a head you already trust for this identity (a checkpoint you kept, a cosignature you saw). If the dossier's first `<size>` leaves give a different root: DIVERGED. A head larger than the dossier cannot be checked and is listed in `report.known_heads_unchecked`, not an error. Repeatable |
+| `--evidence <file>` | a witness equivocation proof, as `witness serve` writes it under `evidence/` (`{"kind":"equivocation","proof":{...}}`) or a bare proof. If it verifies under the key named by the canonical origin `witness-log/<identity hex>` (the proof's own `log_vkey` must be that key), the identity signed two roots for one size: DIVERGED. A proof for another identity or signed by another key is ignored. Repeatable |
+| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `report`, the inputs used |
 | `--explain` | one line under each check: what it proves and does not |
 
-Exit: 0 / 10 / 20 / 30, or 11 with `--strict`; 2 usage.
+The `--json` `report` carries every check, `quorum`, `internally_consistent`,
+`verdict` (`"witnessed"`, `"consistent_unwitnessed"`, `"unanchored"`,
+`"diverged"`, `"invalid"`), `split_view_unsafe`, `failures` (why INVALID;
+empty otherwise), `contradictions` (why DIVERGED; empty otherwise) and
+`known_heads_unchecked`. The wording of `failures` and `contradictions`
+is not part of the contract; their being empty or not is.
+
+Exit: 0 / 10 / 11 / 20 / 30 / 40; 2 usage or unreadable input (including
+an unreadable `--evidence` file or a malformed `--known-head`).
 
 ## explain
 
@@ -76,8 +104,11 @@ witness-log diff <a.json> <b.json>
 ```
 
 Two dossiers of one identity: honest growth (one is a prefix of the
-other), equivocation (two histories under one key), or tampering. Exit 0
-consistent, 30 diverged, 2 usage or different identities.
+other), equivocation (two valid histories under one key), or tampering.
+Exit 0 consistent, 30 equivocation (both copies valid, histories
+conflict), 40 either copy invalid or tampered (any difference is then
+explained by the tampering, not by equivocation), 2 usage or different
+identities.
 
 ## bind
 
@@ -221,7 +252,8 @@ Fail-closed:
 - Fewer than `--min` cosignatures: exit 20.
 - `--allow-partial`: instead of the two rules above, verify the dossier
   just written against the directory with the count gate at `--min` and
-  exit by that verdict (0 / 10 / 20 / 30).
+  exit by that verdict (0 / 10 / 20 / 40; the split-view exit 11 does not
+  apply here).
 
 The verdict against the directory is printed on stderr either way.
 
@@ -288,7 +320,7 @@ witness-log witness serve <dir> [--listen 127.0.0.1:7380] [--open-enrollment] [-
 witness-log witness add-log <dir> <origin> <log-vkey>
 witness-log witness info <http://witness-url>
 witness-log witness submit <journal> --directory <trusted.json> [--out dossier.json] [--state F] [--min N] [--allow-partial] [--identity-seed-env NAME | --identity-seed-file F]
-witness-log witness verify-evidence <evidence.json>
+witness-log witness verify-evidence <evidence.json> [--vkey <log vkey>]
 ```
 
 `init` creates a key (0600) and state directory and prints the directory
@@ -297,7 +329,10 @@ entry; `--json` prints one object instead (`identity`, `vkey`, `org`,
 runs a `c2sp.org/tlog-witness` witness: persists every cosigned head
 before replying, refuses forks with 422, records proven equivocation
 under `evidence/`. `submit` is documented above. `verify-evidence` checks
-an equivocation file independently: exit 0 proven, 30 not, 2 unreadable.
+an equivocation file independently, under the key named by its canonical
+origin or the `--vkey` you supply, never the key inside the file: exit 0
+PROVEN, 40 NOT PROVEN, 2 unreadable. `verify --evidence` applies the same
+file to a dossier.
 
 ## c2sp
 
@@ -313,8 +348,9 @@ origin with every C2SP cosignature in the dossier attached; the witness
 key names come from `--directory` or from the receipts' `witness_name`;
 `--sign-with` adds the log's own signature. `verify` checks a note
 against the keys you supply: exit 0 when every supplied key that matches
-a line verifies and at least one does; 30 when a supplied key fails or
-none verified; 2 usage.
+a line verifies and at least one does; 40 (REJECTED) when a supplied key
+fails or none verified; 2 usage. `export` exits 40 when there is nothing
+to export (no usable cosignature and no `--sign-with`).
 
 ## conform
 
@@ -322,8 +358,11 @@ none verified; 2 usage.
 witness-log conform <candidate-corpus-dir> [--reference <corpus-dir>]
 ```
 
-Compares another implementation's vectors against the reference corpus.
-Exit 0 conformant, 1 not, 2 unreadable reference.
+Compares another implementation's vectors against the reference corpus:
+the encoding vectors `01` to `12`. The verification vector
+`13_verdicts.json` (whole dossiers and the verdict, exit code and report
+fields each case must produce) is not compared here; a verifier runs it in
+its own tests. Exit 0 conformant, 1 not, 2 unreadable reference.
 
 ## demo
 
@@ -331,8 +370,8 @@ Exit 0 conformant, 1 not, 2 unreadable reference.
 witness-log demo [--tamper]
 ```
 
-The worked example; writes nothing, needs no network. Exit 0, or 30 for
-the forgery in `--tamper`.
+The worked example; writes nothing, needs no network. Exit 0, or 40
+(INVALID) for the forgery in `--tamper`.
 
 ---
 

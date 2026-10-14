@@ -56,6 +56,16 @@ dossiers, witness state and evidence files for inspection;
    **exit 10, CONSISTENT-UNWITNESSED** (no receipts). Pasting the honest
    dossier's receipts into it changes nothing (receipts sign the honest
    root; 0 of 2 count). The honest dossier still verifies WITNESSED.
+9. **A verifier that already holds something** (0.5.0). One copy is
+   enough when the verifier kept the honest head from earlier:
+   `witness-log verify rewritten.json --identity <key> --known-head
+   4:<honest root>` is **exit 30, DIVERGED**: the rewritten dossier is
+   internally valid, but its four leaves do not reproduce the head the
+   verifier saw. And with a witness's evidence file in hand, `witness-log
+   verify honest.json --identity <key> --directory trusted.json --evidence
+   witness-a/evidence/<file>.json` is **exit 30, DIVERGED** for the honest
+   copy too: the identity provably signed two histories, so neither copy
+   is WITNESSED any more.
 
 What varies between runs: ports, witness keys, roots and leaf hashes (every
 payload is salted with 32 fresh random bytes; that is what makes erasure
@@ -64,7 +74,9 @@ status, every exit code and every verdict.
 
 ## Sample output
 
-A real run against the published v0.3.5 CLI and wheel:
+A real run against the published v0.3.5 CLI and wheel. It predates step
+9, which needs a 0.5.0 CLI; with an older one that step fails on the
+unknown flags.
 
 <details><summary>full output</summary>
 
@@ -177,7 +189,8 @@ Does not show:
 - **Split views.** A log that shows history A to one set of witnesses and
   history B to a disjoint set never meets a witness that saw both. Only a
   majority gate (`2 × receipts > directory`, the default `--threshold
-  0.66`) rules that out; see `THREAT_MODEL.md`.
+  0.66`) rules that out; since 0.5.0 `verify` exits 11 for a WITNESSED
+  dossier whose cosigners are not a majority. See `THREAT_MODEL.md`.
 - **A rewrite before the first cosignature.** Witnesses remember heads they
   cosigned. Anything rewritten before any witness saw it is just a log.
 - **Growing forks.** A rewritten history submitted at a *larger* size (with

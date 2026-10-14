@@ -23,8 +23,8 @@ test("append -> export -> verify, and tampering is caught", async () => {
 
   const tampered = structuredClone(dossier);
   tampered.leaves[1].payload_hash = "00".repeat(32);
-  assert.equal(verifyDossier(tampered).verdict, "DIVERGED");
-  assert.equal(verifyDossierNative(tampered).verdict, "DIVERGED");
+  assert.equal(verifyDossier(tampered).verdict, "INVALID");
+  assert.equal(verifyDossierNative(tampered).verdict, "INVALID");
 
   // Prove what leaf 0 said, then forget it; the dossier still verifies.
   const d = log.disclose(0);

@@ -31,6 +31,9 @@ export {
   verifyRevocation,
   revocationMessage,
   revocationCutOff,
+  verifyEquivocationProof,
+  parseKnownHead,
+  EXIT_SPLIT_VIEW_UNSAFE,
   evaluateQuorum,
   validateLeaf,
   validateLeaves,
@@ -58,4 +61,6 @@ export {
   type DossierReport,
   type VerifyDossierOptions,
   type DossierVerification,
+  type KnownHead,
+  type EquivocationProof,
 } from "./verify.js";

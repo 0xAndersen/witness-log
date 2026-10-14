@@ -197,6 +197,8 @@ fn hundred_witness_sybil_fleet_collapses_to_one_operator() {
         trusted_directory: Some(&directory),
         min_receipts: None,
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let report = dossier.verify(0.0, &ctx);
     assert_eq!(

@@ -682,8 +682,8 @@ pub struct Dossier {
     /// Use `WitnessLog::all_bindings()` to populate this, NOT
     /// `current_binding()`. A log that has restarted holds leaves
     /// authored by session keys that no longer exist, and supplying only
-    /// the current session'''s binding leaves those leaves uncovered —
-    /// verification then reports `Diverged` ("evidence of tampering")
+    /// the current session's binding leaves those leaves uncovered —
+    /// verification then reports `Invalid` (`Diverged` before 0.5.0)
     /// for an agent that merely rebooted. Binding history is persisted
     /// across snapshots and journal replays for exactly this reason.
     #[serde(default)]
@@ -693,9 +693,10 @@ pub struct Dossier {
     pub revocations: Vec<RevocationStatement>,
 }
 
-/// Four-valued verification verdict, adopted from the 1F916 Agent Record
-/// draft §3.6 "Anchor Rule". These are not a spectrum — `unanchored` is not
-/// "almost verified." They answer fundamentally different questions:
+/// Five-valued verification verdict (the four of the 1F916 Agent Record
+/// draft §3.6 "Anchor Rule", with DIVERGED split per RFC-0002). These are
+/// not a spectrum — `unanchored` is not "almost verified." They answer
+/// fundamentally different questions:
 ///
 /// - `Witnessed`: strongest. Requires a `VerifyContext` with BOTH
 ///   `trusted_directory` supplied (never the dossier's own embedded
@@ -721,11 +722,20 @@ pub struct Dossier {
 ///   defect where a wholly fabricated dossier previously reached
 ///   `Witnessed` by shipping its own directory alongside its own receipts
 ///   — see the pre-launch review, finding 02.
-/// - `Diverged`: any proof fails, any signature check fails, the leaf
-///   sequence fails structural validation, or the dossier's claimed
-///   identity doesn't match the key that actually signed the checkpoint
-///   (either the dossier's own internal claim, or the caller's pinned
-///   expectation — see finding 01).
+/// - `Diverged` (since 0.5.0, narrowed): the dossier is internally valid
+///   AND contradicts other evidence the verifier was given about the same
+///   identity: a head the verifier already trusted
+///   (`VerifyContext::known_heads`) that this dossier's leaves do not
+///   reproduce, or a witness's equivocation proof for this identity
+///   (`VerifyContext::evidence`). Divergence is a relation between two
+///   histories; one file on its own cannot be DIVERGED.
+/// - `Invalid` (since 0.5.0): any proof fails, any signature check fails,
+///   the leaf sequence fails structural validation, a key binding or
+///   revocation fails, or the dossier's claimed identity doesn't match
+///   the key that actually signed the checkpoint (either the dossier's own
+///   internal claim, or the caller's pinned expectation — see finding 01).
+///   The file establishes nothing about the identity. Before 0.5.0 this
+///   was reported as `Diverged`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
@@ -733,6 +743,7 @@ pub enum Verdict {
     ConsistentUnwitnessed,
     Unanchored,
     Diverged,
+    Invalid,
 }
 
 impl std::fmt::Display for Verdict {
@@ -742,6 +753,7 @@ impl std::fmt::Display for Verdict {
             Self::ConsistentUnwitnessed => write!(f, "CONSISTENT-UNWITNESSED"),
             Self::Unanchored => write!(f, "UNANCHORED"),
             Self::Diverged => write!(f, "DIVERGED"),
+            Self::Invalid => write!(f, "INVALID"),
         }
     }
 }
@@ -803,6 +815,46 @@ pub struct VerifyContext<'a> {
     /// checkpoint the revoked key signed after `as_of_ms`. Statements
     /// for other identities are ignored. Review round 2, W2.
     pub revocations: &'a [RevocationStatement],
+    /// Heads the verifier already trusts for this identity (a receipt it
+    /// kept, a cosignature it saw): `(tree_size, root)`. A dossier whose
+    /// leaves do not reproduce one of these roots at that size is
+    /// `Diverged`. A head larger than the dossier cannot be checked
+    /// against it and is listed in `DossierReport::known_heads_unchecked`.
+    /// RFC-0002.
+    pub known_heads: &'a [KnownHead],
+    /// Witness equivocation proofs the verifier holds. One that names this
+    /// identity's canonical origin and verifies under the key that origin
+    /// names makes the verdict `Diverged`, whatever the dossier says.
+    /// RFC-0002.
+    pub evidence: &'a [tlog_witness::EquivocationProof],
+}
+
+/// A head a verifier already trusts for an identity: `--known-head
+/// <size>:<root hex>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownHead {
+    pub tree_size: u64,
+    pub root_hash: [u8; 32],
+}
+
+impl std::str::FromStr for KnownHead {
+    type Err = String;
+    /// `<size>:<64 hex>`.
+    fn from_str(s: &str) -> Result<Self, String> {
+        let (size, root) = s
+            .split_once(':')
+            .ok_or_else(|| format!("expected <size>:<root hex>, got {s:?}"))?;
+        let tree_size = witness_log_core::c2sp::parse_canonical_u64(size.trim())
+            .ok_or_else(|| format!("size {size:?} is not a canonical decimal integer"))?;
+        let root_hash: [u8; 32] = hex::decode(root.trim())
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| format!("root {root:?} is not 32 bytes of hex"))?;
+        Ok(Self {
+            tree_size,
+            root_hash,
+        })
+    }
 }
 
 /// Everything `witness-log verify` reports, structured rather than printed —
@@ -842,7 +894,21 @@ pub struct DossierReport {
     /// it next to the verdict (SPEC.md §9.2).
     pub internally_consistent: bool,
     pub quorum: Option<QuorumResult>,
-    /// Four-valued verdict. See `Verdict` for what each value means and
+    /// True when the verdict is `Witnessed` but the cosigning witnesses
+    /// are not a strict majority of the trusted directory, so a second,
+    /// conflicting history could have been cosigned by the rest
+    /// (RFC-0002). `witness-log verify` exits 11 for this by default.
+    pub split_view_unsafe: bool,
+    /// Why the verdict is `Invalid`, one entry per failed check; empty
+    /// otherwise.
+    pub failures: Vec<String>,
+    /// Why the verdict is `Diverged`: each known head or evidence file
+    /// this dossier contradicts. Empty otherwise.
+    pub contradictions: Vec<String>,
+    /// Known heads larger than this dossier, which it cannot be checked
+    /// against (`"<size>:<root>"`).
+    pub known_heads_unchecked: Vec<String>,
+    /// Five-valued verdict. See `Verdict` for what each value means and
     /// doesn't mean. Callers MUST use this field, not try to reconstruct
     /// a verdict from the individual boolean fields.
     pub verdict: Verdict,
@@ -1090,14 +1156,89 @@ impl Dossier {
             _ => None,
         };
 
-        // Compute the four-valued verdict. See Verdict's doc comment.
-        let verdict = if !checkpoint_signature_valid
-            || !identity_bound
-            || !leaves_structurally_valid
-            || !bindings_valid
-            || !merkle_continuity_valid
-        {
-            // Any cryptographic, identity, structural, or binding failure -> Diverged.
+        // Why the file is not valid evidence, one entry per failed check.
+        let mut failures = Vec::new();
+        if !checkpoint_signature_valid {
+            failures.push("checkpoint signature does not verify".to_string());
+        }
+        if !self_consistent_identity {
+            failures.push(
+                "identity_pubkey does not match the key that signed the checkpoint".to_string(),
+            );
+        } else if !identity_bound {
+            failures.push("the checkpoint is not signed by the identity you expected".to_string());
+        }
+        if let Err(e) = witness_log_core::leaf::validate_sequence(&self.leaves) {
+            failures.push(format!("leaf structure: {e}"));
+        }
+        if !bindings_valid {
+            failures.push(
+                "key bindings or revocations: a leaf's session key has no valid binding from \
+                 this identity, falls outside its binding's window, or the leaf or checkpoint is \
+                 past a revocation"
+                    .to_string(),
+            );
+        }
+        if !size_matches {
+            failures.push(format!(
+                "{} leaves but the checkpoint claims tree_size {}",
+                tree.size(),
+                self.checkpoint.tree_size
+            ));
+        } else if !merkle_continuity_valid {
+            failures.push("the leaves do not reproduce the signed root".to_string());
+        }
+
+        // Contradictions with evidence the verifier brought (RFC-0002).
+        // Only meaningful for a valid file: an invalid one is INVALID
+        // whatever else is true.
+        let mut contradictions = Vec::new();
+        let mut known_heads_unchecked = Vec::new();
+        if failures.is_empty() {
+            for kh in ctx.known_heads {
+                if kh.tree_size > tree.size() {
+                    known_heads_unchecked.push(format!(
+                        "{}:{}",
+                        kh.tree_size,
+                        hex::encode(kh.root_hash)
+                    ));
+                    continue;
+                }
+                let mut prefix = MerkleTree::new();
+                for l in self.leaves.iter().take(kh.tree_size as usize) {
+                    prefix.append(leaf_hash(&l.canonical_bytes()));
+                }
+                if prefix.root() != kh.root_hash {
+                    contradictions.push(format!(
+                        "known head {}:{} is not what this dossier's first {} leaves produce ({})",
+                        kh.tree_size,
+                        hex::encode(kh.root_hash),
+                        kh.tree_size,
+                        hex::encode(prefix.root())
+                    ));
+                }
+            }
+            let origin = hex::decode(&self.identity_pubkey)
+                .ok()
+                .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                .and_then(|b| ed25519_dalek::VerifyingKey::from_bytes(&b).ok())
+                .map(|k| witness_log_core::c2sp::canonical_origin(&k));
+            for proof in ctx.evidence {
+                if Some(&proof.origin) == origin.as_ref() && proof.verify() {
+                    contradictions.push(format!(
+                        "witness evidence: this identity signed two different roots for one tree \
+                         size ({})",
+                        proof.origin
+                    ));
+                }
+            }
+        }
+
+        // Compute the five-valued verdict. See Verdict's doc comment.
+        let verdict = if !failures.is_empty() {
+            // Any cryptographic, identity, structural, or binding failure.
+            Verdict::Invalid
+        } else if !contradictions.is_empty() {
             Verdict::Diverged
         } else if !externally_anchored {
             // No external trust input supplied at all. Everything checks
@@ -1151,6 +1292,8 @@ impl Dossier {
             && leaves_structurally_valid
             && bindings_valid
             && merkle_continuity_valid;
+        let split_view_unsafe = verdict == Verdict::Witnessed
+            && !quorum.as_ref().is_some_and(|q| q.split_view_resistant);
         DossierReport {
             checkpoint_signature_valid,
             identity_bound,
@@ -1164,6 +1307,10 @@ impl Dossier {
             identity_pinned: ctx.expected_identity_pubkey.is_some(),
             internally_consistent,
             quorum,
+            split_view_unsafe,
+            failures,
+            contradictions,
+            known_heads_unchecked,
             verdict,
         }
     }
@@ -1526,7 +1673,7 @@ impl WitnessPolicy {
     ) -> Result<(), String> {
         // Verdict gate first — most discriminating, cheapest check.
         let verdict_order = |v: &Verdict| match v {
-            Verdict::Diverged => 0,
+            Verdict::Invalid | Verdict::Diverged => 0,
             Verdict::Unanchored => 1,
             Verdict::ConsistentUnwitnessed => 2,
             Verdict::Witnessed => 3,
@@ -1659,6 +1806,10 @@ mod policy_tests {
             identity_pinned: true,
             internally_consistent: true,
             quorum,
+            split_view_unsafe: false,
+            failures: Vec::new(),
+            contradictions: Vec::new(),
+            known_heads_unchecked: Vec::new(),
             verdict,
         }
     }
@@ -2437,6 +2588,8 @@ mod registry_scale_tests {
                 trusted_directory: Some(&d),
                 min_receipts: None,
                 revocations: &[],
+                known_heads: &[],
+                evidence: &[],
             },
         );
         assert_eq!(
@@ -2455,6 +2608,8 @@ mod registry_scale_tests {
                 trusted_directory: Some(&d),
                 min_receipts: Some(4),
                 revocations: &[],
+                known_heads: &[],
+                evidence: &[],
             },
         );
         assert_eq!(absolute.verdict, Verdict::Witnessed);
@@ -2466,6 +2621,8 @@ mod registry_scale_tests {
                 trusted_directory: Some(&d),
                 min_receipts: Some(9),
                 revocations: &[],
+                known_heads: &[],
+                evidence: &[],
             },
         );
         assert_eq!(

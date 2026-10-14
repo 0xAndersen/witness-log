@@ -384,6 +384,8 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             trusted_directory: Some(&directory),
             min_receipts: None,
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         };
         let r = dossier.verify(0.03, &ctx);
         f4.check(
@@ -473,8 +475,8 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
         };
         let r = d.verify(0.03, &VerifyContext::default());
         f5.check(
-            r.verdict == Verdict::Diverged,
-            format!("impersonation produced {:?}, expected Diverged", r.verdict),
+            r.verdict == Verdict::Invalid,
+            format!("impersonation produced {:?}, expected Invalid", r.verdict),
         );
         f5.check(
             !r.identity_bound,
@@ -766,6 +768,8 @@ fn witnessed_verdict_does_not_degrade_as_the_directory_grows() {
             trusted_directory: Some(&directory),
             min_receipts: None,
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         };
         // Threshold scaled to the directory: 3 of N by count. The point
         // is the OPERATOR-INDEPENDENCE gate, which must not care about N.

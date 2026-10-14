@@ -205,7 +205,7 @@ Now see the other verdicts with the same file:
 
 ```sh
 witness-log verify dossier.json; echo $?                                   # 20 UNANCHORED: no directory, nothing external checked
-witness-log verify dossier.json --identity 00…00 --directory trusted.json  # 30 DIVERGED: not the identity you expected
+witness-log verify dossier.json --identity 00…00 --directory trusted.json  # 40 INVALID: not the identity you expected
 ```
 
 ## Step 6: the counterparty tries to catch you cheating
@@ -218,7 +218,7 @@ python3 -c "
 import json; d=json.load(open('dossier.json')); h=d['leaves'][3]['payload_hash']
 d['leaves'][3]['payload_hash']=('0' if h[0]!='0' else '1')+h[1:]; json.dump(d,open('edited.json','w'))"
 witness-log verify edited.json --identity f7809c16…0506b3be --directory trusted.json; echo $?
-# ✗ Merkle continuity ... Verdict: DIVERGED, exit 30
+# ✗ Merkle continuity ... Verdict: INVALID, exit 40
 ```
 
 Suppose instead *you* try to rewrite history: restore `payments.jsonl` from

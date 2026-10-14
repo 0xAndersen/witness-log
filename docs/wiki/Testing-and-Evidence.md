@@ -11,7 +11,7 @@ the large runs are committed under `examples/swarm/reports/`.
 | framework adapters | LangChain, OpenAI Agents SDK and CrewAI tool-calling loops with fake models, dossier verified (`integrations` job, non-gating; skipped where the framework is not installed) | 3 tests |
 | TypeScript client | `@witness-log/client` against the built CLI, the MCP server and two CLI witnesses (`npm.yml`) | 10 tests |
 | overhead budget | append in memory and journaled, verify of 10k leaves, Python `@step`; fails on a >20% regression of the normalised median (`bench.yml`) | 5 metrics |
-| conformance | corpus regenerated and diffed against the committed vectors | 11 vectors |
+| conformance | corpus regenerated and diffed against the committed vectors; the verification vector run by the Rust, Go, TypeScript, Node and wasm verifiers | 12 encoding vectors; vector 13, 20 verdict cases |
 | supply chain | cargo-deny (advisories, licenses) on both workspaces; rustdoc with warnings denied; clippy with warnings denied | |
 | fuzzing | cargo-fuzz targets for proofs, dossiers, journals, CLI rendering, witness requests | nightly, 30 min per target (`fuzz.yml`) |
 | live network | 10 witnesses (8 Rust, 2 Python) through forks, crashes, hostile HTTP, 50 concurrent agents, Byzantine witnesses, offline audit | 10 scenarios |

@@ -10,7 +10,7 @@ steps below have been taken, and the spec is the only normative text.
 | RFC | title | status | what it would change |
 |---|---|---|---|
 | [RFC-0001](RFC-0001-fleet-checkpoint-log.md) | Fleet checkpoint log: one C2SP log per organisation | Draft | dossier gains an optional field; no leaf, STH or receipt change |
-| [RFC-0002](RFC-0002-verdict-strictness-and-INVALID.md) | Verdict strictness and an INVALID verdict | Draft | verdict set and exit codes; no wire change |
+| [RFC-0002](RFC-0002-verdict-strictness-and-INVALID.md) | Verdict strictness and an INVALID verdict | Implemented (0.5.0) | verdict set and exit codes (strict by default, exit 11; INVALID, exit 40; DIVERGED narrowed); corpus vector 13; no wire change |
 | [RFC-0003](RFC-0003-dns-txt-self-registration.md) | DNS TXT self-registration of witnesses | Draft | registry process; no wire change |
 | [RFC-0004](RFC-0004-scitt-receipts.md) | SCITT (RFC 9942) receipts for leaves | Draft | a second signing context for the identity key; new optional artefact |
 | [RFC-0005](RFC-0005-index-based-revocation.md) | Index-based revocation cut-off witnesses can pin | Implemented, experimental (0.4.3) | v2 revocation message with a presence-byte field; new witness endpoint |

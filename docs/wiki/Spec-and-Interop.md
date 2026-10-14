@@ -1,9 +1,13 @@
 # Specification and interoperability
 
-`spec/SPEC.md` is normative. `corpus/*.json` (11 vectors) is the
-interoperability gate: an implementation that reproduces every value byte
-for byte is wire-compatible; `witness-log conform <dir>` diffs yours
-against it. `spec/dossier.schema.json` is the JSON Schema for the dossier.
+`spec/SPEC.md` is normative. `corpus/*.json` is the interoperability
+gate. Vectors 01–12 are encoding vectors: an implementation that
+reproduces every value byte for byte is wire-compatible, and `witness-log
+conform <dir>` diffs yours against them. Vector 13 (`13_verdicts.json`) is
+a verification vector: whole dossiers, a trusted directory, equivocation
+proofs and 20 cases, each with the verdict, exit code and report fields a
+verifier must produce (SPEC §9.2). `spec/dossier.schema.json` is the
+JSON Schema for the dossier.
 
 ## Primitives
 
@@ -41,9 +45,10 @@ side.
 ## Implementing in another language
 
 1. Reproduce `01_leaf_encoding.json` (encoding), `02_merkle_roots.json`, `03_inclusion_proofs.json`, `06_consistency_proof.json` (tree), `11_payload_hash.json` (§8 hash).
-2. Reproduce `04_signed_tree_head.json`, `05_redaction_continuity.json`, `07`–`09` (leaf types), `10_c2sp_checkpoint.json`.
+2. Reproduce `04_signed_tree_head.json`, `05_redaction_continuity.json`, `07`–`09` (leaf types), `10_c2sp_checkpoint.json`, `12_revocation.json`.
 3. Emit a dossier that `witness-log verify` accepts; validate against the JSON Schema.
 4. Run `witness-log conform <your-corpus-dir>`; zero diffs is the bar.
+5. If you verify dossiers, run every case of `13_verdicts.json` through your verifier and compare the verdict, exit code and report fields with `expect` (the wording of `failures` is not compared, only whether it is empty).
 
 `CONTRIBUTING.md` describes the conformance-gate workflow for any change
 to the wire format: spec, corpus and implementation move together.

@@ -7,9 +7,9 @@ This is the short version an integrator needs.
 
 | threat | mechanism |
 |---|---|
-| record edited after the fact (operator, insider, attacker with storage access, bug) | leaves rebuild the signed root or they don't: DIVERGED |
+| record edited after the fact (operator, insider, attacker with storage access, bug) | leaves rebuild the signed root or they don't: INVALID; re-signed after the edit, it contradicts a head you kept (`--known-head`): DIVERGED |
 | record truncated or reordered | same |
-| log shows different histories to different parties | witnesses demand a consistency proof and refuse forks (422); two cosigned heads for one size are self-contained evidence; `diff` catches it offline |
+| log shows different histories to different parties | witnesses demand a consistency proof and refuse forks (422); two cosigned heads for one size are self-contained evidence (`verify --evidence`); `diff` catches it offline; a WITNESSED dossier cosigned by less than a majority of your directory exits 11 |
 | operator rewinds to an old backup and continues | `submit` refuses to publish a history that contradicts what witnesses cosigned |
 | fabricated dossier with fabricated "witnesses" | the dossier's own directory is never scored; verdict capped at UNANCHORED |
 | one operator running many witnesses under many names | independence is by `operator_org` in the *verifier's* directory; project-run witnesses collapse to one bucket |

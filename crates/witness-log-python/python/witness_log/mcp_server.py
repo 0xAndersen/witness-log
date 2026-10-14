@@ -502,9 +502,13 @@ async def verify_chain_integrity(
     instead of a fraction of the directory; use it when the directory is
     large.
 
+    When the chain has grown since its last witnessed head, that head is
+    passed to the verifier as a known head: a journal rewritten after it
+    was witnessed no longer reproduces it and the verdict is "diverged".
+
     Returns: verdict (witnessed / consistent_unwitnessed / unanchored /
-    diverged), the full check report, and a list of tamper alerts (empty
-    when the chain is intact).
+    diverged / invalid), the full check report, and a list of tamper
+    alerts (empty when the chain is intact).
     """
     if min_witnesses is not None and min_witnesses < 1:
         raise ValueError("min_witnesses must be at least 1")
@@ -516,7 +520,12 @@ async def verify_chain_integrity(
     if witnessed is not None and witnessed["checkpoint"]["tree_size"] == dossier["checkpoint"]["tree_size"]:
         dossier = witnessed
     td = json.dumps(trusted_directory) if trusted_directory is not None else None
-    report = json.loads(wl.verify_dossier_json(json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses))
+    known = None
+    if witnessed is not None and witnessed["checkpoint"]["tree_size"] != dossier["checkpoint"]["tree_size"]:
+        known = [f'{witnessed["checkpoint"]["tree_size"]}:{witnessed["checkpoint"]["root_hash"]}']
+    report = json.loads(
+        wl.verify_dossier_json(json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known)
+    )
     alerts = [
         f"{check} failed"
         for check in (
@@ -527,7 +536,7 @@ async def verify_chain_integrity(
             "merkle_continuity_valid",
         )
         if report.get(check) is False
-    ]
+    ] + [f"contradiction: {c}" for c in report.get("contradictions", [])]
     out: Dict[str, Any] = {"verdict": report.get("verdict"), "tamper_alerts": alerts, "report": report}
     if witnessed is not None:
         out["witnessed_size"] = witnessed["checkpoint"]["tree_size"]
@@ -577,9 +586,10 @@ async def export_dossier(session_id: str) -> Dict[str, Any]:
     A dossier is one JSON document: every leaf, the signed checkpoint,
     the key bindings, and any witness receipts. Anyone can verify it
     with `witness-log verify dossier.json --identity <identity_pubkey>
-    --directory <directory they trust>` (exit 0 = WITNESSED, 10 =
-    consistent but unwitnessed, 20 = unanchored, 30 = diverged) or
-    `witness_log.verify_dossier_json`.
+    --directory <directory they trust>` (exit 0 = WITNESSED, 11 =
+    witnessed by fewer than a strict majority of the directory, 10 =
+    consistent but unwitnessed, 20 = unanchored, 30 = diverged, 40 =
+    invalid) or `witness_log.verify_dossier_json`.
 
     `dossier` is the current head; it carries the cosignatures from the
     last submit_to_witnesses when nothing was appended since. When the

@@ -8,7 +8,7 @@
 use std::process::Command;
 
 const EXIT_WITNESSED: i32 = 0;
-const EXIT_DIVERGED: i32 = 30;
+const EXIT_INVALID: i32 = 40;
 const EXIT_USAGE: i32 = 2;
 
 fn run(args: &[&str]) -> (i32, String, String) {
@@ -96,14 +96,16 @@ fn demo_output_is_stable_across_runs_except_for_keys() {
 }
 
 #[test]
-fn tamper_demo_ends_diverged_and_names_the_failing_check() {
+fn tamper_demo_ends_invalid_and_names_the_failing_check() {
+    // Since 0.5.0 (RFC-0002) a file that fails a check is INVALID (40);
+    // DIVERGED is reserved for a valid file that contradicts other evidence.
     let (code, stdout, stderr) = run(&["demo", "--tamper"]);
     assert_eq!(
-        code, EXIT_DIVERGED,
-        "a caught forgery must exit 30\nstderr: {stderr}"
+        code, EXIT_INVALID,
+        "a caught forgery must exit 40\nstderr: {stderr}"
     );
     assert!(!stderr.contains("panicked"), "{stderr}");
-    assert!(stdout.contains("DIVERGED"), "{stdout}");
+    assert!(stdout.contains("INVALID"), "{stdout}");
     // The teaching point: crypto passed, identity binding didn't.
     assert!(
         stdout.contains("Checkpoint signature valid"),
@@ -200,10 +202,10 @@ fn explain_documented_exit_codes_match_the_real_ones() {
         })
         .collect();
 
-    // demo ends WITNESSED; demo --tamper ends DIVERGED. Verify those two
+    // demo ends WITNESSED; demo --tamper ends INVALID. Verify those two
     // against what explain claims.
     let witnessed_code = expected.iter().find(|(v, _)| v == "WITNESSED").unwrap().1;
-    let diverged_code = expected.iter().find(|(v, _)| v == "DIVERGED").unwrap().1;
+    let diverged_code = expected.iter().find(|(v, _)| v == "INVALID").unwrap().1;
     let (demo_code, _, _) = run(&["demo"]);
     let (tamper_code, _, _) = run(&["demo", "--tamper"]);
     assert_eq!(
@@ -212,7 +214,7 @@ fn explain_documented_exit_codes_match_the_real_ones() {
     );
     assert_eq!(
         tamper_code as u64, diverged_code,
-        "explain's DIVERGED code disagrees with reality"
+        "explain's INVALID code disagrees with reality"
     );
 }
 
@@ -234,8 +236,8 @@ fn explain_json_without_a_topic_lists_everything() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("must be valid JSON");
     assert_eq!(
         parsed.as_array().unwrap().len(),
-        4,
-        "all four verdicts: {stdout}"
+        6,
+        "all five verdicts plus the split-view exit: {stdout}"
     );
 }
 

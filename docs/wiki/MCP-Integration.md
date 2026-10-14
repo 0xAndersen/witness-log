@@ -111,7 +111,12 @@ with `witness_log.verify_inclusion(...)` or any RFC 6962 verifier.
 `verify_chain_integrity` returns `tamper_alerts: []` when the chain is intact.
 After a successful `submit_to_witnesses`, `verify_chain_integrity` with the
 same `trusted_directory` reports `witnessed` until the next append, and
-`witnessed_size` / `witnessed_verdict` afterwards.
+`witnessed_size` / `witnessed_verdict` afterwards. Once the chain has grown
+past its last witnessed head, that head is passed to the verifier as a
+known head (0.5.0+): a journal rewritten after it was witnessed no longer
+reproduces it, and the verdict is `diverged` with a `contradiction:` tamper
+alert. A chain that fails a check reports `invalid` (`diverged` before
+0.5.0).
 
 State: `$WITNESS_LOG_HOME/<session_id>/journal.jsonl` (+ `.salts`), one
 identity per session id, resumed across host restarts, plus

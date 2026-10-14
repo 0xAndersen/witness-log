@@ -55,7 +55,7 @@ AGT's audit integrity, per its own specification and changelog:
 | tamper evidence | unkeyed hash chain + Merkle tree; detects edits by someone who does not recompute the chain | identity-signed checkpoints; edits break the signature or the root |
 | against the operator rewriting history | not addressed in the shipped implementation (no signature, no anchoring) | witnesses refuse a contradicting head (422) and keep a proof |
 | third parties | none in the audit path | witnesses from ≥2 organisations the verifier chooses |
-| offline verdict | `verify_chain()` → valid / invalid | four verdicts; exit code is the verdict |
+| offline verdict | `verify_chain()` → valid / invalid | five verdicts; exit code is the verdict |
 | Merkle construction | `SHA-256(left ‖ right)` (no leaf/node domain separation stated) | RFC 6962 with `0x00`/`0x01` domain separation |
 | erasure | not documented in the audit spec | salted commitments; `forget(i)` keeps every proof |
 | enforcement | yes, the core feature | none, by design |

@@ -1,8 +1,12 @@
 # RFC-0002: Verdict strictness and an INVALID verdict
 
-Status: Draft
+Status: Implemented (0.5.0)
 Target: `verify --strict` (exit 11) as an opt-in in 0.4.0; strict as the default and the INVALID split in 0.5.0, with spec text
-Related: SPEC §9.2 (the verdict), THREAT_MODEL "Witness independence" and "Accusations", `witness-log explain`
+Related: SPEC §9.1–§9.2 (the verdict), THREAT_MODEL "Witness independence" and "Accusations", `witness-log explain`, corpus vector `13_verdicts.json`
+
+The proposal below is kept as written. Where 0.5.0 differs from it, the
+difference is recorded under "Resolution" at the end, and SPEC §9.1–§9.2
+is the normative text.
 
 ## Motivation
 
@@ -48,7 +52,8 @@ saying WITNESSED with exit 0 when a careful reader would not:
 - `--min-witnesses N` with `2N <= total_directory_witnesses` prints the
   existing warning and, under `--strict`, is an error (exit 2) unless
   `--allow-sub-majority`: a gate the caller set that cannot be split-view
-  resistant is a configuration mistake, not a verdict.
+  resistant is a configuration mistake, not a verdict. (Not adopted; see
+  "Resolution".)
 
 In 0.5.0 strict becomes the default and `--no-strict` restores the 0.4
 behaviour for one release.
@@ -168,9 +173,86 @@ bytes.
    advice), or the gate is "majority of distinct operators" rather than of
    witnesses. The third is probably right and needs a vector.
 
+## Resolution (0.5.0)
+
+Implemented in 0.5.0 in the reference CLI and library, the Go,
+TypeScript, Node (native and TypeScript) and wasm verifiers, the Python
+binding and the browser verifier. SPEC §9.1 lists known heads and
+evidence as verifier inputs; §9.2 defines the five verdicts, their
+precedence, `split_view_unsafe` and the exit codes. Decisions, including
+where they differ from the text above:
+
+- **`--min-witnesses N` with `2N <=` the directory size is not a usage
+  error.** The gate applies as written; a WITNESSED result whose
+  cosigners are not a strict majority of the directory simply exits 11.
+  Refusing the invocation would have punished a caller whose dossier
+  happens to be cosigned by a majority anyway, and the exit code already
+  carries the risk. The CLI still prints the warning that the gate itself
+  is not split-view resistant.
+- **Strict is the default.** `--no-strict` restores the 0.4 reading (a
+  sub-majority WITNESSED exits 0) and is kept for one release; it does not
+  turn INVALID (40) back into 30. `--strict` is still accepted and does
+  nothing. `--allow-sub-majority` accepts a sub-majority WITNESSED as 0
+  and keeps the warning.
+- **Report fields.** The report carries `split_view_unsafe` at the top
+  level (not under `strict`), `failures` (why INVALID), `contradictions`
+  (why DIVERGED) and `known_heads_unchecked`; `verdict` gains `"invalid"`.
+  The CLI's `--json` object carries `strict`, `allow_sub_majority` and
+  `exit_code` beside the report. The wording of `failures` and
+  `contradictions` is not normative.
+- **Known heads.** A known head larger than the dossier cannot be checked;
+  it is listed in `known_heads_unchecked` and does not change the verdict.
+  Contradictions are evaluated only for a dossier that passes every check,
+  so INVALID wins over DIVERGED. `--known-head` and `--evidence` are
+  repeatable.
+- **Evidence.** A file is accepted as `witness serve` writes it
+  (`{"kind":"equivocation","proof":{...}}`) or as a bare proof. It counts
+  only if its origin is the identity's canonical origin
+  `witness-log/<identity hex>` and it verifies under the key that origin
+  names; the proof's own `log_vkey` must be that key. A proof about
+  another identity, or signed by a stranger's key under this origin, is
+  ignored.
+- **Other commands.** `diff` exits 30 for two valid, conflicting copies
+  and 40 when either copy is invalid; `c2sp verify` exits 40 (REJECTED)
+  when a supplied key does not verify or none does; `c2sp export` exits
+  40 with nothing to export; `witness verify-evidence` exits 0 PROVEN and
+  40 NOT PROVEN. `bind` keeps 30 for a mismatch.
+
+Open questions:
+
+1. Exit 11 with the word WITNESSED, as proposed. The verdict states what
+   verified; the exit code carries the split-view risk.
+2. `--known-head` takes `size:root` only in 0.5.0. Accepting a C2SP note
+   with cosignatures is not ruled out for a later release.
+3. No sub-reasons in the exit code: INVALID is 40, and `--json`'s
+   `report.failures` says which checks failed.
+4. Not resolved. The majority is over the directory as passed, so a
+   registry-sized directory makes strict WITNESSED unreachable in
+   practice. The documented advice is to verify against the subset of
+   witnesses the agent submits to, or to accept the risk explicitly with
+   `--allow-sub-majority`. A gate over distinct operators would need its
+   own RFC and vector.
+
+The corpus vectors needed above became `corpus/13_verdicts.json`, a
+verification vector rather than an encoding vector: whole deterministic
+dossiers, a trusted directory of four witnesses, three equivocation
+proofs (one valid for the identity, one signed by a stranger's key under
+the identity's origin, one valid but about another identity) and 20
+cases, each with the expected verdict, exit code, `split_view_unsafe`,
+`internally_consistent`, whether `failures` is non-empty, and the counts
+of `contradictions`, `known_heads_unchecked` and valid receipts. The
+sub-majority cases use 2 of 4 witnesses under `--min-witnesses 2` (exit
+11; 0 with `--allow-sub-majority`) rather than a six-witness directory,
+and the two-histories case is a contradicted known head (the `diff` case
+is covered by the CLI's own tests, since `diff` is not a `verify`
+input). It is generated by `cargo run -p witness-log-network --example
+generate_verdict_corpus` and run by the Rust, Go, TypeScript, Node and
+wasm verifiers. `witness-log conform` does not compare it; it compares the
+encoding vectors 01–12.
+
 ## How to comment
 
-Open a thread in GitHub Discussions titled `RFC-0002` (or comment on the
-pull request that added this file). Exit-code consumers (CI maintainers,
-the TypeScript and Go verifiers) are the people whose objections matter
-most here.
+The RFC is implemented. Comments on the decisions above, and on open
+question 4, go to a GitHub Discussions thread titled `RFC-0002`.
+Exit-code consumers (CI maintainers, the TypeScript and Go verifiers)
+are the people whose objections matter most here.

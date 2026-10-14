@@ -78,7 +78,7 @@ fn finding02_backward_clock_step_no_longer_diverges_an_honest_log() {
     let report = dossier.verify(0.66, &VerifyContext::default());
     assert_ne!(
         report.verdict,
-        Verdict::Diverged,
+        Verdict::Invalid,
         "an honest log with one backward clock step must not be classified as tampered"
     );
     assert!(report.leaves_structurally_valid);

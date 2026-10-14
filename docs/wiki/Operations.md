@@ -44,7 +44,11 @@ persist-before-cosign, the backup rule (`witness.key` + `witness.json` +
 
 Keep your directory under version control; pin `--identity` per agent in
 config; gate on exit code; archive dossiers with the verify report. Use
-`--min-witnesses` against large directories.
+`--min-witnesses` against large directories; a WITNESSED dossier cosigned
+by half the directory or fewer exits 11 unless you pass
+`--allow-sub-majority`. Keep the heads you verified (size and root) and
+pass them with `--known-head` next time: a history rewritten since is
+DIVERGED (30). A failed check is INVALID (40).
 
 ## Monitoring
 

@@ -58,7 +58,7 @@ the rewritten log was accepted as valid (`CHANGELOG.md`, 0.3.4).
 | tail truncation | detectable if the expected count is known | detectable against any witnessed checkpoint |
 | erasure | `--hash-only` stores only a parameter hash; `--encrypt-params` encrypts params in the log; deleting a record breaks the chain | salted commitments; `forget(i)` deletes the salt, every proof stays valid |
 | authorization / policy | delegation chains, decisions, revocation, policy attestation | logged as `AuthorizationEvent` leaves; not evaluated |
-| verdict | `verify` / `verify --chain` / `audit --verify` / `--restore` | four verdicts; exit code is the verdict |
+| verdict | `verify` / `verify --chain` / `audit --verify` / `--restore` | five verdicts; exit code is the verdict |
 
 The bilateral receipt is worth dwelling on, because it is the closest
 Signet comes to witnessing: the server's signature proves the server saw

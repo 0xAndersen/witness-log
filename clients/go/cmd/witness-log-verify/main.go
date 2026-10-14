@@ -1,10 +1,14 @@
 // Command witness-log-verify verifies a witness-log dossier offline with
 // the pure-Go verifier. Its exit status is the verdict, with the same
-// codes as `witness-log verify`: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED,
-// 20 UNANCHORED, 30 DIVERGED, 2 usage or unreadable input.
+// codes as `witness-log verify`: 0 WITNESSED, 11 WITNESSED by fewer than a
+// strict majority of the directory (strict is the default since 0.5.0),
+// 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 40 INVALID,
+// 2 usage or unreadable input.
 //
 //	witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
-//	                   [--threshold 0.0-1.0 | --min-witnesses N] [--json]
+//	                   [--threshold 0.0-1.0 | --min-witnesses N]
+//	                   [--allow-sub-majority | --no-strict] [--revocations <file>]
+//	                   [--known-head <size>:<root>] [--evidence <file>] [--json]
 //	witness-log-verify bind <a.json> <b.json> [--json]
 //	witness-log-verify disclose <dossier.json> <leaf-index> <payload-file> <salt-hex>
 package main
@@ -25,13 +29,22 @@ const usage = `witness-log-verify — offline dossier verification in Go
 
 USAGE:
   witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
-                     [--threshold 0.0-1.0 | --min-witnesses N] [--revocations <file>] [--json]
+                     [--threshold 0.0-1.0 | --min-witnesses N]
+                     [--allow-sub-majority | --no-strict] [--revocations <file>]
+                     [--known-head <size>:<root>] [--evidence <file>] [--json]
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  a witness directory YOU trust, obtained out-of-band
       --revocations  revocation statements you know of (JSON array or one object);
                    applied even when the dossier omits them
       --threshold  quorum gate as a fraction of the directory (default 0.66)
       --min-witnesses N  quorum gate as an absolute receipt count
+      --allow-sub-majority  accept WITNESSED from fewer than a strict majority
+                   of the directory as exit 0 instead of 11
+      --no-strict  the 0.4 exit codes, without 11 (kept for one release)
+      --known-head <size>:<root hex>  a head you already trust for this
+                   identity (repeatable); not reproduced -> DIVERGED
+      --evidence <file>  a witness equivocation proof (repeatable); if it
+                   verifies for this identity -> DIVERGED
       --json       machine-readable report (same fields as witness-log verify --json)
 
   witness-log-verify bind <a.json> <b.json> [--json]
@@ -44,8 +57,11 @@ USAGE:
       (SPEC §8). Exit 0 match, 30 mismatch.
 
 EXIT CODES — the verdict IS the exit status:
-   0  WITNESSED               30  DIVERGED
-  10  CONSISTENT-UNWITNESSED   2  usage / unreadable input
+   0  WITNESSED                30  DIVERGED (a contradiction with a head you
+  11  WITNESSED by fewer than a      know, or verified equivocation evidence)
+      strict majority of your  40  INVALID (a check failed: signature,
+      directory (split-view risk)    identity, leaves, continuity, revocation)
+  10  CONSISTENT-UNWITNESSED    2  usage / unreadable input
   20  UNANCHORED
 `
 
@@ -78,6 +94,11 @@ func hasFlag(args []string, flag string) bool {
 	return false
 }
 
+// switches take no value; every other --flag consumes the next argument.
+var switches = map[string]bool{
+	"--json": true, "--strict": true, "--no-strict": true, "--allow-sub-majority": true,
+}
+
 func positional(args []string) []string {
 	var out []string
 	skip := false
@@ -87,7 +108,7 @@ func positional(args []string) []string {
 			continue
 		}
 		if strings.HasPrefix(a, "--") {
-			if a != "--json" {
+			if !switches[a] {
 				skip = true
 			}
 			continue
@@ -95,6 +116,46 @@ func positional(args []string) []string {
 		out = append(out, a)
 	}
 	return out
+}
+
+// flagValues returns every value of a repeatable flag, and false if the
+// flag appears without one.
+func flagValues(args []string, flag string) ([]string, bool) {
+	var out []string
+	for i, a := range args {
+		if a != flag {
+			continue
+		}
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+			return nil, false
+		}
+		out = append(out, args[i+1])
+	}
+	return out, true
+}
+
+// readEvidence reads a witness evidence file as `witness-log witness serve`
+// writes it ({"kind": "equivocation", "proof": {...}}) or a bare proof.
+func readEvidence(path string) (witnesslog.EquivocationProof, error) {
+	var p witnesslog.EquivocationProof
+	raw, err := readInput(path)
+	if err != nil {
+		return p, err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return p, err
+	}
+	if inner, ok := doc["proof"]; ok {
+		raw = inner
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return p, fmt.Errorf("not an equivocation proof: %v", err)
+	}
+	if p.Origin == "" || p.EarlierNote == "" || p.ConflictingNote == "" {
+		return p, fmt.Errorf("not an equivocation proof: missing origin or notes")
+	}
+	return p, nil
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -176,6 +237,35 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--revocations needs a path")
 		return witnesslog.ExitUsage
 	}
+	heads, ok := flagValues(args, "--known-head")
+	if !ok {
+		fmt.Fprintln(stderr, "--known-head requires <size>:<root hex>")
+		return witnesslog.ExitUsage
+	}
+	for _, h := range heads {
+		kh, err := witnesslog.ParseKnownHead(h)
+		if err != nil {
+			fmt.Fprintf(stderr, "--known-head: %v\n", err)
+			return witnesslog.ExitUsage
+		}
+		opts.KnownHeads = append(opts.KnownHeads, kh)
+	}
+	evidencePaths, ok := flagValues(args, "--evidence")
+	if !ok {
+		fmt.Fprintln(stderr, "--evidence requires a path to a witness evidence file")
+		return witnesslog.ExitUsage
+	}
+	for _, ep := range evidencePaths {
+		p, err := readEvidence(ep)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", ep, err)
+			return witnesslog.ExitUsage
+		}
+		opts.Evidence = append(opts.Evidence, p)
+	}
+	strict := !hasFlag(args, "--no-strict")
+	allowSubFlag := hasFlag(args, "--allow-sub-majority")
+	allowSub := allowSubFlag || !strict
 	raw, err := readInput(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", path, err)
@@ -202,16 +292,31 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			"min_witnesses_used": opts.MinReceipts,
 			"identity_pinned":    opts.ExpectedIdentityPubkey != "",
 			"directory_pinned":   directory != nil,
+			"strict":             strict,
+			"allow_sub_majority": allowSubFlag,
+			"exit_code":          report.ExitCode(allowSub),
 			"verdict":            verdict.String(),
 			"report":             report,
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(out)
-		return verdict.ExitCode()
+		return report.ExitCode(allowSub)
 	}
 	renderText(stdout, path, report, directory != nil, opts.ExpectedIdentityPubkey != "")
-	return verdict.ExitCode()
+	code := report.ExitCode(allowSub)
+	if report.SplitViewUnsafe {
+		if code == witnesslog.ExitSplitViewUnsafe {
+			fmt.Fprintln(stdout, "Exit 11: WITNESSED, but not by a strict majority of your directory (strict is the default since 0.5.0). --allow-sub-majority accepts this as exit 0.")
+		} else {
+			flag := "--no-strict"
+			if strict {
+				flag = "--allow-sub-majority"
+			}
+			fmt.Fprintf(stdout, "Accepted as exit 0 under %s; a conflicting history could still have been cosigned by the rest of the directory.\n", flag)
+		}
+	}
+	return code
 }
 
 func mark(ok bool) string {
@@ -255,6 +360,12 @@ func renderText(w io.Writer, path string, r *witnesslog.Report, directoryPinned,
 	}
 	for _, f := range r.Failures {
 		fmt.Fprintf(w, "  failed: %s\n", f)
+	}
+	for _, c := range r.Contradictions {
+		fmt.Fprintf(w, "  contradiction: %s\n", c)
+	}
+	for _, u := range r.KnownHeadsUnchecked {
+		fmt.Fprintf(w, "  not checked: %s\n", u)
 	}
 	fmt.Fprintf(w, "\nVerdict: %s\n", r.Verdict)
 }

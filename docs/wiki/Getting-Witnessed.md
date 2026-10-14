@@ -105,7 +105,10 @@ witness-log verify dossier.json --identity "$AGENT_IDENTITY" --directory trusted
 ```
 
 With zero entries `submit` has nobody to talk to and exits 1; the verdict
-against an empty directory is CONSISTENT-UNWITNESSED. That is the honest
+against an empty directory is CONSISTENT-UNWITNESSED. Once the registry
+holds more than three witnesses, two cosignatures are not a majority of
+it: `verify` reports WITNESSED and exits 11 (split view possible) unless
+you verify against the subset you submit to or pass `--allow-sub-majority`. That is the honest
 state of the network, not a bug in your setup. The registry builder as a
 CLI subcommand (`witness-log directory build`, no clone needed) is planned
 for 0.4.0. Live status of registered witnesses:
@@ -146,6 +149,7 @@ witnesses. Three ways to grow it:
 
 - `--identity`: the key you expected, from somewhere the log's operator does not control.
 - `--directory`: *your* list. Never the dossier's.
-- `--min-witnesses`: an absolute count (3 is a sensible floor), and above half your directory if you want the gate itself to resist a split view ([RFC-0002](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0002-verdict-strictness-and-INVALID.md) proposes making that the default).
+- `--min-witnesses`: an absolute count (3 is a sensible floor), and above half your directory if you want the gate itself to resist a split view. Since 0.5.0 `verify` exits 11 for a WITNESSED dossier whose cosigners are not a strict majority of your directory, whatever gate you set; `--allow-sub-majority` accepts it as 0 ([RFC-0002](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0002-verdict-strictness-and-INVALID.md)).
+- `--known-head <size>:<root>`: a head you saw earlier for this identity (a receipt you kept). A dossier that no longer reproduces it is DIVERGED, exit 30.
 - Two independent operators: enforced by the verdict, not optional.
 - Freshness: `quorum.newest_trusted_witness_ms`, not the checkpoint's own timestamp.

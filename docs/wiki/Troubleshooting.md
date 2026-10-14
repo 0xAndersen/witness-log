@@ -19,19 +19,41 @@ Cryptography is sound; coverage fell short. The quorum line says why:
 - *below --min-witnesses N* or *below threshold*: fewer valid receipts than your gate. Either submit to more witnesses or lower the gate deliberately.
 - *0 witness signatures valid* but the dossier shows receipts: the witnesses that cosigned are not in your directory. Receipts from unknown keys are ignored by design; add the entries if you trust those operators.
 
-**`Verdict: DIVERGED` (exit 30).**
-Read the `✗` line:
+**Exit 11: WITNESSED, but not by a strict majority of your directory.**
+The verdict is WITNESSED and the receipts verify, but the cosigners are
+half your directory or fewer, so a conflicting history could have been
+cosigned by the rest without any witness seeing both (split view). Strict
+is the default since 0.5.0. Submit to more of your directory, verify
+against a smaller directory you actually expect cosignatures from, or, if
+a sub-majority is what you meant, pass `--allow-sub-majority` (exit 0,
+warning still printed). `--no-strict` restores the 0.4 reading for one
+release.
+
+**`Verdict: INVALID` (exit 40).**
+A check failed; the file establishes nothing about the identity. Up to
+0.4.3 this was reported as `DIVERGED` (exit 30). Read the `✗` line:
 - *Identity NOT bound: the checkpoint was signed by X, not the --identity you expected*: wrong `--identity`, or someone else's log. Check your configuration source.
 - *Identity NOT bound: the dossier's identity_pubkey is not the key that signed its checkpoint*: the file's claimed identity and its signature disagree. Fabricated or corrupted.
 - *Merkle continuity*: a leaf was altered after the checkpoint was signed, or leaves are missing/reordered.
 - *Checkpoint signature*: the signature does not verify; corrupted or forged.
 - *Key bindings*: a leaf's session key has no valid binding to the identity, or a revoked identity signed after `as_of`.
-Run with `--explain` for one line under each check.
+Run with `--explain` for one line under each check. `--json` lists the
+same reasons in `report.failures`.
+
+**`Verdict: DIVERGED` (exit 30).**
+The dossier passed every check and contradicts evidence you supplied:
+- *known head N:R is not what this dossier's first N leaves produce*: the history up to size N was rewritten after the head you passed with `--known-head` was signed. Both are signed by the identity.
+- *witness evidence: this identity signed two different roots for one tree size*: an `--evidence` file verified for this identity. The identity equivocated, whatever this dossier says.
+`--json` lists them in `report.contradictions`. A head you pass that is
+larger than the dossier is not an error; it is reported as unchecked
+(`report.known_heads_unchecked`).
 
 **Exit 2 with a usage message.**
 Malformed input: `--identity` not 64 hex characters, `--min-witnesses 0`
 or non-integer, unreadable JSON, a directory file that is neither
-`{"witnesses":[...]}` nor a bare array. The message names the field.
+`{"witnesses":[...]}` nor a bare array, a `--known-head` that is not
+`<size>:<64 hex>`, an `--evidence` file that is not an equivocation proof.
+The message names the field.
 
 **`Large directory: 66% of N is M cosignatures per checkpoint ... gate on an absolute count with --min-witnesses N`.**
 A hint, not an error: with a large directory a fraction threshold is weak
@@ -111,7 +133,8 @@ equivocation evidence against your identity; that is permanent. See
 
 **`anchor_url must be an http:// or https:// URL` / `counterparty must be the other agent's identity public key as 64 hex characters`.**
 Refused before anything is written (0.3.6+). Up to 0.3.5 these were
-committed: a non-http anchor URL made every later dossier `DIVERGED` and
+committed: a non-http anchor URL made every later dossier `DIVERGED`
+(`INVALID` since 0.5.0) and
 the journal could not be resumed; a counterparty that is not a key
 produced a handoff that could never `bind`. Pass the other agent's
 `identity_pubkey_hex()` (either case; it is stored lowercase).
@@ -125,7 +148,8 @@ then start a new journal with the same identity seed.
 When the session binding's TTL passes, the next append rotates to a new
 session key bound by the identity (0.3.6+); the old binding stays in the
 dossier so earlier leaves still verify. Up to 0.3.5 the log kept writing
-under the expired session and verified as `DIVERGED`.
+under the expired session and verified as `DIVERGED` (`INVALID` since
+0.5.0).
 
 **`from witness_log import *` and `open`.**
 Since 0.3.6 the star import does not export `open` (it shadowed the
@@ -266,9 +290,10 @@ the key (`init` a new directory, publish the new entry). Back up `witness.key`,
 Every client arrives from the proxy's address. Start with
 `--max-conns-per-ip 256 --enroll-rate 6000` (or `fleet.py serve --behind-proxy`).
 
-**`witness verify-evidence` says the file does not prove equivocation.**
+**`witness verify-evidence` says the file does not prove equivocation (NOT PROVEN, exit 40; 30 before 0.5.0).**
 The file is not two log-signed checkpoints for one size with different
-roots. A failed consistency proof alone is not evidence (anyone can attach a
+roots, or the log's key could not be taken from a canonical origin (pass
+`--vkey` with the key you know). A failed consistency proof alone is not evidence (anyone can attach a
 junk proof to an honest checkpoint), and since 0.3.1 the witness does not
 record it as such.
 

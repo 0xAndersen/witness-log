@@ -31,7 +31,7 @@ Three audiences need better than that:
    saw before. A log cannot show two histories without producing
    signed evidence of it.
 4. **Anyone verifies offline.** A dossier (leaves + checkpoint + bindings
-   + receipts) is one JSON file; `witness-log verify` returns one of four
+   + receipts) is one JSON file; `witness-log verify` returns one of five
    verdicts and an exit code, with no network and no trust in the
    operator.
 5. **Right to be forgotten without breaking proofs.** Each payload is

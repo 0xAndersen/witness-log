@@ -23,7 +23,13 @@ func TestExitCodesAreTheVerdict(t *testing.T) {
 	}{
 		{[]string{a}, 20, "Verdict: UNANCHORED"},
 		{[]string{a, "--directory", dir}, 0, "Verdict: WITNESSED"},
-		{[]string{a, "--directory", dir, "--identity", strings.Repeat("ab", 32)}, 30, "Verdict: DIVERGED"},
+		{[]string{a, "--directory", dir, "--identity", strings.Repeat("ab", 32)}, 40, "Verdict: INVALID"},
+		{[]string{a, "--known-head", "1:" + strings.Repeat("ab", 32)}, 30, "Verdict: DIVERGED"},
+		{[]string{a, "--known-head", "1"}, 2, ""},
+		{[]string{a, "--known-head"}, 2, ""},
+		{[]string{a, "--evidence", "does-not-exist.json"}, 2, ""},
+		{[]string{a, "--directory", dir, "--no-strict"}, 0, "Verdict: WITNESSED"},
+		{[]string{a, "--directory", dir, "--strict"}, 0, "Verdict: WITNESSED"},
 		{[]string{a, "--directory", dir, "--min-witnesses", "3"}, 10, "Verdict: CONSISTENT-UNWITNESSED"},
 		{[]string{a, "--directory", dir, "--json"}, 0, `"verdict": "WITNESSED"`},
 		{[]string{"bind", a, b}, 0, "Result: BOUND"},
@@ -56,7 +62,7 @@ func TestJSONReportMatchesLibraryShape(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"path", "identity_pubkey", "threshold_used", "min_witnesses_used", "identity_pinned", "directory_pinned", "verdict", "report"} {
+	for _, k := range []string{"path", "identity_pubkey", "threshold_used", "min_witnesses_used", "identity_pinned", "directory_pinned", "strict", "allow_sub_majority", "exit_code", "verdict", "report"} {
 		if _, ok := out[k]; !ok {
 			t.Errorf("missing top-level key %s", k)
 		}
@@ -106,5 +112,59 @@ func TestDisclose(t *testing.T) {
 	}
 	if code := run([]string{"disclose", filepath.Join(testdata, "c2sp/a.json"), "0", payloadFile, "zz"}, &stdout, &stderr); code != 2 {
 		t.Errorf("bad salt must exit 2, got %d", code)
+	}
+}
+
+// RFC-0002: WITNESSED by fewer than a strict majority of the directory
+// exits 11 by default; --allow-sub-majority and --no-strict accept it.
+func TestSplitViewUnsafeExitsEleven(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(testdata, "native/dossier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	receipts := d["witness_receipts"].([]any)
+	if len(receipts) != 3 {
+		t.Fatalf("fixture has %d receipts, want 3 of 4", len(receipts))
+	}
+	// Keep two receipts from two different operators: 2 of 4 is not a
+	// strict majority.
+	d["witness_receipts"] = receipts[:2]
+	out, _ := json.Marshal(d)
+	path := filepath.Join(t.TempDir(), "two-of-four.json")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(testdata, "native/trusted.json")
+	cases := []struct {
+		extra []string
+		exit  int
+		out   string
+	}{
+		{nil, 11, "Exit 11"},
+		{[]string{"--allow-sub-majority"}, 0, "Accepted as exit 0 under --allow-sub-majority"},
+		{[]string{"--no-strict"}, 0, "Accepted as exit 0 under --no-strict"},
+	}
+	for _, c := range cases {
+		args := append([]string{path, "--directory", dir, "--min-witnesses", "2"}, c.extra...)
+		var stdout, stderr bytes.Buffer
+		if got := run(args, &stdout, &stderr); got != c.exit {
+			t.Errorf("%v: exit %d, want %d\n%s%s", c.extra, got, c.exit, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "Verdict: WITNESSED") || !strings.Contains(stdout.String(), c.out) {
+			t.Errorf("%v: stdout lacks WITNESSED or %q:\n%s", c.extra, c.out, stdout.String())
+		}
+		stdout.Reset()
+		run(append(args, "--json"), &stdout, &stderr)
+		var j map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &j); err != nil {
+			t.Fatal(err)
+		}
+		if int(j["exit_code"].(float64)) != c.exit || j["report"].(map[string]any)["split_view_unsafe"] != true {
+			t.Errorf("%v: json exit_code %v split_view_unsafe %v", c.extra, j["exit_code"], j["report"].(map[string]any)["split_view_unsafe"])
+		}
 	}
 }

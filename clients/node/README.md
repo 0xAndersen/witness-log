@@ -37,10 +37,20 @@ log.close();
 Two verifiers ship: `verifyDossier` is pure TypeScript (`node:crypto`,
 from `@witness-log/client`, shares no code with the writer) and
 `verifyDossierNative` is the Rust reference verifier, the same code
-`witness-log verify` runs. They return the same shape:
-`verdict` (`WITNESSED | CONSISTENT-UNWITNESSED | UNANCHORED | DIVERGED`),
-`exitCode` (0/10/20/30), `ok`, `failures`, and `report` (the same object
-`witness-log verify --json` prints). For a decision that matters, run
+`witness-log verify` runs. They take the same options (`identity`,
+`directory`, `threshold` or `minWitnesses`, `revocations`, and
+`knownHeads`, `evidence`, `allowSubMajority`) and return the same shape:
+`verdict` (`WITNESSED | CONSISTENT-UNWITNESSED | UNANCHORED | DIVERGED |
+INVALID`), `exitCode` (0/11/10/20/30/40), `ok` (WITNESSED with exit 0),
+`splitViewUnsafe`, `failures` (why INVALID), `contradictions` (why
+DIVERGED), and `report` (the same object `witness-log verify --json`
+prints). INVALID (40) is a failed check; DIVERGED (30) is a valid dossier
+that contradicts a head in `knownHeads` (`"<size>:<root hex>"`) or an
+equivocation proof in `evidence` that verifies for this identity. Exit 11
+is a WITNESSED dossier whose cosigners are not a strict majority of the
+directory, unless `allowSubMajority`. Before 0.5.0 failed checks were
+DIVERGED (30). Both verifiers run every case of corpus vector
+`13_verdicts.json` in the test suite. For a decision that matters, run
 both; a disagreement is a bug to report.
 
 ## What a payload is

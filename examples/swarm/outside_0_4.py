@@ -113,7 +113,7 @@ def p_cli_nocode(a: Agent):
         a.notes.append(f"submit --min {MIN_WITNESSES}: exit {code} {err[-160:]}")
         return
     code, out, err = a.op("cli.verify.strict", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a), "--strict")
-    a.verdicts.append({0: "witnessed", 10: "consistent-unwitnessed", 11: "below-strict", 20: "unanchored", 30: "diverged"}.get(code, f"exit{code}"))
+    a.verdicts.append({0: "witnessed", 10: "consistent-unwitnessed", 11: "below-strict", 20: "unanchored", 30: "diverged", 40: "invalid"}.get(code, f"exit{code}"))
     if code not in (0, 11):
         a.notes.append(f"verify --strict after submit: exit {code} {err[-160:]}")
     if os.name == "posix" and oct(os.stat(dp).st_mode & 0o777) != "0o644":
@@ -823,8 +823,8 @@ def p_go_verifier(a: Agent):
     d["leaves"][3]["payload_hash"] = "00" * 32
     open(dp, "w").write(json.dumps(d))
     g, r, err = a.op("go.verify.tampered", both, dp, "--identity", ident, "--directory", dir_file(a))
-    if g != r or g != 30:
-        a.notes.append(f"Go {g} != Rust {r} (want 30) on a tampered dossier {err}")
+    if g != r or g != 40:
+        a.notes.append(f"Go {g} != Rust {r} (want 40) on a tampered dossier {err}")
     d = json.loads(dossier)
     d["receipts"] = d.get("receipts", [])[:1]
     open(dp, "w").write(json.dumps(d))

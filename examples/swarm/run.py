@@ -330,13 +330,13 @@ def t003():
     return "verify, diff, explain, c2sp, witness, conform"
 
 
-@test("T004", "install", "`demo` reaches WITNESSED and UNANCHORED (exit 0); `demo --tamper` catches the forgery (exit 30, the verdict)")
+@test("T004", "install", "`demo` reaches WITNESSED and UNANCHORED (exit 0); `demo --tamper` catches the forgery (exit 40, the verdict)")
 def t004():
     code, out, _ = cli("demo")
     assert code == 0 and "WITNESSED" in out and "UNANCHORED" in out, code
     code2, out2, _ = cli("demo", "--tamper")
-    assert code2 == 30 and "DIVERGED" in out2, code2
-    return "demo exit 0: WITNESSED+UNANCHORED; --tamper exit 30: DIVERGED"
+    assert code2 == 40 and "INVALID" in out2, code2
+    return "demo exit 0: WITNESSED+UNANCHORED; --tamper exit 40: INVALID"
 
 
 @test("T005", "install", "Python package imports, has __version__ and type stubs", fixed_in="0.3.2")
@@ -375,11 +375,11 @@ def t008():
     return f"exit 0, {q['valid_receipts']}/{q['total_directory_witnesses']} receipts, {q['distinct_independent_operators']} independent operators"
 
 
-@test("T009", "cli-verify", "wrong --identity is DIVERGED (exit 30), identity_bound false")
+@test("T009", "cli-verify", "wrong --identity is INVALID (exit 40), identity_bound false")
 def t009():
     code, rep = verify(SAMPLE, "ab" * 32, TRUSTED)
-    assert code == 30 and rep["report"]["identity_bound"] is False
-    return "exit 30, identity_bound=false"
+    assert code == 40 and rep["report"]["identity_bound"] is False
+    return "exit 40, identity_bound=false"
 
 
 @test("T010", "cli-verify", "malformed --identity is a usage error (exit 2), not a verdict", fixed_in="0.3.2")
@@ -494,52 +494,52 @@ def _tampered(tag, mutate):
     return verify(path, ident), ident
 
 
-@test("T021", "tamper", "edited payload_hash -> DIVERGED, merkle_continuity false")
+@test("T021", "tamper", "edited payload_hash -> INVALID, merkle_continuity false")
 def t021():
     def m(d):
         d["leaves"][2]["payload_hash"] = "ab" * 32
     (code, rep), _ = _tampered("t-payload", m)
-    assert code == 30 and rep["report"]["merkle_continuity_valid"] is False
-    return "exit 30"
+    assert code == 40 and rep["report"]["merkle_continuity_valid"] is False
+    return "exit 40"
 
 
-@test("T022", "tamper", "deleted middle leaf (indices renumbered) -> DIVERGED")
+@test("T022", "tamper", "deleted middle leaf (indices renumbered) -> INVALID")
 def t022():
     def m(d):
         del d["leaves"][2]
         for i, l in enumerate(d["leaves"]):
             l["index"] = i
     (code, rep), _ = _tampered("t-delmid", m)
-    assert code == 30
-    return "exit 30"
+    assert code == 40
+    return "exit 40"
 
 
-@test("T023", "tamper", "deleted last leaf with tree_size adjusted -> DIVERGED (signature over root fails)")
+@test("T023", "tamper", "deleted last leaf with tree_size adjusted -> INVALID (signature over root fails)")
 def t023():
     def m(d):
         d["leaves"].pop()
         d["checkpoint"]["tree_size"] -= 1
     (code, rep), _ = _tampered("t-dellast", m)
-    assert code == 30 and rep["report"]["checkpoint_signature_valid"] is False
-    return "exit 30, checkpoint_signature_valid=false"
+    assert code == 40 and rep["report"]["checkpoint_signature_valid"] is False
+    return "exit 40, checkpoint_signature_valid=false"
 
 
-@test("T024", "tamper", "two leaves swapped -> DIVERGED")
+@test("T024", "tamper", "two leaves swapped -> INVALID")
 def t024():
     def m(d):
         d["leaves"][0], d["leaves"][1] = d["leaves"][1], d["leaves"][0]
     (code, _), _ = _tampered("t-swap", m)
-    assert code == 30
-    return "exit 30"
+    assert code == 40
+    return "exit 40"
 
 
-@test("T025", "tamper", "checkpoint timestamp +1 ms -> DIVERGED (signature)")
+@test("T025", "tamper", "checkpoint timestamp +1 ms -> INVALID (signature)")
 def t025():
     def m(d):
         d["checkpoint"]["timestamp_ms"] += 1
     (code, rep), _ = _tampered("t-ts", m)
-    assert code == 30 and rep["report"]["checkpoint_signature_valid"] is False
-    return "exit 30"
+    assert code == 40 and rep["report"]["checkpoint_signature_valid"] is False
+    return "exit 40"
 
 
 @test("T026", "tamper", "receipt with rewritten root is dropped, never counted")
@@ -571,33 +571,33 @@ def t028():
     return "exit 0, bindings_asserted=false"
 
 
-@test("T029", "tamper", "binding not_after_ms=1 -> DIVERGED and the text shows the key-binding line failing", fixed_in="0.3.2")
+@test("T029", "tamper", "binding not_after_ms=1 -> INVALID and the text shows the key-binding line failing", fixed_in="0.3.2")
 def t029():
     p, dossier, ident = witnessed_dossier("t-expired")
     dossier["key_bindings"][0]["not_after_ms"] = 1
     path = write_json(os.path.dirname(p), "expired.json", dossier)
     code, out, _ = verify_text(path, ident)
-    assert code == 30, code
+    assert code == 40, code
     assert "✗ Key bindings" in out, out
-    return "exit 30, ✗ Key bindings shown"
+    return "exit 40, ✗ Key bindings shown"
 
 
-@test("T030", "tamper", "unknown leaf type 0x09 -> DIVERGED")
+@test("T030", "tamper", "unknown leaf type 0x09 -> INVALID")
 def t030():
     def m(d):
         d["leaves"][1]["leaf_type"] = 9
     (code, rep), _ = _tampered("t-type", m)
-    assert code == 30 and rep["report"]["leaves_structurally_valid"] is False
-    return "exit 30"
+    assert code == 40 and rep["report"]["leaves_structurally_valid"] is False
+    return "exit 40"
 
 
-@test("T031", "tamper", "identity_pubkey field changed with checkpoint intact -> DIVERGED (self-consistency)")
+@test("T031", "tamper", "identity_pubkey field changed with checkpoint intact -> INVALID (self-consistency)")
 def t031():
     def m(d):
         d["identity_pubkey"] = "ef" * 32
     (code, rep), _ = _tampered("t-ident", m)
-    assert code == 30 and rep["report"]["identity_bound"] is False
-    return "exit 30"
+    assert code == 40 and rep["report"]["identity_bound"] is False
+    return "exit 40"
 
 
 @test("T032", "tamper", "receipts transplanted onto another log never count")
@@ -608,11 +608,11 @@ def t032():
     path = write_json(os.path.dirname(pb), "transplant.json", b)
     code, rep = verify(path, ib)
     q = rep["report"]["quorum"]
-    assert code in (10, 30) and (q is None or q["valid_receipts"] == 0), (code, q)
+    assert code in (10, 40) and (q is None or q["valid_receipts"] == 0), (code, q)
     return f"exit {code}, counted 0"
 
 
-@test("T033", "tamper", "`diff`: identical copies exit 0; an edited copy is 'tampered, not equivocation' (exit 30)")
+@test("T033", "tamper", "`diff`: identical copies exit 0; an edited copy is 'tampered, not equivocation' (exit 40)")
 def t033():
     p, d, ident = witnessed_dossier("t-diff")
     a = write_json(os.path.dirname(p), "a.json", d)
@@ -621,19 +621,19 @@ def t033():
     d["leaves"][0]["payload_hash"] = "11" * 32
     b = write_json(os.path.dirname(p), "b.json", d)
     code2, out2, _ = cli("diff", a, b)
-    assert code2 == 30 and "not" in out2 and "equivocation" in out2, out2
-    return "identical 0; edited 30"
+    assert code2 == 40 and "not" in out2 and "equivocation" in out2, out2
+    return "identical 0; edited 40"
 
 
-@test("T034", "tamper", "a dossier signed by key A presented as key B's with --identity B -> DIVERGED")
+@test("T034", "tamper", "a dossier signed by key A presented as key B's with --identity B -> INVALID")
 def t034():
     p, d, ident = witnessed_dossier("t-impersonate")
     other = wl.WitnessLog.generate().identity_pubkey_hex()
     d["identity_pubkey"] = other
     path = write_json(os.path.dirname(p), "imp.json", d)
     code, rep = verify(path, other)
-    assert code == 30
-    return "exit 30"
+    assert code == 40
+    return "exit 40"
 
 
 # ====================================================== D. python api
@@ -1620,8 +1620,8 @@ def t092():
     bad = note.replace(sig, f"{parts[0]} {parts[1]} {base64.b64encode(bytes(rawsig)).decode()}")
     bp = os.path.join(d, "bad.txt")
     open(bp, "w").write(bad)
-    assert cli("c2sp", "verify", bp, "--vkey", vkey)[0] == 30
-    return "signed note verifies; zeroed signature exit 30"
+    assert cli("c2sp", "verify", bp, "--vkey", vkey)[0] == 40
+    return "signed note verifies; zeroed signature exit 40 (INVALID)"
 
 
 @test("T093", "c2sp", "`c2sp verify` without --vkey is a usage error; unknown flags are refused", fixed_in="0.3.2")
@@ -1676,10 +1676,11 @@ def t095():
 @test("T096", "docs", "README exit-code table matches the binary")
 def t096():
     readme = open(os.path.join(REPO, "README.md")).read()
-    for code, name in ((0, "WITNESSED"), (10, "CONSISTENT-UNWITNESSED"), (20, "UNANCHORED"), (30, "DIVERGED")):
+    for code, name in ((0, "WITNESSED"), (10, "CONSISTENT-UNWITNESSED"), (20, "UNANCHORED"), (30, "DIVERGED"), (40, "INVALID")):
         assert re.search(rf"\b{code}\b[^\n]*{name}|{name}[^\n]*\b{code}\b", readme), name
+    assert re.search(r"\b11\b", readme), "exit 11"
     assert verify(SAMPLE, None, None)[0] == 20 and verify(SAMPLE, SAMPLE_ID, TRUSTED)[0] == 0
-    return "0/10/20/30 documented and observed"
+    return "0/10/11/20/30/40 documented and observed"
 
 
 @test("T097", "docs", "`conform corpus` passes against the committed vectors")
@@ -1727,8 +1728,63 @@ def t099():
 @test("T100", "docs", "examples/verify_demo.py runs and exits 0 (tamper caught)", since="0.3.2")
 def t100():
     r = subprocess.run([sys.executable, os.path.join(REPO, "examples", "verify_demo.py")], capture_output=True, text=True, timeout=120)
-    assert r.returncode == 0 and "DIVERGED" in r.stdout, r.stdout[-500:] + r.stderr[-500:]
-    return "exit 0, DIVERGED shown"
+    assert r.returncode == 0 and "INVALID" in r.stdout, r.stdout[-500:] + r.stderr[-500:]
+    return "exit 0, INVALID shown"
+
+
+# ================================================= K. RFC-0002 (0.5.0)
+
+@test("T101", "cli-verify", "--known-head: a reproduced head changes nothing; a contradicted one is DIVERGED (exit 30)", since="0.5.0")
+def t101():
+    p, d, ident = witnessed_dossier("t-known-head")
+    path = write_json(os.path.dirname(p), "d.json", d)
+    full_root = d["checkpoint"]["root_hash"]
+    size = d["checkpoint"]["tree_size"]
+    code, rep = verify(path, ident, extra=("--known-head", f"{size}:{full_root}"))
+    assert code == 0 and rep["report"]["contradictions"] == [], (code, rep["report"])
+    code, rep = verify(path, ident, extra=("--known-head", f"2:{'ab' * 32}"))
+    assert code == 30 and rep["verdict"] == "DIVERGED" and len(rep["report"]["contradictions"]) == 1, (code, rep)
+    code, rep = verify(path, ident, extra=("--known-head", f"{size + 5}:{'ab' * 32}"))
+    assert code == 0 and rep["report"]["known_heads_unchecked"], (code, rep["report"])
+    return "same head 0; contradicted 30; larger head listed unchecked"
+
+
+@test("T102", "cli-verify", "WITNESSED by fewer than a strict majority exits 11 by default; --allow-sub-majority / --no-strict accept it", since="0.5.0")
+def t102():
+    if len(WS) < 4:
+        return f"skipped: {len(WS)} witnesses (need 4)"
+    p, d, ident = witnessed_dossier("t-sub-majority")
+    d["witness_receipts"] = d["witness_receipts"][:2]
+    path = write_json(os.path.dirname(p), "two.json", d)
+    code, rep = verify(path, ident, extra=("--min-witnesses", "2"))
+    assert code == 11 and rep["verdict"] == "WITNESSED" and rep["report"]["split_view_unsafe"] is True, (code, rep.get("report"))
+    assert rep["exit_code"] == 11 and rep["strict"] is True
+    assert verify(path, ident, extra=("--min-witnesses", "2", "--allow-sub-majority"))[0] == 0
+    assert verify(path, ident, extra=("--min-witnesses", "2", "--no-strict"))[0] == 0
+    return f"2 of {len(WS)}: exit 11; accepted as 0 under either flag"
+
+
+@test("T103", "python-api", "corpus vector 13 through verify_dossier_json (known heads and evidence)", since="0.5.0")
+def t103():
+    v = json.load(open(os.path.join(REPO, "corpus", "13_verdicts.json")))
+    n = 0
+    for c in v["cases"]:
+        rep = json.loads(wl.verify_dossier_json(
+            json.dumps(v["dossiers"][c["dossier"]]),
+            c["threshold"],
+            c["expected_identity"],
+            json.dumps(v["trusted_directory"]) if c["trusted_directory"] else None,
+            c["min_witnesses"],
+            None,
+            c["known_heads"],
+            json.dumps([v["evidence"][k] for k in c["evidence"]]),
+        ))
+        e = c["expect"]
+        assert rep["verdict"] == e["verdict"], (c["name"], rep["verdict"], e["verdict"])
+        assert rep["split_view_unsafe"] == e["split_view_unsafe"], c["name"]
+        assert len(rep["contradictions"]) == e["contradictions"], c["name"]
+        n += 1
+    return f"{n} cases agree"
 
 
 # ============================================================= runner

@@ -177,6 +177,8 @@ pub fn run_demo() -> ExitCode {
         trusted_directory: Some(&directory),
         min_receipts: None,
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let anchored = dossier.verify(0.66, &ctx);
     println!("  B. With an identity you expected and a witness directory YOU trust,");
@@ -352,5 +354,6 @@ fn exit_for(verdict: &Verdict) -> ExitCode {
         Verdict::ConsistentUnwitnessed => 10,
         Verdict::Unanchored => 20,
         Verdict::Diverged => 30,
+        Verdict::Invalid => 40,
     })
 }

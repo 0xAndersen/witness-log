@@ -16,12 +16,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="880" alt="witness-log demo: an agent log is created, one entry is erased, a checkpoint is signed and witnessed, then verified twice; a forgery with flawless cryptography is caught as DIVERGED">
+  <img src="docs/assets/demo.gif" width="880" alt="witness-log demo: an agent log is created, one entry is erased, a checkpoint is signed and witnessed, then verified twice; a forgery with flawless cryptography is caught as INVALID">
 </p>
 
 Every tool call an agent makes becomes a leaf in an RFC 6962 Merkle log signed by the agent's own key.
 Witnesses run by other organisations cosign the head and refuse to ever cosign a contradicting one. Anyone
-verifies the whole record offline with one command and gets one of four verdicts as an exit code. Any single
+verifies the whole record offline with one command and gets one of five verdicts as an exit code. Any single
 entry can be erased for a privacy request without breaking a proof.
 
 ```sh
@@ -81,10 +81,12 @@ two distinct `operator_org` values in *that* directory. A fabricated dossier wit
 `UNANCHORED`.
 
 ```sh
-witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json --strict   # exit 0 = WITNESSED
+witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json   # exit 0 = WITNESSED
 ```
 
-`0` WITNESSED · `10` CONSISTENT-UNWITNESSED · `20` UNANCHORED · `30` DIVERGED · `11` below strict · `2` usage.
+`0` WITNESSED · `11` WITNESSED, but not by a majority of your directory · `10` CONSISTENT-UNWITNESSED ·
+`20` UNANCHORED · `30` DIVERGED (valid, but contradicts a head or equivocation proof you supplied) · `40` INVALID
+(a check failed) · `2` usage.
 No network, no account, verifiable in ten years.
 
 ### 5 · Erase: right to be forgotten, every proof intact
@@ -153,7 +155,7 @@ witness-log testnet up --out trusted.json
 witness-log log init agent.jsonl
 witness-log log append agent.jsonl --intent '{"tool":"transfer_funds","amount_usd":250}'
 witness-log submit agent.jsonl --directory trusted.json --out dossier.json
-witness-log verify dossier.json --directory trusted.json --strict
+witness-log verify dossier.json --directory trusted.json
 witness-log testnet down
 ```
 
@@ -220,7 +222,7 @@ fixed with a regression test. [Testing and evidence](docs/wiki/Testing-and-Evide
 crates/           core, network, cli, python (PyO3), wasm
 clients/          node (@witness-log/node), ai-sdk, typescript (@witness-log/client), create-witness-log, go
 web/              browser verifier (GitHub Pages)
-spec/  corpus/    SPEC.md, dossier schema, 11 conformance vectors
+spec/  corpus/    SPEC.md, dossier schema, 12 encoding vectors and 1 verification vector
 docs/             wiki source, rfcs/, assets/, SECURITY-AUDIT-BRIEF.md
 integrations/mcp/ MCP server shim and tests
 examples/         sample dossier, rewrite-attack/, live-network/, swarm/

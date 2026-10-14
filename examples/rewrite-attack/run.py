@@ -254,6 +254,18 @@ def main() -> int:
         check(code == 10, f"rewritten + the honest log's receipts pasted in: exit {code} (receipts sign the honest root; none count)")
         code, _ = cli("verify", "honest.json", "--identity", agent_key, "--directory", "trusted.json", cwd=work)
         check(code == 0, f"the honest dossier still verifies: exit {code} (WITNESSED)")
+
+        step(9, "A verifier that already holds something: --known-head and --evidence (0.5.0)")
+        code, out = cli("verify", "rewritten.json", "--identity", agent_key, "--known-head", f"4:{honest_root}", cwd=work)
+        show(out, keep=("contradiction", "Verdict", "VERDICT"), limit=4)
+        check(code == 30, f"rewritten + the honest head you saw before: exit {code} (30 = DIVERGED, contradicts a known head)")
+        ev_dir = os.path.join(work, "witness-a", "evidence")
+        ev_files = sorted(os.listdir(ev_dir)) if os.path.isdir(ev_dir) else []
+        if ev_files:
+            ev = os.path.join("witness-a", "evidence", ev_files[0])
+            code, out = cli("verify", "honest.json", "--identity", agent_key, "--directory", "trusted.json", "--evidence", ev, cwd=work)
+            show(out, keep=("contradiction", "Verdict", "VERDICT"), limit=4)
+            check(code == 30, f"even the honest copy, once a witness's equivocation proof is in hand: exit {code} (30 = DIVERGED)")
     finally:
         for p in procs:
             p.terminate()

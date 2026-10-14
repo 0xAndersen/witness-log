@@ -50,6 +50,8 @@ fn ctx<'a>(
         trusted_directory: None,
         min_receipts: None,
         revocations: revs,
+        known_heads: &[],
+        evidence: &[],
     }
 }
 

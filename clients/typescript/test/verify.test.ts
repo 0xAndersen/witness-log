@@ -23,6 +23,7 @@ import {
   verifyRevocation,
   revocationMessage,
   revocationCutOff,
+  verifyEquivocationProof,
   type Dossier,
   type Leaf,
   type WitnessDirectory,
@@ -153,6 +154,46 @@ describe("corpus 12: revocation statements", () => {
   });
 });
 
+describe("corpus 13: verdicts (RFC-0002)", () => {
+  it("every case: verdict, exit code and report fields", () => {
+    const v = corpus("13_verdicts.json");
+    const exits = new Set<number>();
+    for (const c of v.cases) {
+      const r = verifyDossier(v.dossiers[c.dossier], {
+        directory: c.trusted_directory ? v.trusted_directory : undefined,
+        identity: c.expected_identity ?? undefined,
+        threshold: c.threshold,
+        minWitnesses: c.min_witnesses ?? undefined,
+        knownHeads: c.known_heads,
+        evidence: c.evidence.map((k: string) => v.evidence[k]),
+        allowSubMajority: c.allow_sub_majority,
+      });
+      const e = c.expect;
+      assert.equal(r.report.verdict, e.verdict, c.name);
+      assert.equal(r.exitCode, e.exit_code, c.name);
+      assert.equal(r.report.split_view_unsafe, e.split_view_unsafe, c.name);
+      assert.equal(r.report.internally_consistent, e.internally_consistent, c.name);
+      assert.equal(r.report.failures.length > 0, e.has_failures, c.name);
+      assert.equal(r.report.contradictions.length, e.contradictions, c.name);
+      assert.equal(r.report.known_heads_unchecked.length, e.known_heads_unchecked, c.name);
+      assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, c.name);
+      exits.add(e.exit_code);
+    }
+    assert.deepEqual([...exits].sort((a, b) => a - b), [0, 10, 11, 20, 30, 40]);
+  });
+
+  it("equivocation proofs verify only under the origin's own key", () => {
+    const v = corpus("13_verdicts.json");
+    assert.equal(verifyEquivocationProof(v.evidence.equivocation), true);
+    assert.equal(verifyEquivocationProof(v.evidence.other_identity), true);
+    assert.equal(verifyEquivocationProof(v.evidence.stranger_key), false);
+    const p = v.evidence.equivocation;
+    assert.equal(verifyEquivocationProof({ ...p, conflicting_note: p.earlier_note }), false, "same root twice");
+    assert.equal(verifyEquivocationProof({ ...p, log_vkey: v.evidence.stranger_key.log_vkey }), false, "foreign vkey");
+    assert.equal(verifyEquivocationProof({ ...p, earlier_note: p.earlier_note.replace("\n2\n", "\n3\n") }), false, "edited note");
+  });
+});
+
 describe("verifyDossier on examples/sample-dossier.json", () => {
   const dossierPath = join(repo, "examples", "sample-dossier.json");
   const dirPath = join(repo, "examples", "trusted-directory.json");
@@ -192,26 +233,27 @@ describe("verifyDossier on examples/sample-dossier.json", () => {
     assert.equal(none.verdict, "CONSISTENT-UNWITNESSED");
   });
 
-  it("is DIVERGED after tampering, with a reason", { skip: !have }, () => {
+  it("is INVALID after tampering, with a reason", { skip: !have }, () => {
     const { dossier, directory } = load();
     const t = structuredClone(dossier);
     t.leaves[1].payload_hash = "00".repeat(32);
     const r = verifyDossier(t, { directory });
-    assert.equal(r.verdict, "DIVERGED");
-    assert.equal(r.exitCode, 30);
+    assert.equal(r.verdict, "INVALID");
+    assert.equal(r.exitCode, 40);
     assert.ok(r.failures.some((f) => /signed root/.test(f)));
+    assert.deepEqual(r.report.failures, r.failures);
 
     const wrongIdentity = verifyDossier(dossier, { identity: "ab".repeat(32) });
-    assert.equal(wrongIdentity.verdict, "DIVERGED");
+    assert.equal(wrongIdentity.verdict, "INVALID");
     assert.ok(wrongIdentity.failures.some((f) => /expected/.test(f)));
 
     const reordered = structuredClone(dossier);
     [reordered.leaves[0], reordered.leaves[1]] = [reordered.leaves[1], reordered.leaves[0]];
-    assert.equal(verifyDossier(reordered).verdict, "DIVERGED");
+    assert.equal(verifyDossier(reordered).verdict, "INVALID");
 
     const noBinding = structuredClone(dossier);
     noBinding.key_bindings = [{ ...noBinding.key_bindings![0], session_pubkey: "cd".repeat(32) }];
-    assert.equal(verifyDossier(noBinding).verdict, "DIVERGED");
+    assert.equal(verifyDossier(noBinding).verdict, "INVALID");
 
     const forgedReceipt = structuredClone(dossier);
     forgedReceipt.witness_receipts![0].signature = "00".repeat(64);
@@ -224,7 +266,9 @@ describe("verifyDossier on examples/sample-dossier.json", () => {
     assert.throws(() => verifyDossier(d, { identity: "zz" }), TypeError);
     assert.throws(() => verifyDossier(d, { threshold: 2 }), RangeError);
     assert.throws(() => verifyDossier(d, { minWitnesses: 0 }), RangeError);
-    assert.equal(verifyDossier(d).verdict, "DIVERGED");
-    assert.equal(verifyDossier("{}").verdict, "DIVERGED");
+    assert.equal(verifyDossier(d).verdict, "INVALID");
+    assert.equal(verifyDossier("{}").verdict, "INVALID");
+    assert.throws(() => verifyDossier(d, { knownHeads: ["7"] }), TypeError);
+    assert.throws(() => verifyDossier(d, { knownHeads: ["007:" + "ab".repeat(32)] }), TypeError);
   });
 });

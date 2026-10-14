@@ -51,9 +51,12 @@ never folded into it. §5.
 out of band. Receipts are scored only against it. The public `registry/` is
 one source for building yours.
 
-**DIVERGED.** Verdict, exit 30: a concrete check failed. The file was
-altered after signing, fabricated, or is not the log of the identity you
-pinned.
+**DIVERGED.** Verdict, exit 30: the dossier passes every check but
+contradicts evidence the verifier brought about the same identity, a
+`--known-head` it does not reproduce or a verifying equivocation proof
+(`--evidence`). `diff` reports it for two valid, conflicting copies. The
+identity has signed two histories. Before 0.5.0 this name also covered
+failed checks, which are now INVALID.
 
 **Dossier.** The portable, offline-verifiable JSON file: identity, leaves,
 checkpoint, bindings, revocations, receipts, display-only directory copy.
@@ -66,7 +69,8 @@ thing persist-before-cosign and the backup rule prevent.
 
 **Evidence file.** `evidence/<sha256(origin)>.json` written by a witness
 when a log provably equivocated: two log-signed checkpoints, same size,
-different roots. Self-contained; `witness verify-evidence` checks it.
+different roots. Self-contained; `witness verify-evidence` checks it, and
+`verify --evidence <file>` makes a valid dossier of that identity DIVERGED.
 
 **Evidence window.** A range of leaves each carrying an inclusion proof to
 one checkpoint, for handing a reviewer a slice of the log without the rest.
@@ -94,9 +98,22 @@ separately reported axis. §7.
 server write around every tool call: what the agent decided, before; what
 happened, after.
 
+**INVALID.** Verdict, exit 40: a concrete check failed (checkpoint
+signature, identity, leaf structure, key bindings or revocations, Merkle
+continuity). The file was altered after signing, fabricated, or is not the
+log of the identity you pinned; it establishes nothing about the identity.
+Takes precedence over every other verdict. Reported as DIVERGED (30)
+before 0.5.0.
+
 **Journal.** `agent.jsonl`: header with the identity seed, then one JSON
 line per leaf and per binding. Plus `agent.jsonl.salts` (salts) and
 `agent.jsonl.lock` (writer lock). The persistence format of a log.
+
+**Known head.** A `(tree_size, root)` the verifier already trusts for an
+identity, from a receipt it kept or a cosignature it saw:
+`verify --known-head <size>:<root hex>`. A dossier whose first `size`
+leaves give a different root is DIVERGED; one larger than the dossier is
+listed in `known_heads_unchecked` and changes nothing.
 
 **Leaf.** One event's metadata: index, type, timestamp, session key,
 payload hash, and type-specific fields. Canonically encoded (§3) and hashed
@@ -111,7 +128,8 @@ to every leaf and their order. §4.
 
 **`min_witnesses` / `--min-witnesses`.** Absolute floor on the number of
 valid receipts for WITNESSED, alongside the fraction threshold. Use it with
-directories of more than a handful of entries.
+directories of more than a handful of entries. A floor at or below half
+the directory is allowed; a WITNESSED result below a majority exits 11.
 
 **Open enrollment.** Witness mode accepting any log whose canonical origin
 verifies its own checkpoint. No registration; the key is the name.
@@ -155,18 +173,27 @@ erased. §8.
 **Session key.** Ephemeral Ed25519 keypair for one process run, recorded
 on each leaf it writes, vouched for by a binding. §5.
 
+**Split view.** A log showing one history to some witnesses and another
+to the rest, so two conflicting dossiers each reach WITNESSED and no
+witness saw both. Ruled out among honest witnesses when the cosigners are
+a strict majority of the directory. The report's `split_view_unsafe` is
+true for a WITNESSED dossier whose cosigners are not; `verify` exits 11
+for it by default.
+
 **Tree size.** Number of leaves. With the root, the whole state of a log.
 
 **UNANCHORED.** Verdict, exit 20: internally consistent, but no trusted
 directory was supplied so nothing external was checked. An attacker can
 produce this at will; it is not a trust verdict.
 
-**Verdict.** Exactly one of WITNESSED (0), CONSISTENT-UNWITNESSED (10),
-UNANCHORED (20), DIVERGED (30). §9.2. See [Verification and verdicts](Verification-and-Verdicts).
+**Verdict.** Exactly one of WITNESSED (0, or 11 when split-view unsafe),
+CONSISTENT-UNWITNESSED (10), UNANCHORED (20), DIVERGED (30), INVALID (40).
+§9.2. See [Verification and verdicts](Verification-and-Verdicts).
 
 **`VerifyContext`.** The verifier's inputs: expected identity, trusted
-directory, minimum receipts. The trust boundary; nothing in it comes from
-the dossier.
+directory, minimum receipts, revocations it knows of, known heads and
+equivocation proofs. The trust boundary; nothing in it comes from the
+dossier.
 
 **Witness.** A service with one key and a memory of the last head it
 cosigned per log. Verifies a consistency proof, then cosigns; refuses forks.
@@ -174,7 +201,8 @@ Speaks `c2sp.org/tlog-witness`. See [Witness protocol walkthrough](Witness-Proto
 
 **WITNESSED.** Verdict, exit 0: proofs verify, identity pinned, and at
 least two independent operators from the verifier's directory cosigned the
-checkpoint.
+checkpoint. Exit 11 instead when those witnesses are not a strict majority
+of the directory (`split_view_unsafe`), unless `--allow-sub-majority`.
 
 **Write receipt.** Identity-signed statement "I accepted this
 `payload_hash` at this `tree_size`". With later witnessed checkpoints,

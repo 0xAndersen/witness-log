@@ -12,7 +12,9 @@ const MEANING = {
   UNANCHORED:
     "The dossier does not contradict itself, and that is all: no trusted directory was supplied, so nothing ties it to a party you did not already trust. A fabricated dossier reaches this verdict too.",
   DIVERGED:
-    "A check failed. The file was altered after signing, was fabricated, or is not the log named by the expected identity. The failing check is marked below.",
+    "The dossier is valid on its own and contradicts other evidence about the same identity (a head you already trusted, or a witness's equivocation proof): this identity has shown two different histories.",
+  INVALID:
+    "A check failed. The file was altered after signing, was fabricated, or is not the log named by the expected identity; it establishes nothing. The failing check is marked below.",
 };
 
 const state = { engine: null, dossier: null, directory: null, other: null, lastResult: null };
@@ -101,6 +103,9 @@ function options() {
   if (!Number.isNaN(th)) o.threshold = th;
   const min = $("min-receipts").value.trim();
   if (min !== "") o.min_receipts = parseInt(min, 10);
+  const heads = $("known-heads").value.split(/[\s,]+/).filter((h) => h !== "");
+  if (heads.length) o.known_heads = heads;
+  if ($("allow-sub-majority").checked) o.allow_sub_majority = true;
   return o;
 }
 
@@ -133,7 +138,10 @@ function render(r) {
   v.className = `verdict ${r.verdict.toLowerCase()}`;
   $("verdict-word").textContent = r.verdict;
   $("verdict-meaning").textContent = MEANING[r.verdict] || "";
-  $("verdict-exit").textContent = `witness-log verify would exit ${r.exit_code}` + (r.identity_pinned ? "" : " — no expected identity was supplied, so this says what the log's history is, not whose log it is");
+  $("verdict-exit").textContent =
+    `witness-log verify would exit ${r.exit_code}` +
+    (r.exit_code === 11 ? " — WITNESSED, but by fewer than a strict majority of your directory, so a conflicting history could have been cosigned by the rest" : "") +
+    (r.identity_pinned ? "" : " — no expected identity was supplied, so this says what the log's history is, not whose log it is");
 
   const checks = [
     ["checkpoint signature", rep.checkpoint_signature_valid, `Ed25519 over "witness-log-sth-v2" with the algorithm and signer key inside the signed message.`],
@@ -150,6 +158,14 @@ function render(r) {
         : ["witness quorum", false, "the dossier carries no receipts to score against your directory."]
       : ["witness quorum", null, "not scored: no trusted directory supplied."],
   ];
+  for (const f of rep.failures || []) checks.push(["failed", false, f]);
+  if ((options().known_heads || []).length) {
+    const unchecked = rep.known_heads_unchecked || [];
+    checks.push(["consistent with your known heads", (rep.contradictions || []).length === 0,
+      (rep.contradictions || []).join("; ") || (unchecked.length ? `not checked (larger than this dossier): ${unchecked.join(", ")}` : "this dossier's leaves reproduce every head you supplied.")]);
+  } else {
+    for (const c of rep.contradictions || []) checks.push(["contradiction", false, c]);
+  }
   $("checks").innerHTML = checks
     .map(([name, ok, note]) => `<li class="${ok === null ? "skip" : ok ? "ok" : "bad"}"><span class="mark">${ok === null ? "–" : ok ? "✓" : "✗"}</span><span>${esc(name)}<small>${esc(note)}</small></span></li>`)
     .join("");

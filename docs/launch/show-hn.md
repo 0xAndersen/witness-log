@@ -19,8 +19,8 @@ checkpoints over the tree; independent witnesses cosign each head over
 c2sp.org/tlog-witness, the Certificate Transparency witness protocol. Anyone
 verifies a dossier offline with one command, and the exit code is the
 verdict (0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30
-DIVERGED). Any entry can be erased by deleting its salt without breaking a
-proof. Apache-2.0, Rust core, Python bindings, MCP server.
+DIVERGED, 40 INVALID). Any entry can be erased by deleting its salt without
+breaking a proof. Apache-2.0, Rust core, Python bindings, MCP server.
 
 The experiment that matters: an independent evaluation had an operator
 rewrite its agent's entire history and re-sign it with the agent's own key.

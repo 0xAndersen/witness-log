@@ -174,6 +174,8 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         trusted_directory: None,
         min_receipts: None,
         revocations: &[],
+        known_heads: &[],
+        evidence: &[],
     };
     let report = dossier.verify(0.66, &ctx);
     assert!(report.bindings_asserted);
@@ -181,7 +183,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         !report.bindings_valid,
         "a checkpoint signed after the revocation is not evidence"
     );
-    assert_eq!(report.verdict, Verdict::Diverged);
+    assert_eq!(report.verdict, Verdict::Invalid);
 
     // Stripping the revocation no longer helps when the verifier knows it.
     let mut d3 = dossier.clone();
@@ -192,6 +194,8 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         trusted_directory: None,
         min_receipts: None,
         revocations: &known,
+        known_heads: &[],
+        evidence: &[],
     };
     assert_eq!(
         d3.verify(0.66, &ctx).verdict,
@@ -200,7 +204,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
     );
     let r3 = d3.verify(0.66, &ctx_known);
     assert!(r3.bindings_asserted && !r3.bindings_valid);
-    assert_eq!(r3.verdict, Verdict::Diverged);
+    assert_eq!(r3.verdict, Verdict::Invalid);
 
     // A head signed before the revocation, with leaves before it, still verifies.
     let pre = sign_head(&id, &leaves, 4_999);
@@ -215,6 +219,8 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         trusted_directory: None,
         min_receipts: None,
         revocations: &others,
+        known_heads: &[],
+        evidence: &[],
     };
     assert_eq!(d4.verify(0.66, &ctx_other).verdict, Verdict::Unanchored);
 }
@@ -306,6 +312,8 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
             trusted_directory: Some(&trusted),
             min_receipts: Some(1),
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         },
     );
     let q = r.quorum.as_ref().unwrap();
@@ -317,7 +325,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
         dossier.verify(0.0, &VerifyContext::default()).verdict,
         Verdict::Unanchored
     );
-    // Pinned to a different identity: Diverged.
+    // Pinned to a different identity: Invalid.
     let other = IdentityKeypair::generate().public_hex();
     assert_eq!(
         dossier
@@ -328,10 +336,12 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
                     trusted_directory: Some(&trusted),
                     min_receipts: Some(1),
                     revocations: &[],
+                    known_heads: &[],
+                    evidence: &[],
                 }
             )
             .verdict,
-        Verdict::Diverged
+        Verdict::Invalid
     );
 }
 
@@ -387,6 +397,8 @@ fn sound_operator_normalisation_and_project_bucket() {
             trusted_directory: Some(&dir),
             min_receipts: None,
             revocations: &[],
+            known_heads: &[],
+            evidence: &[],
         },
     );
     assert_eq!(
@@ -654,7 +666,7 @@ fn sound_request_parser_bounds() {
     }
 }
 
-/// Hostile dossier JSON is handled without panics and lands on Diverged
+/// Hostile dossier JSON is handled without panics and lands on Invalid
 /// (or fails to parse), never on a higher verdict.
 #[test]
 fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
@@ -710,9 +722,11 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                     trusted_directory: Some(&dir),
                     min_receipts: None,
                     revocations: &[],
+                    known_heads: &[],
+                    evidence: &[],
                 },
             );
-            assert_eq!(r.verdict, Verdict::Diverged, "{path:?}");
+            assert_eq!(r.verdict, Verdict::Invalid, "{path:?}");
         }
     }
     // Baseline is sound.
@@ -725,6 +739,8 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                 trusted_directory: Some(&dir),
                 min_receipts: None,
                 revocations: &[],
+                known_heads: &[],
+                evidence: &[],
             }
         )
         .verdict,

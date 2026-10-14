@@ -37,12 +37,16 @@ func main() {
         ExpectedIdentityPubkey: os.Getenv("EXPECTED_IDENTITY"), // obtained out-of-band
     })
     if err != nil { log.Fatal(err) }
-    fmt.Println(verdict, "exit", verdict.ExitCode(), "valid receipts", report.Quorum.ValidReceipts)
-    os.Exit(verdict.ExitCode())
+    code := report.ExitCode(false) // false: a sub-majority WITNESSED is 11, as the CLI returns
+    fmt.Println(verdict, "exit", code, "valid receipts", report.Quorum.ValidReceipts)
+    os.Exit(code)
 }
 ```
 
-Treat anything but `WITNESSED` (exit 0) as "not proven". The meanings are the
+Treat anything but `WITNESSED` with exit 0 as "not proven": 11 is WITNESSED
+by less than a majority of your directory, 30 DIVERGED (valid, but
+contradicts a head or proof you passed in `Options.KnownHeads` /
+`Options.Evidence`), 40 INVALID (a check failed). The meanings are the
 same as the CLI's: [Verification and verdicts](Verification-and-Verdicts).
 
 ## Bind two agents' logs

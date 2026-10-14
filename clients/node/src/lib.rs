@@ -737,6 +737,14 @@ pub struct VerifyOptions {
     pub min_witnesses: Option<u32>,
     /// Revocations known out of band: one statement or a JSON array (SPEC §5).
     pub revocations_json: Option<String>,
+    /// Heads already trusted for this identity, as `"<size>:<root hex>"`;
+    /// one the dossier does not reproduce makes the verdict DIVERGED
+    /// (RFC-0002).
+    pub known_heads: Option<Vec<String>>,
+    /// Witness equivocation proofs as a JSON array (bare proofs or
+    /// `{"kind": "equivocation", "proof": {...}}`); one that verifies for
+    /// this identity makes the verdict DIVERGED.
+    pub evidence_json: Option<String>,
 }
 
 fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
@@ -752,7 +760,7 @@ fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
 /// The reference verifier (witness-log-network `Dossier::verify`) over a
 /// dossier JSON string. Returns the report as JSON: the same object
 /// `witness-log verify --json` prints under `report`, with `verdict` one
-/// of witnessed, consistent_unwitnessed, unanchored, diverged.
+/// of witnessed, consistent_unwitnessed, unanchored, diverged, invalid.
 #[napi]
 pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>) -> Result<String> {
     let o = options.unwrap_or_default();
@@ -786,11 +794,36 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
             }
             Some(s) => serde_json::from_str(s).map_err(invalid)?,
         };
+    let known_heads = o
+        .known_heads
+        .iter()
+        .flatten()
+        .map(|h| {
+            h.parse::<witness_log_network::KnownHead>()
+                .map_err(|e| invalid(format!("known head {h:?}: {e}")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let evidence = match &o.evidence_json {
+        None => Vec::new(),
+        Some(s) => serde_json::from_str::<Vec<serde_json::Value>>(s)
+            .map_err(invalid)?
+            .into_iter()
+            .map(|v| {
+                let proof = v.get("proof").cloned().unwrap_or(v);
+                serde_json::from_value::<witness_log_network::tlog_witness::EquivocationProof>(
+                    proof,
+                )
+                .map_err(|e| invalid(format!("not an equivocation proof: {e}")))
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: o.identity.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: o.min_witnesses.map(|n| n as usize),
         revocations: &revocations,
+        known_heads: &known_heads,
+        evidence: &evidence,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string(&report).map_err(fail)

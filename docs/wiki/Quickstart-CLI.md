@@ -49,8 +49,8 @@ re-signed checkpoint, three "independent auditors" of their own invention.
 It fails `✗ Identity bound` (the key that signed is not the key the file
 claims) and, even if that were fixed, tops out at `UNANCHORED` because
 receipts are scored only against the verifier's directory, never the
-dossier's own. Exit code 30. Read the two paragraphs it prints at the end;
-they are the threat model in miniature.
+dossier's own. Verdict `INVALID`, exit code 40. Read the two paragraphs it
+prints at the end; they are the threat model in miniature.
 
 ---
 
@@ -61,7 +61,7 @@ they are the threat model in miniature.
 | `testnet up / status / down` | three local witnesses as child processes, plus the directory file listing them | trying the whole path on one machine |
 | `log init / append / forget / export / disclose / info` | an agent's journal from the shell: create, record, erase, export, disclose one payload | agents without bindings, scripts, CI |
 | `submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory (fail-closed: majority or exit 20) | the step that reaches WITNESSED |
-| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--strict] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
+| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--allow-sub-majority] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
 | `journal serve <journal> --listen 127.0.0.1:7390` | HTTP front for one journal: append, forget, submit, dossier | agents in any language, over loopback |
 | `directory build / add` | build `trusted.json` from `registry/witnesses/*.json`, or add one witness by its vkey | curating the directory you trust |
 | `explain [verdict]` | what each verdict proves and does not, in words | before you gate anything on a verdict |
@@ -85,7 +85,7 @@ witness-log log init agent.jsonl                   # prints {"identity": "<hex>"
 witness-log log append agent.jsonl --intent '{"tool":"transfer_funds","amount_usd":250}'
 witness-log log append agent.jsonl --result '{"status":"ok","tx_id":"tx_7ac31"}' --outcome ok
 witness-log submit agent.jsonl --directory trusted.json --out dossier.json
-witness-log verify dossier.json --identity <hex> --directory trusted.json --strict   # exit 0
+witness-log verify dossier.json --identity <hex> --directory trusted.json   # exit 0
 witness-log testnet down
 ```
 
@@ -99,26 +99,34 @@ produce a verdict that means something to someone else.
 ## 2. The verdicts and exit codes
 
 ```
-0   WITNESSED               cryptography sound AND ≥2 independent operators from YOUR directory cosigned
+0   WITNESSED               cryptography sound AND ≥2 independent operators from YOUR directory cosigned,
+                            and they are a strict majority of it (or --allow-sub-majority was given)
+11  WITNESSED               as for 0, but the cosigners are not a strict majority of your directory:
+                            a conflicting history could have been cosigned by the rest (split view)
 10  CONSISTENT-UNWITNESSED  cryptography sound; a directory was supplied but coverage fell short of the gate
-11  (verify --strict only)  anything weaker than WITNESSED by a strict majority of the directory
 20  UNANCHORED              internally consistent; no trusted directory supplied, so nothing external was checked
                             (submit: a witness refused with 422, or fewer than --min cosigned)
-30  DIVERGED                a check failed: altered, fabricated, or signed by an identity you did not pin
+30  DIVERGED                valid, but contradicts a head you passed with --known-head or a witness
+                            equivocation proof you passed with --evidence (diff: two valid, conflicting copies)
+40  INVALID                 a check failed: altered, fabricated, or signed by an identity you did not pin
 2   usage error / unreadable input
 ```
 
 **Why exit codes.** Verification is meant to sit in a pipeline, and a
 pipeline branches on an integer. The codes are spaced so a shell can test
 `-ge 20` for "do not trust this" without parsing text, and `2` is kept
-for usage so a typo cannot be mistaken for a verdict.
+for usage so a typo cannot be mistaken for a verdict. Before 0.5.0 a
+failed check exited 30 and 11 needed `--strict`; since 0.5.0 a failed
+check is 40 and 11 is the default (`--no-strict` restores the 0.4 reading
+of 11 as 0 for one release).
 
 **What each verdict proves, in one sentence each:**
 
 - `WITNESSED`: the history is unaltered since the moment at least two organisations you trust saw it, and it belongs to the identity you expected.
 - `CONSISTENT-UNWITNESSED`: nothing is wrong with the file, but not enough of the witnesses *you* trust have seen it; it may be new, or your directory may be too small, or the agent only reached one operator.
 - `UNANCHORED`: the file does not contradict itself. That is all. An attacker can produce this verdict at will.
-- `DIVERGED`: something concrete failed; the report says which check.
+- `DIVERGED`: the file is valid, and the identity has also signed a history that contradicts it; the report says which head or proof.
+- `INVALID`: something concrete failed; the report says which check.
 
 The reasoning behind each is in [Verification and verdicts](Verification-and-Verdicts).
 
@@ -133,7 +141,12 @@ from the dossier). `trusted.json` is the directory you curated. Both are
 inputs from outside the file; that is what makes the gate mean something.
 `--min-witnesses` is an absolute floor on receipt count, added because a
 fraction of a 60-entry directory is not a useful threshold. Omit it and
-the CLI will warn you when the directory is large.
+the CLI will warn you when the directory is large. A floor of 3 against a
+directory of more than five witnesses lets a sub-majority pass the gate:
+a dossier cosigned by half the directory or fewer is WITNESSED but exits
+11, which this gate rejects. Either verify against a directory of the
+witnesses you actually submit to, so that the cosigners are a majority of
+it, or accept the split-view risk explicitly with `--allow-sub-majority`.
 
 ---
 
@@ -211,9 +224,10 @@ Line by line, what was actually checked:
 | Independent operators | how many distinct `operator_org` values cosigned; this is what WITNESSED requires ≥2 of |
 | Compute-provider diversity | a second axis: the same operator on two clouds scores higher than on one |
 
-`--json` gives the same as a structured object (`verdict`,
+`--json` gives the same as a structured object (`verdict`, `exit_code`,
 `identity_pinned`, `internally_consistent`, `bindings_asserted`,
-`quorum.independent_operators_represented`, `quorum.count_gate`, …).
+`quorum.independent_operators_represented`, `quorum.count_gate`,
+`split_view_unsafe`, `failures`, `contradictions`, …).
 
 ---
 
@@ -226,8 +240,13 @@ witness-log diff monday.json friday.json
 Three outcomes, and they mean different things:
 
 - **Friday extends Monday.** A consistency proof exists from Monday's size to Friday's; nothing was rewritten. Normal.
-- **Same identity, same size, different roots.** The identity signed two histories. That is *equivocation*: the agent (or whoever holds its key) presented different pasts to different people. Witnesses exist precisely to make this detectable.
-- **Leaves differ but the checkpoint is the same.** Someone edited a dossier after it was signed. That is *tampering*, and the Merkle root catches it.
+- **Same identity, same size, different roots.** The identity signed two histories. That is *equivocation*: the agent (or whoever holds its key) presented different pasts to different people. Witnesses exist precisely to make this detectable. Exit 30 (DIVERGED).
+- **Leaves differ but the checkpoint is the same.** Someone edited a dossier after it was signed. That is *tampering*, and the Merkle root catches it. Exit 40 (INVALID): an edited copy proves nothing, so it is never read as equivocation.
+
+With one copy and a head you kept from earlier (a receipt, a cosigned
+checkpoint), `verify friday.json --known-head <size>:<root>` makes the
+same check: exit 30 if Friday's first `<size>` leaves no longer produce
+that root.
 
 ---
 

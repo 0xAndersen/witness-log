@@ -291,11 +291,12 @@ fn install_to_witnessed_with_the_cli_alone() {
     assert_eq!(code(&v), 0);
     assert_eq!(json(&v)["verdict"], "WITNESSED");
 
-    // --strict without a directory: UNANCHORED -> 11, not 20.
+    // Strict (the default since 0.5.0) only refines WITNESSED: without a
+    // directory the verdict is UNANCHORED and the exit code is 20 either way.
     let v = wl(&root, &["verify", "dossier.json", "--strict"]);
-    assert_eq!(code(&v), 11, "{}", stdout(&v));
-    let v = wl(&root, &["verify", "dossier.json"]);
-    assert_eq!(code(&v), 20, "default behaviour unchanged");
+    assert_eq!(code(&v), 20, "{}", stdout(&v));
+    let v = wl(&root, &["verify", "dossier.json", "--no-strict"]);
+    assert_eq!(code(&v), 20);
 
     // C2SP export: the cosignatures travel as a signed note that `c2sp
     // verify` accepts against the witnesses' keys alone.
@@ -536,7 +537,9 @@ fn submit_fails_closed_by_default() {
             "--strict",
         ],
     );
-    assert_eq!(code(&v), 11, "{}", stdout(&v));
+    // Below the default gate the verdict is CONSISTENT-UNWITNESSED, and
+    // the exit code is the verdict's (10) with or without strict.
+    assert_eq!(code(&v), 10, "{}", stdout(&v));
     let v = wl(
         &root,
         &[
@@ -546,13 +549,10 @@ fn submit_fails_closed_by_default() {
             &identity,
             "--directory",
             &net.trusted,
+            "--no-strict",
         ],
     );
-    assert_eq!(
-        code(&v),
-        10,
-        "without --strict the verdict code is unchanged"
-    );
+    assert_eq!(code(&v), 10);
 
     // A fork of the same identity: the witness that cosigned refuses (422).
     let seed_hex = {

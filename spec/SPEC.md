@@ -69,7 +69,8 @@ and independent third-party witnessing of those checkpoints. See
 `GOVERNANCE.md` for why, and `THREAT_MODEL.md` for exactly what this does
 and does not guarantee.
 
-WitnessLog shares its model and its four verdict names with
+WitnessLog shares its model and four of its five verdict names (all but
+`Invalid`, §9.2) with
 `draft-maintainer-1f916-agent-record` (individual draft, Informational),
 but it is **not** wire-compatible with that draft: the draft uses
 colon-delimited payloads, its own witness countersignature rather than
@@ -803,6 +804,27 @@ parameters. Omitting both is a legal, meaningful verification run — it
 proves the dossier doesn't contradict itself — but the reachable verdict
 is capped accordingly; see §9.2.
 
+A verifier may also bring evidence it already holds about the same
+identity. Neither input raises a verdict; each can only make a valid
+dossier `Diverged` (§9.2):
+
+- **`known_heads`** — zero or more `(tree_size, root_hash)` pairs the
+  verifier already trusts for this identity (a checkpoint it kept, a
+  cosignature it saw). A dossier whose first `tree_size` leaves do not
+  reproduce `root_hash` contradicts it. A known head larger than the
+  dossier's tree cannot be checked against it and is reported in
+  `known_heads_unchecked`, not treated as an error.
+- **`evidence`** — zero or more witness equivocation proofs (§9.3). A
+  proof counts only if its origin is this identity's canonical origin
+  `witness-log/<identity hex>` and both of its notes verify under the key
+  that origin names (the proof's own `log_vkey` must be that key): the
+  identity signed two different roots for one tree size.
+
+`witness-log verify` exposes these as `--known-head <size>:<root hex>`
+and `--evidence <file>`, both repeatable; an evidence file is accepted as
+`witness serve` writes it (`{"kind":"equivocation","proof":{...}}`) or as
+a bare proof.
+
 `key_bindings` and `revocations` are treated differently: they are
 checked for internal validity (each entry's own signature verifies, and
 each named identity matches `identity_pubkey`) regardless of whether any
@@ -816,17 +838,52 @@ backward-compatible with dossiers that predate the fields.
 
 ### 9.2 The verdict
 
-Verification produces exactly one of four verdicts:
+Verification produces exactly one of five verdicts:
 
 | Verdict | What it means | What it does NOT mean |
 |---|---|---|
 | `Witnessed` | Every cryptographic and structural check passes, AND a `trusted_directory` was supplied, AND the valid receipts from witnesses in that directory come from at least **two distinct independent operators** (project-operated witnesses all count as one bucket; witnesses sharing the subject's own operator count as none), AND the receipt count meets the caller's threshold. Diversity is reported as two separate fractions (operator, compute provider) but the gate is the absolute independent-operator count, because a fraction scales with the receipt count and a single colluding operator could satisfy any fraction with enough keys. | Proof against a colluding operator with a captured witness set — see THREAT_MODEL.md's "Witness independence" section. Only as strong as the trusted directory actually is. |
 | `ConsistentUnwitnessed` | Every cryptographic and structural check passes, a `trusted_directory` WAS supplied, but witness coverage is absent, below threshold, or entirely project-operated. | Equivocation resistance. A single-node log can show different histories to different verifiers undetected. |
 | `Unanchored` | Every cryptographic and structural check passes, but no `trusted_directory` was supplied at all (regardless of what the dossier's own `witness_directory` or `witness_receipts` claim). | Anything about authenticity to a party the verifier didn't already trust. This is the ceiling for a fabricated dossier — see §9.1. |
-| `Diverged` | Any cryptographic, identity-binding, structural-validity, or key-binding check FAILS. | — treat as evidence of tampering, fabrication, a mismatched `expected_identity_pubkey`, or an honest artifact whose non-cryptographic metadata is inconsistent (a leaf timestamp edited after signing fails structural validation the same way); the verifier's job is to report which check failed, not to assume intent. |
+| `Diverged` | Every check passes, AND the dossier contradicts evidence the verifier supplied about the same identity (§9.1): a known head whose root its first `tree_size` leaves do not reproduce, or an equivocation proof that verifies for this identity. | That this file is the false copy. Divergence is a relation between two histories of one identity, this dossier and the one the evidence commits to; which one a counterparty was shown is a separate question. |
+| `Invalid` | Any cryptographic, identity-binding, structural-validity, key-binding or revocation, or Merkle-continuity check FAILS. | — treat as evidence of tampering, fabrication, a mismatched `expected_identity_pubkey`, or an honest artifact whose non-cryptographic metadata is inconsistent (a leaf timestamp edited after signing fails structural validation the same way); the verifier's job is to report which check failed, not to assume intent. An invalid file establishes nothing about the identity, including that it equivocated. |
 
-`Diverged` always takes precedence over the other three — any failure
-below caps the verdict there regardless of witness coverage.
+Precedence: `Invalid` takes precedence over the other four — any failed
+check caps the verdict there regardless of witness coverage or other
+evidence, and contradictions are only evaluated for a dossier that passes
+every check. `Diverged` takes precedence over `Witnessed`,
+`ConsistentUnwitnessed` and `Unanchored`: cosignatures on one history do
+not cancel proof of a second. A verifier given neither known heads nor
+evidence cannot return `Diverged`; two valid, conflicting copies of one
+log are compared with `witness-log diff`, which exits `30` for them. Before 0.5.0 every failed check was reported as `Diverged`
+(RFC-0002).
+
+The report states why: `failures` lists the failed checks of an
+`Invalid` dossier and `contradictions` the known heads or proofs a
+`Diverged` one contradicts (both empty otherwise; their wording is not
+normative), and `known_heads_unchecked` lists known heads larger than the
+dossier as `"<size>:<root hex>"`.
+
+**Split-view safety.** The report also states `split_view_unsafe`: true
+when the verdict is `Witnessed` but the valid receipts from distinct
+trusted witnesses are not a strict majority of the trusted directory
+(`2 × valid_receipts ≤` the number of witnesses in it). A conflicting
+history for the same identity could then have been cosigned by the rest
+of the directory without any witness seeing both. The verdict stays
+`Witnessed`, because the receipts did verify; what is unsafe is the
+inference that no conflicting history exists. The reference CLI exits
+`11` for it by default, and a caller that accepts a sub-majority gate
+says so explicitly (`--allow-sub-majority`).
+
+**Exit codes.** `witness-log verify` returns the verdict as its exit
+status: `0` Witnessed (split-view safe, or accepted under
+`--allow-sub-majority` or `--no-strict`), `11` Witnessed with `split_view_unsafe`, `10`
+ConsistentUnwitnessed, `20` Unanchored, `30` Diverged, `40` Invalid, `2`
+a usage error or unreadable input. `/corpus/13_verdicts.json` is a
+verification vector: whole dossiers, a trusted directory, equivocation
+proofs, and for each case the expected verdict, exit code and report
+fields.
+
 `internally_consistent` (checkpoint signature, identity binding,
 structural validity, key-binding validity, Merkle continuity) is
 reported as a separate boolean from the verdict, deliberately: a
@@ -1029,10 +1086,11 @@ one (an earlier draft of the reference implementation made that mistake).
 Proposals that would change §2–§9 are written up as RFCs under
 `docs/rfcs/` before any code or corpus change (`docs/rfcs/README.md`
 describes the process). Open at the time of writing: RFC-0001 (per
-organisation fleet checkpoint log), RFC-0002 (verdict strictness and an
-INVALID verdict), RFC-0003 (DNS TXT self-registration of witnesses),
-RFC-0004 (SCITT receipts). An RFC is not part of this specification until
-its text lands here with corpus vectors.
+organisation fleet checkpoint log), RFC-0003 (DNS TXT self-registration
+of witnesses), RFC-0004 (SCITT receipts). An RFC is not part of this
+specification until its text lands here with corpus vectors. RFC-0002
+(verdict strictness and an INVALID verdict) landed in 0.5.0 as §9.1–§9.2
+with corpus vector 13.
 
 ## Adoption
 
@@ -1040,8 +1098,9 @@ This specification is published to be implemented. Anyone may implement
 the wire format and verification procedure described here, in any
 language, for any purpose, without using, linking or deriving from the
 reference implementation; a conformant implementation is one that
-reproduces every vector in `/corpus/` byte for byte, which is checkable
-mechanically (`witness-log conform <dir>`). Interoperability with the
+reproduces every encoding vector in `/corpus/` byte for byte, which is
+checkable mechanically (`witness-log conform <dir>`), and reaches the
+decisions in its verification vector (Conformance, below). Interoperability with the
 wider transparency-log ecosystem is by design (§9.3): WitnessLog
 checkpoints are C2SP signed notes, and any `c2sp.org/tlog-witness`
 witness can cosign them.
@@ -1057,6 +1116,8 @@ what makes an implementation a WitnessLog implementation.
 ## Conformance
 
 An implementation is conformant with this specification's current version when it reproduces every value in
-`/corpus/*.json` exactly, byte for byte, from the described inputs. This is
-enforced in CI via `witness-log conform` (see CONTRIBUTING.md) and is the actual
-gate for claiming compatibility — not this document by itself.
+the encoding vectors `/corpus/01_*.json` to `/corpus/12_*.json` exactly, byte for byte, from the described inputs,
+and, if it verifies dossiers, returns the expected verdict, exit code and report fields for every case in the
+verification vector `/corpus/13_verdicts.json`. The encoding vectors are enforced in CI via `witness-log conform`
+(see CONTRIBUTING.md); vector 13 is run by each verifier's own test suite. Together they are the actual gate for
+claiming compatibility — not this document by itself.

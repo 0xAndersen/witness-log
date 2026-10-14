@@ -106,7 +106,8 @@ layers (RATS, WIMSE, OAuth), the decomposition used by
 every concept and proposes a path to SCITT-compatible receipts.
 
 `draft-maintainer-1f916-agent-record` (individual draft, -01) shares
-witness-log's model, including the four verdict names, but is **not
+witness-log's model, including four of its five verdict names (not
+INVALID), but is **not
 wire-compatible**: different checkpoint and countersignature encodings, no
 C2SP, registries instead of per-agent logs, refusals counted as evidence.
 The full divergence list is on the [SCITT mapping](SCITT-Mapping#divergence-list-draft-maintainer-1f916-agent-record)

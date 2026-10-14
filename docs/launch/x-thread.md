@@ -59,11 +59,12 @@ Verify offline, one command. The exit code is the verdict:
 10 CONSISTENT-UNWITNESSED
 20 UNANCHORED: self-consistent only; a forger gets this far
 30 DIVERGED
+40 INVALID
 
 The dossier never supplies its own trust inputs.
 ```
 
-chars: 255 · x-weighted: 255
+chars: 266 · x-weighted: 266
 
 ## 6/7 · the 3,000-agent run
 

@@ -3,7 +3,7 @@
  * native code and no `witness-log` binary: SHA-256 and Ed25519 come from
  * `node:crypto`. It is a second implementation of the verification
  * procedure, independent of the Rust reference verifier, and it produces
- * the same four verdicts for the same inputs.
+ * the same five verdicts and exit codes for the same inputs.
  *
  * One known difference, stated rather than hidden: SPEC §6 requires strict
  * Ed25519 verification (reject small-order and mixed-order components).
@@ -145,7 +145,34 @@ export interface DossierReport {
   identity_pinned: boolean;
   internally_consistent: boolean;
   quorum: QuorumResult | null;
-  verdict: "witnessed" | "consistent_unwitnessed" | "unanchored" | "diverged";
+  /**
+   * WITNESSED, but the cosigning witnesses are not a strict majority of
+   * the trusted directory, so a conflicting history could have been
+   * cosigned by the rest (RFC-0002). Exit 11 unless `allowSubMajority`.
+   */
+  split_view_unsafe: boolean;
+  /** Why the verdict is INVALID, one entry per failed check; empty otherwise. */
+  failures: string[];
+  /** Why the verdict is DIVERGED: each known head or evidence proof this dossier contradicts. */
+  contradictions: string[];
+  /** Known heads larger than this dossier, which it cannot be checked against (`"<size>:<root>"`). */
+  known_heads_unchecked: string[];
+  verdict: "witnessed" | "consistent_unwitnessed" | "unanchored" | "diverged" | "invalid";
+}
+
+/** A (tree size, root) the verifier already trusts for this identity. */
+export interface KnownHead {
+  tree_size: number;
+  /** 64 hex. */
+  root_hash: string;
+}
+
+/** A witness's evidence that one log signed two roots for one tree size (`witness serve` writes it under `"proof"`). */
+export interface EquivocationProof {
+  origin: string;
+  log_vkey: string;
+  earlier_note: string;
+  conflicting_note: string;
 }
 
 export interface VerifyDossierOptions {
@@ -159,20 +186,40 @@ export interface VerifyDossierOptions {
   minWitnesses?: number;
   /** Revocations you know about out of band; applied even when the dossier omits them (SPEC §5). */
   revocations?: RevocationStatement[];
+  /**
+   * Heads you already trust for this identity (`{tree_size, root_hash}` or
+   * `"<size>:<root hex>"`). A dossier whose first `tree_size` leaves do not
+   * reproduce one is DIVERGED (RFC-0002).
+   */
+  knownHeads?: Array<KnownHead | string>;
+  /** Witness equivocation proofs. One that verifies for this identity makes the verdict DIVERGED. */
+  evidence?: EquivocationProof[];
+  /**
+   * Accept WITNESSED from fewer than a strict majority of the directory as
+   * exit 0 instead of 11. Default false (strict, the CLI's default since 0.5.0).
+   */
+  allowSubMajority?: boolean;
 }
 
 export interface DossierVerification {
   verdict: Verdict;
-  /** 0 / 10 / 20 / 30, the CLI's contract. */
+  /**
+   * The CLI's contract: 0 WITNESSED, 11 WITNESSED by fewer than a strict
+   * majority (unless `allowSubMajority`), 10, 20, 30 DIVERGED, 40 INVALID.
+   */
   exitCode: number;
-  /** True only for WITNESSED. */
+  /** True only for WITNESSED with exit 0. */
   ok: boolean;
+  /** See `DossierReport.split_view_unsafe`. */
+  splitViewUnsafe: boolean;
   identityPubkey: string;
   identityPinned: boolean;
   directoryPinned: boolean;
   internallyConsistent: boolean;
-  /** Which checks failed, in plain words. Empty unless DIVERGED. */
+  /** Which checks failed, in plain words. Empty unless INVALID. */
   failures: string[];
+  /** What the dossier contradicts. Empty unless DIVERGED. */
+  contradictions: string[];
   report: DossierReport;
 }
 
@@ -629,6 +676,133 @@ export function verifyReceipt(r: WitnessReceipt, against: SignedTreeHead): boole
   return ed25519Verify(r.witness_pubkey, msg, r.signature);
 }
 
+// -------------------------------------------- signed notes (c2sp.org)
+
+const EM_DASH = "\u2014";
+const SIG_TYPE_ED25519 = 0x01;
+const MAX_NOTE_SIGNATURES = 100;
+
+interface NoteSignature {
+  name: string;
+  keyId: Uint8Array;
+  signature: Uint8Array;
+}
+
+/** A c2sp.org/signed-note: the text (with its final newline) and its signature lines. Null if malformed. */
+function parseSignedNote(raw: string): { text: string; signatures: NoteSignature[] } | null {
+  for (const ch of raw) {
+    const c = ch.codePointAt(0)!;
+    if (c < 0x20 && c !== 0x0a) return null;
+  }
+  const lines = raw.split("\n");
+  let sep = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === "" && lines.slice(i + 1).some((l) => l !== "")) sep = i;
+  }
+  if (sep < 0) return null;
+  const signatures: NoteSignature[] = [];
+  for (const line of lines.slice(sep + 1)) {
+    if (line === "") continue;
+    if (signatures.length >= MAX_NOTE_SIGNATURES) return null;
+    if (!line.startsWith(EM_DASH + " ")) return null;
+    const rest = line.slice(EM_DASH.length + 1);
+    const space = rest.lastIndexOf(" ");
+    if (space <= 0) return null;
+    const name = rest.slice(0, space);
+    const b64 = rest.slice(space + 1);
+    if (name.includes(" ") || name.includes("+")) return null;
+    const payload = strictBase64(b64);
+    if (payload === null || payload.length < 5) return null;
+    signatures.push({ name, keyId: payload.slice(0, 4), signature: payload.slice(4) });
+  }
+  if (signatures.length === 0) return null;
+  return { text: lines.slice(0, sep).join("\n") + "\n", signatures };
+}
+
+function strictBase64(s: string): Uint8Array | null {
+  if (s.length === 0 || s.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(s)) return null;
+  const b = Buffer.from(s, "base64");
+  return b.toString("base64") === s ? new Uint8Array(b) : null;
+}
+
+function noteKeyId(name: string, sigType: number, publicKey: Uint8Array): Uint8Array {
+  return sha256(utf8.encode(name), new Uint8Array([0x0a, sigType]), publicKey).slice(0, 4);
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/** The identity a canonical origin (`witness-log/<64 hex>`) names, or null. */
+function identityFromCanonicalOrigin(origin: string): string | null {
+  if (!origin.startsWith(CANONICAL_ORIGIN_PREFIX)) return null;
+  const hex = origin.slice(CANONICAL_ORIGIN_PREFIX.length);
+  return LOWER_HEX64.test(hex) && ed25519Key(hex) !== null ? hex : null;
+}
+
+/** Origin, size and root of a checkpoint note whose Ed25519 signature by `name`/`pubkeyHex` verifies; null otherwise. */
+function verifiedCheckpoint(raw: string, name: string, pubkeyHex: string): { origin: string; size: string; root: string } | null {
+  const note = parseSignedNote(raw);
+  if (note === null) return null;
+  const id = noteKeyId(name, SIG_TYPE_ED25519, hexToBytes(pubkeyHex));
+  let verified = false;
+  for (const sig of note.signatures) {
+    if (sig.name !== name || !sameBytes(sig.keyId, id)) continue; // unknown key: ignored
+    if (sig.signature.length !== 64) return null;
+    if (!ed25519Verify(pubkeyHex, utf8.encode(note.text), bytesToHex(sig.signature))) return null;
+    verified = true;
+  }
+  if (!verified) return null;
+  const lines = note.text.replace(/\n+$/, "").split("\n");
+  if (lines.length < 3 || lines.slice(3).some((l) => l === "")) return null;
+  const [origin, size, rootB64] = lines;
+  if (origin === "" || !/^(0|[1-9][0-9]*)$/.test(size) || BigInt(size) > 0xffff_ffff_ffff_ffffn) return null;
+  const root = strictBase64(rootB64);
+  if (root === null || root.length !== 32) return null;
+  return { origin, size, root: bytesToHex(root) };
+}
+
+/**
+ * Verify a witness equivocation proof with the key its canonical origin
+ * names: the proof's own `log_vkey` must be exactly that key, and both
+ * notes must verify under it, name the origin, and show one tree size with
+ * two different roots.
+ */
+export function verifyEquivocationProof(p: EquivocationProof): boolean {
+  if (p === null || typeof p !== "object") return false;
+  const identity = identityFromCanonicalOrigin(String(p.origin ?? ""));
+  if (identity === null) return false;
+  const vkey = String(p.log_vkey ?? "");
+  const plus1 = vkey.indexOf("+");
+  const plus2 = plus1 < 0 ? -1 : vkey.indexOf("+", plus1 + 1);
+  if (plus2 < 0 || vkey.slice(0, plus1) !== p.origin) return false;
+  const material = strictBase64(vkey.slice(plus2 + 1));
+  if (material === null || material[0] !== SIG_TYPE_ED25519 || bytesToHex(material.slice(1)) !== identity) return false;
+  const a = verifiedCheckpoint(String(p.earlier_note ?? ""), p.origin, identity);
+  const b = verifiedCheckpoint(String(p.conflicting_note ?? ""), p.origin, identity);
+  return a !== null && b !== null && a.origin === p.origin && b.origin === p.origin && a.size === b.size && a.root !== b.root;
+}
+
+/** Parse `"<size>:<root hex>"` (or pass a `KnownHead` through, checked). */
+export function parseKnownHead(h: KnownHead | string): KnownHead {
+  let size: string;
+  let root: string;
+  if (typeof h === "string") {
+    const i = h.indexOf(":");
+    if (i < 0) throw new TypeError(`known head: expected <size>:<root hex>, got ${JSON.stringify(h)}`);
+    size = h.slice(0, i).trim();
+    root = h.slice(i + 1).trim();
+  } else {
+    size = String(h.tree_size);
+    root = String(h.root_hash);
+  }
+  if (!/^(0|[1-9][0-9]*)$/.test(size) || !Number.isSafeInteger(Number(size))) {
+    throw new TypeError(`known head: size ${JSON.stringify(size)} is not a canonical decimal integer`);
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(root)) throw new TypeError(`known head: root ${JSON.stringify(root)} is not 32 bytes of hex`);
+  return { tree_size: Number(size), root_hash: root.toLowerCase() };
+}
+
 // ---------------------------------------------------------------- quorum
 
 function normalizeLabel(s: string): string {
@@ -745,11 +919,15 @@ const VERDICT_NAME: Record<DossierReport["verdict"], Verdict> = {
   consistent_unwitnessed: "CONSISTENT-UNWITNESSED",
   unanchored: "UNANCHORED",
   diverged: "DIVERGED",
+  invalid: "INVALID",
 };
+
+/** Exit status for WITNESSED by fewer than a strict majority of the directory (RFC-0002). */
+export const EXIT_SPLIT_VIEW_UNSAFE = 11;
 
 /**
  * Verify a dossier offline (SPEC §9.1–§9.2). Synchronous; never throws on
- * a hostile dossier (a malformed one is DIVERGED), only on bad options.
+ * a hostile dossier (a malformed one is INVALID), only on bad options.
  */
 export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOptions = {}): DossierVerification {
   const d: Dossier = typeof dossier === "string" ? (JSON.parse(dossier) as Dossier) : dossier;
@@ -762,6 +940,8 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     throw new RangeError("minWitnesses must be at least 1");
   }
   const trusted = asDirectory(opts.directory);
+  const knownHeads = (opts.knownHeads ?? []).map(parseKnownHead);
+  const evidence = opts.evidence ?? [];
 
   const failures: string[] = [];
   const checkpoint = d.checkpoint ?? ({} as SignedTreeHead);
@@ -774,11 +954,11 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   const selfConsistent = String(d.identity_pubkey ?? "").toLowerCase() === signer.toLowerCase();
   const pinOk = opts.identity === undefined || opts.identity.toLowerCase() === signer.toLowerCase();
   const identityBound = selfConsistent && pinOk;
-  if (!selfConsistent) failures.push("dossier identity_pubkey does not match checkpoint.signer_pubkey");
-  if (!pinOk) failures.push("checkpoint.signer_pubkey is not the identity you expected");
+  if (!selfConsistent) failures.push("identity_pubkey does not match the key that signed the checkpoint");
+  else if (!pinOk) failures.push("the checkpoint is not signed by the identity you expected");
 
   const leafError = validateLeaves(leaves);
-  if (leafError !== null) failures.push(leafError);
+  if (leafError !== null) failures.push(`leaf structure: ${leafError}`);
 
   const ownRevocations = d.revocations ?? [];
   const idLower = String(d.identity_pubkey ?? "").toLowerCase();
@@ -795,17 +975,45 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     Number(checkpoint.timestamp_ms),
     Number(checkpoint.tree_size),
   );
-  if (bindingError !== null) failures.push(bindingError);
+  if (bindingError !== null) failures.push(`key bindings or revocations: ${bindingError}`);
   const bindingsAsserted = (d.key_bindings ?? []).length > 0 || allRevocations.length > 0;
 
-  let rebuilt = "";
+  let leafHashes: Uint8Array[] | null = null;
   try {
-    rebuilt = bytesToHex(merkleRoot(leaves.map((l) => leafHash(leafCanonicalBytes(l)))));
+    leafHashes = leaves.map((l) => leafHash(leafCanonicalBytes(l)));
   } catch {
-    rebuilt = "";
+    leafHashes = null;
   }
-  const merkleOk = leaves.length === checkpoint.tree_size && rebuilt === checkpoint.root_hash;
-  if (!merkleOk) failures.push("leaves do not reproduce the signed root");
+  const rebuilt = leafHashes === null ? "" : bytesToHex(merkleRoot(leafHashes));
+  const sizeMatches = leaves.length === checkpoint.tree_size;
+  const merkleOk = sizeMatches && rebuilt === checkpoint.root_hash;
+  if (!sizeMatches) failures.push(`${leaves.length} leaves but the checkpoint claims tree_size ${checkpoint.tree_size}`);
+  else if (!merkleOk) failures.push("the leaves do not reproduce the signed root");
+
+  // Contradictions with evidence the verifier brought (RFC-0002), only
+  // for a valid file: an invalid one is INVALID whatever else is true.
+  const contradictions: string[] = [];
+  const knownHeadsUnchecked: string[] = [];
+  if (failures.length === 0 && leafHashes !== null) {
+    for (const kh of knownHeads) {
+      if (kh.tree_size > leafHashes.length) {
+        knownHeadsUnchecked.push(`${kh.tree_size}:${kh.root_hash}`);
+        continue;
+      }
+      const prefix = bytesToHex(merkleRoot(leafHashes.slice(0, kh.tree_size)));
+      if (prefix !== kh.root_hash) {
+        contradictions.push(
+          `known head ${kh.tree_size}:${kh.root_hash} is not what this dossier's first ${kh.tree_size} leaves produce (${prefix})`,
+        );
+      }
+    }
+    const origin = ed25519Key(String(d.identity_pubkey ?? "")) === null ? null : canonicalOrigin(String(d.identity_pubkey));
+    for (const proof of evidence) {
+      if (origin !== null && proof?.origin === origin && verifyEquivocationProof(proof)) {
+        contradictions.push(`witness evidence: this identity signed two different roots for one tree size (${proof.origin})`);
+      }
+    }
+  }
 
   const externallyAnchored = trusted !== undefined;
   let quorum: QuorumResult | null = null;
@@ -821,7 +1029,8 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   const internallyConsistent =
     checkpointSignatureValid && identityBound && leafError === null && bindingError === null && merkleOk;
   let verdict: DossierReport["verdict"];
-  if (!internallyConsistent) verdict = "diverged";
+  if (failures.length > 0) verdict = "invalid";
+  else if (contradictions.length > 0) verdict = "diverged";
   else if (!externallyAnchored) verdict = "unanchored";
   else if (quorum === null || !quorum.meets_count_threshold) verdict = "consistent_unwitnessed";
   else if (quorum.distinct_independent_operators >= MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED) verdict = "witnessed";
@@ -840,18 +1049,25 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     identity_pinned: opts.identity !== undefined,
     internally_consistent: internallyConsistent,
     quorum,
+    split_view_unsafe: verdict === "witnessed" && !(quorum?.split_view_resistant ?? false),
+    failures,
+    contradictions,
+    known_heads_unchecked: knownHeadsUnchecked,
     verdict,
   };
   const name = VERDICT_NAME[verdict];
+  const exitCode = report.split_view_unsafe && !opts.allowSubMajority ? EXIT_SPLIT_VIEW_UNSAFE : EXIT_CODES[name];
   return {
     verdict: name,
-    exitCode: EXIT_CODES[name],
-    ok: name === "WITNESSED",
+    exitCode,
+    ok: name === "WITNESSED" && exitCode === 0,
+    splitViewUnsafe: report.split_view_unsafe,
     identityPubkey: signer,
     identityPinned: opts.identity !== undefined,
     directoryPinned: externallyAnchored,
     internallyConsistent,
-    failures: verdict === "diverged" ? failures : [],
+    failures,
+    contradictions,
     report,
   };
 }

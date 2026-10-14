@@ -145,7 +145,10 @@ fn verdict_covers_cosignature_keys_and_rejects_when_nothing_verified() {
     let stranger_vkey =
         VerifierKey::for_cosignature("w.test/9", &stranger.verifying_key()).encode();
     let (code, out) = run(&["c2sp", "verify", &path, "--vkey", &stranger_vkey]);
-    assert_eq!(code, 30, "no supplied key verified anything:\n{out}");
+    assert_eq!(
+        code, 40,
+        "no supplied key verified anything (INVALID since 0.5.0):\n{out}"
+    );
     assert!(
         out.contains("None of the 1 supplied key(s) verified"),
         "{out}"
@@ -156,7 +159,7 @@ fn verdict_covers_cosignature_keys_and_rejects_when_nothing_verified() {
     let signed_path = tmp("log-signed", &signed.encode().unwrap());
     let wrong_log_vkey = VerifierKey::for_ed25519(origin, &stranger.verifying_key()).encode();
     let (code, _) = run(&["c2sp", "verify", &signed_path, "--vkey", &wrong_log_vkey]);
-    assert_eq!(code, 30);
+    assert_eq!(code, 40);
     let right_log_vkey = VerifierKey::for_ed25519(origin, &log_key.verifying_key()).encode();
     let (code, _) = run(&["c2sp", "verify", &signed_path, "--vkey", &right_log_vkey]);
     assert_eq!(code, 0);

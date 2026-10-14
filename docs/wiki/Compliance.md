@@ -24,7 +24,10 @@ rewritten salt file no longer contains the index.
 
 - **Integrity (CC7, A.12.4):** `witness-log verify` on an exported dossier
   shows that no leaf was altered, reordered or removed since the signed
-  checkpoint. Exit code 30 is the control failing.
+  checkpoint. Exit code 40 (INVALID) is the control failing; 30 (DIVERGED)
+  means the dossier is valid but contradicts a head you kept
+  (`--known-head`) or a witness's equivocation proof (`--evidence`). Before
+  0.5.0 both were 30.
 - **Non-repudiation:** checkpoints are signed by the agent's identity key;
   independent witnesses cosign; the dossier verifies offline by the
   auditor with software from a public repository, not from you.
@@ -61,10 +64,15 @@ services can be checked without a shared database.
 ## Incident response
 
 - Suspected tampering: `witness-log verify --json` on every retained
-  dossier; DIVERGED names the failing check.
+  dossier; INVALID names the failing check (`report.failures`). Pass the
+  heads you retained earlier with `--known-head <size>:<root>`: a history
+  rewritten and re-signed with the same key is DIVERGED
+  (`report.contradictions`).
 - Suspected equivocation (two histories shown to two parties):
-  `witness-log diff a.json b.json`; witnesses also record provable
-  equivocation under `evidence/`, checkable with `witness verify-evidence`.
+  `witness-log diff a.json b.json` (30 equivocation, 40 a copy was
+  edited); witnesses also record provable equivocation under `evidence/`,
+  checkable with `witness verify-evidence` and usable as `verify
+  --evidence`.
 - Key compromise: issue a `RevocationStatement` (SPEC §5); leaves after
   `as_of_ms` are treated as untrusted by every verifier.
 

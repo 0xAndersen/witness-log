@@ -33,17 +33,26 @@ pub const DEFAULT_QUORUM_THRESHOLD: f64 = 0.66;
 pub(crate) mod exit {
     pub const WITNESSED: u8 = 0;
     pub const CONSISTENT_UNWITNESSED: u8 = 10;
-    /// `verify --strict` only: the verdict was not WITNESSED, or it was
-    /// but by fewer than a majority of the directory. Opt-in; the default
-    /// run still exits by the verdict codes above.
-    pub const STRICT_FAILED: u8 = 11;
+    /// `verify` (strict, the default since 0.5.0): the verdict is
+    /// WITNESSED but the cosigning witnesses are not a strict majority of
+    /// the trusted directory, so a conflicting history could have been
+    /// cosigned by the rest. `--allow-sub-majority` or `--no-strict`
+    /// accept it as 0. RFC-0002.
+    pub const SPLIT_VIEW_UNSAFE: u8 = 11;
     pub const UNANCHORED: u8 = 20;
     /// `submit`: a witness refused the history (422), or fewer than
     /// `--min` cosigned. Same number as UNANCHORED on purpose: both mean
     /// "do not treat this as witnessed", and a script that gates on 0 or
     /// on `< 20` reads either correctly.
     pub const SUBMIT_REFUSED: u8 = 20;
+    /// The dossier is valid but contradicts evidence the verifier brought
+    /// (`--known-head`, `--evidence`); `diff`: two valid, conflicting
+    /// histories for one identity.
     pub const DIVERGED: u8 = 30;
+    /// The file is not valid evidence about the identity: a signature,
+    /// identity, structural, key-binding, revocation or Merkle check
+    /// failed. 30 before 0.5.0. RFC-0002.
+    pub const INVALID: u8 = 40;
     /// Usage error, unreadable file, unparseable input — a problem with
     /// the invocation, distinct from any verdict about a dossier.
     pub const USAGE: u8 = 2;
@@ -55,6 +64,7 @@ pub(crate) fn exit_code_for(verdict: &witness_log_network::Verdict) -> ExitCode 
         witness_log_network::Verdict::ConsistentUnwitnessed => exit::CONSISTENT_UNWITNESSED,
         witness_log_network::Verdict::Unanchored => exit::UNANCHORED,
         witness_log_network::Verdict::Diverged => exit::DIVERGED,
+        witness_log_network::Verdict::Invalid => exit::INVALID,
     })
 }
 
@@ -82,9 +92,19 @@ struct Options {
     /// about out of band (`--revocations`); applied whether or not the
     /// dossier carries them.
     revocations_path: Option<String>,
-    /// Exit 11 unless the verdict is WITNESSED by a majority of the
-    /// directory. For gates that must never pass on anything weaker.
+    /// On by default since 0.5.0 (`--no-strict` turns it off): a
+    /// WITNESSED verdict whose cosigners are not a strict majority of the
+    /// directory exits 11 instead of 0. RFC-0002.
     strict: bool,
+    /// `--allow-sub-majority`: under strict, accept a WITNESSED verdict
+    /// from fewer than a majority of the directory (exit 0, with the
+    /// warning printed).
+    allow_sub_majority: bool,
+    /// `--known-head <size>:<root>`, repeatable: heads the caller already
+    /// trusts for this identity. A dossier that contradicts one is DIVERGED.
+    known_heads: Vec<witness_log_network::KnownHead>,
+    /// `--evidence <file>`, repeatable: witness equivocation proofs.
+    evidence_paths: Vec<String>,
 }
 
 mod bind;
@@ -110,8 +130,10 @@ USAGE:
       changes when you anchor verification to something outside the file.
       --tamper   build a convincing forgery instead, and watch it get caught.
 
-  witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--revocations <path>]
-                      [--identity <hex-pubkey>] [--directory <path.json>] [--strict]
+  witness-log verify <dossier.json> [--identity <hex-pubkey>] [--directory <path.json>]
+                     [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
+                     [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>]
+                     [--json] [--explain]
       Verify a dossier fully offline: checkpoint signature, identity
       binding, leaf structural validity, key-binding validity, Merkle
       continuity rebuilt from the leaves, and (when a --directory is
@@ -123,7 +145,14 @@ USAGE:
       --explain    one line under each check: what it does and doesn't prove
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  path to a witness directory YOU trust, obtained out-of-band
-      --strict     exit 11 unless WITNESSED by a majority of the directory
+      --allow-sub-majority  accept WITNESSED from fewer than a majority of the
+                   directory as exit 0 (strict, the default, exits 11 for it)
+      --no-strict  the 0.4 exit codes (no 11); kept for one release
+      --revocations <path>  revocations you know of; applied even if the dossier omits them
+      --known-head <size>:<root>  a head you already trust for this identity; a dossier
+                   whose leaves do not reproduce it is DIVERGED (repeatable)
+      --evidence <file>  a witness equivocation proof; if it verifies for this identity
+                   the verdict is DIVERGED (repeatable)
       Omitting --identity and --directory is a legal, meaningful run, but
       the strongest reachable verdict is UNANCHORED — see `explain` below.
 
@@ -190,7 +219,7 @@ USAGE:
       existing CT-ecosystem witness cosigns. `export` writes the signed
       note with the dossier's cosignatures attached, for any C2SP tool.
       `verify` checks a signed note and any cosignatures against verifier
-      keys you supply; exit 30 when a supplied key does not verify.
+      keys you supply; exit 40 when a supplied key does not verify.
       See SPEC.md §9.3.
 
   witness-log witness init <dir> --name <key-name> [--org <operator>] [--url <url>]
@@ -207,7 +236,7 @@ USAGE:
       origin names the key, so no key exchange is needed. `submit`
       writes a dossier whose receipts verify offline. `verify-evidence`
       checks an equivocation proof a witness recorded (exit 0 proven,
-      30 not).
+      40 not).
 
   witness-log conform <candidate-corpus-dir>
       Compare another implementation's generated conformance vectors
@@ -222,9 +251,10 @@ USAGE:
 
 EXIT CODES — the verdict IS the exit status, so gating needs no JSON parsing:
    0  WITNESSED                        20  UNANCHORED; submit: refused (422) or below --min
-  10  CONSISTENT-UNWITNESSED           30  DIVERGED
-  11  verify --strict: not WITNESSED    2  usage / unreadable input
-      by a directory majority
+  10  CONSISTENT-UNWITNESSED           30  DIVERGED: valid, but contradicts a known head,
+  11  WITNESSED by fewer than a            witness evidence, or (diff) a second copy
+      directory majority (split view   40  INVALID: a check failed; the file proves nothing
+      possible; strict is the default)  2  usage / unreadable input
 ";
 
 /// First value following `flag`, if present. Values that look like
@@ -646,19 +676,22 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--threshold 0.0-1.0 | --min-witnesses N] [--json] [--explain] [--identity <hex>] [--directory <path>] [--strict]
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
-  --revocations <path>  revocation statements you know of (JSON array); applied even if the
+  --revocations <path>  revocation statements you know of (one statement or a JSON array); applied even if the
                dossier omits them: leaves and checkpoints the revoked key signed after
                as_of_ms do not verify
   --threshold  receipt-count bar as a fraction of the directory (default 0.66)
   --min-witnesses N  receipt-count bar as an absolute number of distinct witnesses; use this
                instead of --threshold when the directory is large (a registry)
-  --strict     exit 11 unless the verdict is WITNESSED and the cosigning witnesses are a
-               strict majority of the directory (split-view resistant)
-  Exit: 0 WITNESSED, 10 CONSISTENT-UNWITNESSED, 20 UNANCHORED, 30 DIVERGED, 2 usage
-        11 (--strict only) anything weaker than WITNESSED by a directory majority";
+  --allow-sub-majority  accept WITNESSED from fewer than a strict majority of the directory
+               (exit 0 with a warning); strict, the default, exits 11 for it
+  --no-strict  the 0.4 exit codes, without 11 (for one release)
+  --known-head <size>:<root hex>  a head you already trust; not reproduced -> DIVERGED
+  --evidence <file>  a witness equivocation proof for this identity -> DIVERGED
+  Exit: 0 WITNESSED, 11 WITNESSED by fewer than a directory majority, 10 CONSISTENT-UNWITNESSED,
+        20 UNANCHORED, 30 DIVERGED, 40 INVALID, 2 usage";
 
 /// `--identity-seed-env NAME` / `--identity-seed-file F`: the identity
 /// seed for a sealed journal, 32 bytes as 64 hex characters, from the
@@ -819,7 +852,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut identity = None;
     let mut directory_path = None;
     let mut revocations_path = None;
-    let mut strict = false;
+    let mut strict = true;
+    let mut allow_sub_majority = false;
+    let mut known_heads = Vec::new();
+    let mut evidence_paths = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -867,8 +903,34 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
             }
             "--strict" => {
+                // The default since 0.5.0; accepted so 0.4 scripts keep working.
                 strict = true;
                 i += 1;
+            }
+            "--no-strict" => {
+                strict = false;
+                i += 1;
+            }
+            "--allow-sub-majority" => {
+                allow_sub_majority = true;
+                i += 1;
+            }
+            "--known-head" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or("--known-head requires <size>:<root hex>")?;
+                known_heads.push(
+                    v.parse::<witness_log_network::KnownHead>()
+                        .map_err(|e| format!("--known-head: {e}"))?,
+                );
+                i += 2;
+            }
+            "--evidence" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or("--evidence requires a path to a witness evidence file")?;
+                evidence_paths.push(v.clone());
+                i += 2;
             }
             "--identity" => {
                 let v = args
@@ -922,25 +984,40 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         directory_path,
         revocations_path,
         strict,
+        allow_sub_majority,
+        known_heads,
+        evidence_paths,
     })
 }
 
-/// `--strict`: the one exit code a gate that must never pass on anything
-/// weaker can rely on. WITNESSED alone is not enough: a WITNESSED dossier
-/// cosigned by fewer than half the directory can coexist with a
-/// conflicting one (see `QuorumResult::split_view_resistant`).
-/// The `--strict` exit status as a plain code (`ExitCode` is not
-/// comparable on the MSRV toolchain).
-fn strict_exit_code(report: &DossierReport) -> u8 {
-    let majority = report
-        .quorum
-        .as_ref()
-        .is_some_and(|q| q.split_view_resistant);
-    if report.verdict == witness_log_network::Verdict::Witnessed && majority {
-        exit::WITNESSED
-    } else {
-        exit::STRICT_FAILED
+/// The exit status of a `verify` run. The verdict is the exit status
+/// (0/10/20/30/40), with one refinement under strict (the default): a
+/// WITNESSED verdict whose cosigners are not a strict majority of the
+/// directory exits 11, because a conflicting history could have been
+/// cosigned by the rest (RFC-0002). A plain code because `ExitCode` is not
+/// comparable on the MSRV toolchain.
+fn verify_exit_code(report: &DossierReport, opts: &Options) -> u8 {
+    if opts.strict && !opts.allow_sub_majority && report.split_view_unsafe {
+        return exit::SPLIT_VIEW_UNSAFE;
     }
+    match report.verdict {
+        witness_log_network::Verdict::Witnessed => exit::WITNESSED,
+        witness_log_network::Verdict::ConsistentUnwitnessed => exit::CONSISTENT_UNWITNESSED,
+        witness_log_network::Verdict::Unanchored => exit::UNANCHORED,
+        witness_log_network::Verdict::Diverged => exit::DIVERGED,
+        witness_log_network::Verdict::Invalid => exit::INVALID,
+    }
+}
+
+/// A witness evidence file as `witness serve` writes it
+/// (`{"kind": "equivocation", "proof": {...}}`) or a bare proof.
+fn read_evidence(
+    path: &str,
+) -> Result<witness_log_network::tlog_witness::EquivocationProof, String> {
+    let raw = read_input(path).map_err(|e| e.to_string())?;
+    let doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let proof = doc.get("proof").cloned().unwrap_or(doc);
+    serde_json::from_value(proof).map_err(|e| format!("not an equivocation proof: {e}"))
 }
 
 fn run_verify(opts: &Options) -> ExitCode {
@@ -1010,11 +1087,23 @@ fn run_verify(opts: &Options) -> ExitCode {
         },
         None => Vec::new(),
     };
+    let mut evidence = Vec::new();
+    for p in &opts.evidence_paths {
+        match read_evidence(p) {
+            Ok(e) => evidence.push(e),
+            Err(e) => {
+                eprintln!("could not read evidence {p}: {e}");
+                return ExitCode::from(exit::USAGE);
+            }
+        }
+    }
     let ctx = VerifyContext {
         expected_identity_pubkey: opts.identity.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
         min_receipts: opts.min_witnesses,
         revocations: &revocations,
+        known_heads: &opts.known_heads,
+        evidence: &evidence,
     };
 
     let report = dossier.verify(opts.threshold, &ctx);
@@ -1029,21 +1118,19 @@ fn run_verify(opts: &Options) -> ExitCode {
             "identity_pinned": opts.identity.is_some(),
             "directory_pinned": opts.directory_path.is_some(),
             "strict": opts.strict,
+            "allow_sub_majority": opts.allow_sub_majority,
+            "exit_code": verify_exit_code(&report, opts),
             "verdict": report.verdict.to_string(),
             "report": report,
         });
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
-        return if opts.strict {
-            ExitCode::from(strict_exit_code(&report))
-        } else {
-            exit_code_for(&report.verdict)
-        };
+        return ExitCode::from(verify_exit_code(&report, opts));
     }
 
     render_text(&dossier, &report, opts);
 
     println!();
-    // Four-valued verdict is THE result — see Verdict's doc comment.
+    // The five-valued verdict is THE result — see Verdict's doc comment.
     // "VERIFIED/FAILED" undersells what the anchor rule distinguishes.
     print!("Verdict: {}", report.verdict);
     match report.verdict {
@@ -1063,8 +1150,23 @@ fn run_verify(opts: &Options) -> ExitCode {
             }
         }
         witness_log_network::Verdict::Diverged => {
-            print!(" \u{2014} a check marked \u{2717} above FAILED: the file was altered after signing, was fabricated, or is not the log named by --identity");
+            print!(" \u{2014} this dossier is internally valid but contradicts evidence you supplied: the identity has shown two different histories");
         }
+        witness_log_network::Verdict::Invalid => {
+            print!(" \u{2014} a check marked \u{2717} above FAILED: the file was altered after signing, was fabricated, or is not the log named by --identity; it establishes nothing about the identity");
+        }
+    }
+    for f in &report.failures {
+        println!();
+        print!("  \u{2717} {f}");
+    }
+    for c in &report.contradictions {
+        println!();
+        print!("  \u{2717} {c}");
+    }
+    for k in &report.known_heads_unchecked {
+        println!();
+        print!("  \u{26A0} known head {k} is larger than this dossier and was not checked");
     }
     println!();
     if !report.identity_pinned
@@ -1116,23 +1218,24 @@ fn run_verify(opts: &Options) -> ExitCode {
         "Run with --explain for what each check does and doesn't prove, or see THREAT_MODEL.md"
     );
     let _ = overall_ok;
-    if opts.strict {
-        let code = strict_exit_code(&report);
-        if code != exit::WITNESSED {
+    let code = verify_exit_code(&report, opts);
+    if report.split_view_unsafe {
+        if code == exit::SPLIT_VIEW_UNSAFE {
             println!(
-                "--strict: not WITNESSED by a majority of the directory ({}); exit 11",
-                match &report.quorum {
-                    Some(q) => format!(
-                        "verdict {}, {}/{} directory witnesses cosigned",
-                        report.verdict, q.valid_receipts, q.total_directory_witnesses
-                    ),
-                    None => format!("verdict {}", report.verdict),
+                "Exit 11: WITNESSED, but not by a strict majority of your directory (strict is the default since 0.5.0; see the split-view warning above). --allow-sub-majority accepts this as exit 0."
+            );
+        } else {
+            println!(
+                "Accepted as exit 0 under {}; the split-view warning above still applies.",
+                if opts.strict {
+                    "--allow-sub-majority"
+                } else {
+                    "--no-strict"
                 }
             );
         }
-        return ExitCode::from(code);
     }
-    exit_code_for(&report.verdict)
+    ExitCode::from(code)
 }
 
 /// The gate that actually failed for a CONSISTENT-UNWITNESSED verdict,
@@ -1276,7 +1379,8 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
             if opts.min_witnesses.is_none() && result.total_directory_witnesses >= 16 {
                 println!(
                     "    Large directory: {:.0}% of {} is {} cosignatures per checkpoint. \
-                     For a registry-sized directory, gate on an absolute count with --min-witnesses N.",
+                     For a registry-sized directory, gate on an absolute count with --min-witnesses N; \
+                     a count below a strict majority of the directory exits 11 unless --allow-sub-majority.",
                     opts.threshold * 100.0,
                     result.total_directory_witnesses,
                     (opts.threshold * result.total_directory_witnesses as f64).ceil() as usize

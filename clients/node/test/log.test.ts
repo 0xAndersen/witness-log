@@ -24,6 +24,10 @@ function bothVerdicts(d: Dossier, opts: Parameters<typeof verifyDossier>[1] = {}
   const ts = verifyDossier(d, opts);
   const rs = verifyDossierNative(d, opts);
   assert.equal(ts.verdict, rs.verdict, `TS ${ts.verdict} vs Rust ${rs.verdict}: ${ts.failures.join("; ")}`);
+  assert.equal(ts.exitCode, rs.exitCode);
+  assert.equal(ts.failures.length > 0, rs.failures.length > 0);
+  assert.equal(ts.contradictions.length, rs.contradictions.length);
+  assert.equal(ts.splitViewUnsafe, rs.splitViewUnsafe);
   assert.equal(ts.report.internally_consistent, rs.report.internally_consistent);
   assert.equal(ts.report.leaf_count, rs.report.leaf_count);
   assert.deepEqual(ts.report.quorum?.valid_receipts, rs.report.quorum?.valid_receipts);
@@ -56,13 +60,13 @@ describe("openLog, append, export, verify", () => {
     assert.equal(v.internallyConsistent, true);
     const pinned = bothVerdicts(d, { identity: log.identityPubkey });
     assert.equal(pinned.identityPinned, true);
-    assert.equal(bothVerdicts(d, { identity: "ab".repeat(32) }).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(d, { identity: "ab".repeat(32) }).verdict, "INVALID");
     log.close();
     assert.equal(log.closed, true);
     assert.throws(() => log.appendIntent("x"), (e: unknown) => e instanceof WitnessLogError && e.code === "closed");
   });
 
-  it("tampering is DIVERGED for both verifiers", () => {
+  it("tampering is INVALID for both verifiers", () => {
     const log = openLog(tempJournalPath());
     for (let k = 0; k < 5; k++) log.appendIntent(`step ${k}`);
     const d = log.exportDossier();
@@ -70,23 +74,23 @@ describe("openLog, append, export, verify", () => {
 
     const edited = structuredClone(d);
     edited.leaves[2].payload_hash = "00".repeat(32);
-    assert.equal(bothVerdicts(edited).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(edited).verdict, "INVALID");
 
     const dropped = structuredClone(d);
     dropped.leaves.pop();
-    assert.equal(bothVerdicts(dropped).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(dropped).verdict, "INVALID");
 
     const reordered = structuredClone(d);
     [reordered.leaves[0], reordered.leaves[1]] = [reordered.leaves[1], reordered.leaves[0]];
-    assert.equal(bothVerdicts(reordered).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(reordered).verdict, "INVALID");
 
     const resigned = structuredClone(d);
     resigned.checkpoint.timestamp_ms += 1;
-    assert.equal(bothVerdicts(resigned).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(resigned).verdict, "INVALID");
 
     const otherIdentity = structuredClone(d);
     otherIdentity.identity_pubkey = "cd".repeat(32);
-    assert.equal(bothVerdicts(otherIdentity).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(otherIdentity).verdict, "INVALID");
 
     const noBindings = structuredClone(d);
     noBindings.key_bindings = [];
@@ -94,7 +98,7 @@ describe("openLog, append, export, verify", () => {
 
     const wrongBinding = structuredClone(d);
     wrongBinding.key_bindings![0].session_number += 1;
-    assert.equal(bothVerdicts(wrongBinding).verdict, "DIVERGED");
+    assert.equal(bothVerdicts(wrongBinding).verdict, "INVALID");
   });
 
   it("resumes the same identity and session bindings carry across restarts", () => {
@@ -283,5 +287,31 @@ describe("canonicalJson is RFC 8785, byte-identical to the Python package", () =
   });
   it("non-finite numbers become the same strings as in Python", () => {
     assert.equal(dec(canonicalJson({ nan: NaN, inf: Infinity })), '{"inf":"inf","nan":"nan"}');
+  });
+});
+
+describe("corpus 13: both verifiers agree on every verdict case", () => {
+  const corpusFile = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus", "13_verdicts.json");
+  it("verdict, exit code and report fields", { skip: !existsSync(corpusFile) }, () => {
+    const v = JSON.parse(readFileSync(corpusFile, "utf8"));
+    for (const c of v.cases) {
+      const opts = {
+        directory: c.trusted_directory ? v.trusted_directory : undefined,
+        identity: c.expected_identity ?? undefined,
+        threshold: c.threshold,
+        minWitnesses: c.min_witnesses ?? undefined,
+        knownHeads: c.known_heads,
+        evidence: c.evidence.map((k: string) => v.evidence[k]),
+        allowSubMajority: c.allow_sub_majority,
+      };
+      const ts = bothVerdicts(v.dossiers[c.dossier], opts);
+      const rs = verifyDossierNative(v.dossiers[c.dossier], opts);
+      for (const r of [ts, rs]) {
+        assert.equal(r.report.verdict, c.expect.verdict, c.name);
+        assert.equal(r.exitCode, c.expect.exit_code, c.name);
+        assert.equal(r.report.contradictions.length, c.expect.contradictions, c.name);
+        assert.equal(r.report.known_heads_unchecked.length, c.expect.known_heads_unchecked, c.name);
+      }
+    }
   });
 });
