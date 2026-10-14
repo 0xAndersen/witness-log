@@ -19,7 +19,7 @@ on the exact commit being released.
    `create-witness-log`, 2FA bypass), and store it as the secret
    `NPM_TOKEN` in a GitHub environment named `npm`. The `npm.yml` and
    `npm-node.yml` workflows use it for the first publish of each package
-   when the tags are pushed (`ts-v0.2.1`, `node-v0.1.2`, `ai-sdk-v0.1.0`,
+   when the tags are pushed (`ts-v0.2.2`, `node-v0.1.3`, `ai-sdk-v0.1.0`,
    `create-witness-log-v0.1.0`). Afterwards configure Trusted Publishing
    on each package (GitHub Actions, repo `0xAndersen/witness-log`,
    workflow `npm.yml` or `npm-node.yml`, environment `npm`) and delete the
@@ -46,7 +46,7 @@ on the exact commit being released.
    cargo-deny).
 3. Publish the crates **in dependency order**, waiting for each to appear
    on crates.io before the next (each depends on the previous one):
-   Preferred: Actions → *publish-crates* → Run workflow → tag `v0.4.2`.
+   Preferred: Actions → *publish-crates* → Run workflow → tag `v0.4.3`.
    The token lives in the `crates-io` environment as
    `CARGO_REGISTRY_TOKEN`; the job publishes core → network → cli in
    order, skips versions already on crates.io, and verifies with
@@ -57,14 +57,14 @@ on the exact commit being released.
    cargo publish -p witness-log-cli
    ```
 4. Release. Either push a tag, or run the `release` workflow manually
-   (Actions → release → Run workflow → tag `v0.4.2`); the workflow then
+   (Actions → release → Run workflow → tag `v0.4.3`); the workflow then
    creates the tag on the chosen commit. It refuses to run if the tag
    does not equal the version in `Cargo.toml`. This builds wheels
    for Linux (x86_64, aarch64, musl), macOS (Intel, Apple Silicon) and
    Windows plus an sdist, publishes them to PyPI, and creates a GitHub
    Release with CLI binaries and `SHA256SUMS`:
    ```sh
-   git tag -a v0.4.2 -m "witness-log 0.4.2" && git push origin v0.4.2
+   git tag -a v0.4.3 -m "witness-log 0.4.3" && git push origin v0.4.3
    ```
 5. Check from a clean machine: `cargo install witness-log-cli && witness-log
    demo`, and `pip install witness-log && python -c "import witness_log"`.

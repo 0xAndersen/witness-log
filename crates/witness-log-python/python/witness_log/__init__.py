@@ -80,7 +80,7 @@ __all__ = [
     "submit_round",
 ]
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 from . import _core  # noqa: E402
 from .witnessing import Witnesser, WitnessStatus, submit_round, witnessed_dossier  # noqa: E402

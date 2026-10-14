@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.4.3 — 2026-10-14
+
+Non-breaking. Closes the last open item from security review round 2 and
+lands RFC-0005 as an experimental extension.
+
+### Fixed
+
+- **A failed append no longer leaves memory ahead of the journal** (review
+  round 2, P1). If the journal or the salt sidecar refuses a write after a
+  leaf entered the in-memory tree, the leaf is rolled back and any partial
+  record is cut off the file, so a checkpoint can only sign a head a
+  restart reproduces and the append can be retried at the same index. If
+  the partial record cannot be cut off, the journal refuses further writes
+  until it is reopened. Journaled `forget` now writes the tombstone first
+  and erases the salt second: a failure either changes nothing or leaves a
+  recorded erasure that `resume` completes.
+
+### Added
+
+- **RFC-0005, index-based revocation (experimental).** A revocation can
+  name the tree size at which it takes effect (`as_of_index`), signed
+  under a distinct `witness-log-revoke-v2` message. Every verifier (Rust,
+  Go, TypeScript, Python, Node, browser) rejects leaves at or past the
+  index and heads larger than it, whatever their timestamps; a verifier
+  older than 0.4.3 rejects the statement outright (fails closed). Issuing
+  one needs an explicit opt-in.
+- **`witness-log log revoke`**: sign a revocation from the shell
+  (`--reason`, `--as-of-ms`, `--out`; `--experimental --as-of-index N |
+  --at-current-size` for RFC-0005). Previously revocations could only be
+  issued from Rust. Python: `JournaledLog.revoke_json(...)`.
+- **Verifier-supplied revocations everywhere**: `verify --revocations`
+  accepts one statement or an array; Python `verify_dossier_json(...,
+  revocations_json=)`, Node `revocations`, TypeScript `revocations`, Go
+  `Options.Revocations` / `--revocations`. The Go and TypeScript verifiers
+  now also apply the 0.4.2 checkpoint-timestamp cut-off.
+- **Corpus vector 12** (`12_revocation.json`): v1 and v2 messages and
+  signatures, and six cut-off cases.
+- **Torn-write coverage**: an exhaustive test truncates a journal with
+  every record shape, and its salt sidecar, at every byte;
+  `fuzz_journal_damage` runs the same invariants on fuzzer-chosen
+  histories nightly.
+
 ## 0.4.2 — 2026-10-12
 
 A second security review of core and the verify path

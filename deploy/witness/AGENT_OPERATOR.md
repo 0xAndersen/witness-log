@@ -63,7 +63,7 @@ jobs), serverless/edge functions (no durable fsync before reply).
 ```sh
 # pick the asset for your CPU from https://github.com/0xAndersen/witness-log/releases/latest
 ARCH=$(uname -m)            # x86_64 or aarch64
-VER=v0.4.2
+VER=v0.4.3
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS

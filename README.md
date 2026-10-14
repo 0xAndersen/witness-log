@@ -228,6 +228,6 @@ deploy/witness/   Dockerfile, compose, systemd, cloud-init, fleet.py, OPERATORS.
 registry/         the public witness list (CI-validated) and directory builder
 ```
 
-Pre-1.0 (v0.4.2). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
+Pre-1.0 (v0.4.3). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
 [`docs/rfcs/`](docs/rfcs) and `GOVERNANCE.md`; vulnerability disclosure in `SECURITY.md`;
 [Contributing](docs/wiki/Contributing.md).

@@ -16,8 +16,8 @@ name = "witness-log"
 path = "src/main.rs"
 
 [dependencies]
-witness-log-core = { version = "0.4.2", path = "../witness-log-core" }
-witness-log-network = { version = "0.4.2", path = "../witness-log-network" }
+witness-log-core = { version = "0.4.3", path = "../witness-log-core" }
+witness-log-network = { version = "0.4.3", path = "../witness-log-network" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
