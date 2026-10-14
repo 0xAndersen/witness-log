@@ -1,5 +1,8 @@
-# Keep CI actions and Rust dependencies current. Grouped and monthly so the
-# PR stream stays small; security updates arrive as they are published.
+# Keep CI actions current, grouped into one monthly PR. Rust dependencies
+# get security updates only (enable them under Settings -> Code security):
+# a version-update PR raises the minimum versions in Cargo.toml, which for
+# a library only narrows what downstream crates can resolve and can break
+# the declared MSRV (rust-version = "1.75").
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -9,11 +12,3 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  - package-ecosystem: cargo
-    directory: /
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 3
-    groups:
-      cargo-minor-patch:
-        update-types: ["minor", "patch"]
