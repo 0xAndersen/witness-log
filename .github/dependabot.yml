@@ -1,0 +1,19 @@
+# Keep CI actions and Rust dependencies current. Grouped and monthly so the
+# PR stream stays small; security updates arrive as they are published.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]

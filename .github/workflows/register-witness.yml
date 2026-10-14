@@ -23,9 +23,9 @@ permissions:
 
 jobs:
   register:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: fetch the directory entry
         shell: bash
         run: |

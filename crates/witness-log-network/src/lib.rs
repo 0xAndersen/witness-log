@@ -1094,8 +1094,9 @@ impl Dossier {
         // Structural leaf validation (finding 14): recognized types,
         // well-formed hex fields, mandatory fields present, indices
         // matching position, non-decreasing timestamps.
-        let leaves_structurally_valid =
-            witness_log_core::leaf::validate_sequence(&self.leaves).is_ok();
+        // Once: it walks every leaf, and its error feeds `failures` below.
+        let leaf_structure = witness_log_core::leaf::validate_sequence(&self.leaves);
+        let leaves_structurally_valid = leaf_structure.is_ok();
 
         // Session-key binding and revocation validation (finding 06):
         // every leaf's authoring session key must be covered by a valid
@@ -1168,7 +1169,7 @@ impl Dossier {
         } else if !identity_bound {
             failures.push("the checkpoint is not signed by the identity you expected".to_string());
         }
-        if let Err(e) = witness_log_core::leaf::validate_sequence(&self.leaves) {
+        if let Err(e) = &leaf_structure {
             failures.push(format!("leaf structure: {e}"));
         }
         if !bindings_valid {

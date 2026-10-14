@@ -29,13 +29,13 @@ permissions:
 
 jobs:
   report:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       OUT: examples/swarm/reports/first-independent-witnessed.md
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: release CLI and Python package
@@ -74,7 +74,7 @@ jobs:
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           if [ -f "$OUT" ]; then cat "$OUT" >> "$GITHUB_STEP_SUMMARY"; else
             echo "Fewer than 2 independent operators are registered; nothing claimed." >> "$GITHUB_STEP_SUMMARY"; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: witnessed-report

@@ -29,6 +29,16 @@ on the exact commit being released.
    GitHub settings. `image-public-check.yml` confirms an anonymous pull
    and `/health` from a clean runner.
 5. **Branch protection** on `main`: require the `ci` workflow to pass.
+6. **Browser verifier on Pages.** *Settings → Pages → Source: GitHub
+   Actions*, then *Settings → Secrets and variables → Actions → Variables*:
+   `PAGES_ENABLED` = `true`. Until both are set, `pages.yml` builds and
+   browser-tests the page on every push but skips the deploy job.
+7. **Repository profile.** *Settings → General*: website
+   `https://github.com/0xAndersen/witness-log/wiki`; topics
+   `transparency-log audit-log merkle-tree ai-agents tamper-evident rfc6962
+   c2sp tlog-witness mcp rust cryptography`. *Settings → Code security*:
+   enable Dependabot alerts and security updates (`.github/dependabot.yml`
+   already schedules action and Cargo updates).
 
 ## Every release
 

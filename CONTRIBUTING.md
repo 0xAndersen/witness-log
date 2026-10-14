@@ -1,5 +1,9 @@
 # Contributing
 
+Participation is covered by `CODE_OF_CONDUCT.md`. Questions and ideas go
+to Discussions; security reports go through a private advisory
+(`SECURITY.md`); the pull request template lists what review checks.
+
 ## Before you start
 
 Spec changes (anything touching `spec/SPEC.md` §2–§9) go through a public

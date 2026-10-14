@@ -36,9 +36,9 @@ env:
 jobs:
   check:
     name: tag matches Cargo.toml version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - shell: bash
         run: |
           v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
@@ -55,15 +55,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64, manylinux: auto }
-          - { os: ubuntu-latest, target: aarch64, manylinux: auto }
-          - { os: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { os: ubuntu-24.04, target: x86_64, manylinux: auto }
+          - { os: ubuntu-24.04, target: aarch64, manylinux: auto }
+          - { os: ubuntu-24.04, target: x86_64, manylinux: musllinux_1_2 }
           - { os: macos-latest, target: x86_64, manylinux: "" }
           - { os: macos-latest, target: aarch64, manylinux: "" }
           - { os: windows-latest, target: x64, manylinux: "" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -72,21 +72,21 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
           path: dist
 
   sdist:
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: sdist
           path: dist
@@ -108,7 +108,7 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin, exe: witness-log }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, exe: witness-log.exe }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -120,26 +120,26 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.exe }} out/
           cp LICENSE README.md out/
           tar czf witness-log-${RELEASE_TAG}-${{ matrix.target }}.tar.gz -C out .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cli-${{ matrix.target }}
           path: witness-log-*.tar.gz
 
   publish-pypi:
     needs: [wheels, sdist]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write # Trusted Publishing; no token in the repo
     steps:
       # Python artifacts only, by name: the CLI archives are .tar.gz too and
       # must never reach PyPI.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
           pattern: wheel-*
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: sdist
           path: dist
@@ -150,17 +150,17 @@ jobs:
 
   github-release:
     needs: [wheels, sdist, cli]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: assets
           merge-multiple: true
       - name: Checksums
         run: cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           # On manual dispatch there is no tag yet: the action creates it
           # at this commit. Tags created with the Actions token do not

@@ -7,7 +7,7 @@ name: Overhead budget
 # (20%). See crates/witness-log-network/benches/overhead.rs and
 # benches/python_step.py for what is measured and how it is normalised.
 #
-# Runner: GitHub-hosted ubuntu-latest (x86_64). The committed baseline
+# Runner: GitHub-hosted ubuntu-24.04 (x86_64). The committed baseline
 # must come from the same runner type: run this workflow manually with
 # update_baseline=true; that run commits benches/baseline.json to main.
 
@@ -27,13 +27,13 @@ permissions:
 
 jobs:
   bench:
-    name: Overhead budget (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: Overhead budget (ubuntu-24.04)
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Rust benchmark
@@ -52,7 +52,7 @@ jobs:
           python - <<'EOF'
           import json
           b = json.load(open("benches/baseline.json"))
-          b["runner"] = "GitHub-hosted ubuntu-latest"
+          b["runner"] = "GitHub-hosted ubuntu-24.04"
           json.dump(b, open("benches/baseline.json", "w"), indent=2)
           EOF
           python benches/check_budget.py --update target/bench-rust.json target/bench-python.json
@@ -63,10 +63,10 @@ jobs:
           git config user.email "321999970+0xAndersen@users.noreply.github.com"
           git add benches/baseline.json
           git diff --cached --quiet && { echo "baseline unchanged"; exit 0; }
-          git commit -m "bench: baseline measured on GitHub-hosted ubuntu-latest"
+          git commit -m "bench: baseline measured on GitHub-hosted ubuntu-24.04"
           git pull --rebase origin main
           git push origin HEAD:main
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: ${{ inputs.update_baseline && 'bench-baseline' || 'bench-results' }}

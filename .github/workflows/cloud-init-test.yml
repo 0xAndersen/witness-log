@@ -38,7 +38,7 @@ jobs:
       IMG: noble-server-cloudimg-amd64.img
       SSH: ssh -i id -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR ubuntu@127.0.0.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: KVM and QEMU
         run: |
@@ -61,7 +61,7 @@ jobs:
           echo "tag=$v" >> "$GITHUB_OUTPUT"
           echo "testing release $v"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.IMG }}
           key: noble-cloudimg-${{ github.run_id }}
@@ -190,7 +190,7 @@ jobs:
           $SSH 'sudo cat /var/log/witness-log-bootstrap.log' > bootstrap.log 2>/dev/null || true
           $SSH 'sudo journalctl -u witness-log-witness -u caddy --no-pager' > journal.log 2>/dev/null || true
           kill "$(cat qemu.pid)" 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: cloud-init-test-logs

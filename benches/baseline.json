@@ -1,6 +1,6 @@
 {
   "budget": 0.2,
-  "runner": "GitHub-hosted ubuntu-latest",
+  "runner": "GitHub-hosted ubuntu-24.04",
   "metrics": {
     "rust_append_inmem": {
       "ns": 1187.4,

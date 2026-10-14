@@ -27,7 +27,7 @@ permissions:
 jobs:
   adapter:
     name: ${{ matrix.adapter }} (latest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       # One framework's bad week must not hide the others' results.
@@ -60,9 +60,9 @@ jobs:
             packages: crewai
             tests: tests/test_integrations.py::test_crewai_crew
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build the wheel
@@ -94,7 +94,7 @@ jobs:
           fi
       - name: Keep the output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: frameworks-live-${{ matrix.adapter }}
           path: crates/witness-log-python/out.txt

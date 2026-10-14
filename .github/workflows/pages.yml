@@ -22,13 +22,13 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: clients/go/go.mod
           cache: false
@@ -38,7 +38,7 @@ jobs:
         run: sh web/build.sh
       - name: build the Go engine
         run: sh web/build-go.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: browser test
@@ -46,16 +46,21 @@ jobs:
           python -m pip install --quiet playwright
           python -m playwright install --with-deps chromium
           python web/test/test_page.py
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: web
 
+  # Deploys only once the owner has enabled Pages (Settings -> Pages ->
+  # Source: GitHub Actions) and set the repository variable
+  # PAGES_ENABLED=true; until then the build and browser test above still
+  # run on every push and main stays green. See RELEASING.md.
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    if: ${{ vars.PAGES_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

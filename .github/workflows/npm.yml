@@ -37,18 +37,18 @@ permissions:
 jobs:
   test:
     name: Build and test (node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         node: ["20", "22"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
       - name: Build the CLI
@@ -72,14 +72,14 @@ jobs:
     name: Publish to npm
     needs: test
     if: startsWith(github.ref, 'refs/tags/ts-v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: npm
     permissions:
       contents: read
       id-token: write   # OIDC token for npm trusted publishing and provenance
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"

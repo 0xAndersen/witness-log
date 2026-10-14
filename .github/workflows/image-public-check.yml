@@ -16,7 +16,7 @@ permissions: {}
 
 jobs:
   anonymous-pull:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: anonymous token for the package
         shell: bash

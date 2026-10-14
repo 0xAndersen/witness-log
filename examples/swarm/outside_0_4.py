@@ -121,7 +121,9 @@ def p_cli_nocode(a: Agent):
 
 
 def p_strict_verifier(a: Agent):
-    """`verify --strict` must be 11 on an unwitnessed dossier and 2 on garbage."""
+    """Since 0.5.0 strict is the default and 11 means only WITNESSED by fewer
+    than a strict majority: an unwitnessed dossier is 10 with or without
+    `--strict`, garbage is 2, and a tampered copy is 40 (INVALID)."""
     import witness_log as wl
     log = a.op("open", wl.open, a.journal, a.seed)
     for i in range(4):
@@ -132,11 +134,17 @@ def p_strict_verifier(a: Agent):
     ident = log.identity_pubkey_hex()
     log.close()
     code, out, err = a.op("cli.verify.strict.unwitnessed", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a), "--strict")
-    if code != 11:
-        a.notes.append(f"verify --strict on an unwitnessed dossier: exit {code}, expected 11")
+    if code != 10:
+        a.notes.append(f"verify --strict on an unwitnessed dossier: exit {code}, expected 10")
     code, out, err = a.op("cli.verify.strict.plain", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a))
     if code != 10:
         a.notes.append(f"verify (no strict) on an unwitnessed dossier: exit {code}, expected 10")
+    d = json.load(open(dp))
+    d["leaves"][1]["payload_hash"] = "ee" * 32
+    open(dp, "w").write(json.dumps(d))
+    code, out, err = a.op("cli.verify.invalid", cli, a, "verify", dp, "--identity", ident)
+    if code != 40 or "INVALID" not in out:
+        a.notes.append(f"verify on a tampered dossier: exit {code}, expected 40 INVALID")
     open(dp, "w").write("{not json")
     code, out, err = a.op("cli.verify.garbage", cli, a, "verify", dp)
     if code != 2:

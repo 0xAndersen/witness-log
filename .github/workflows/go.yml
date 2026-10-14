@@ -25,14 +25,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: clients/go
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: clients/go/go.mod
           cache: false # stdlib only: there is no go.sum to key a cache on
@@ -61,10 +61,10 @@ jobs:
     # verifier and compares the two reports, so the Go side cannot drift
     # from the reference without this failing.
     name: Go verdicts agree with the Rust CLI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: clients/go/go.mod
           cache: false
@@ -82,10 +82,10 @@ jobs:
     # cosignature/v1), not by witness-log's own parsers: the corpus vector
     # and a live testnet round through `c2sp export`. Issue #11.
     name: C2SP notes verify with the reference libraries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: clients/go/interop/go.mod
           cache-dependency-path: clients/go/interop/go.sum

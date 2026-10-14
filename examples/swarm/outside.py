@@ -404,17 +404,26 @@ def p_auditor(a: Agent):
         a.notes.append(f"verify produced no JSON: {se[-200:]}")
         return
     a.verdicts.append(rep["verdict"].lower().replace("-", "_"))
-    if code not in (0, 10):
+    # Against the whole registry a handful of cosigners is not a strict
+    # majority: WITNESSED exits 11 by default since 0.5.0 (RFC-0002).
+    if code not in (0, 10, 11):
         a.notes.append(f"stranger's dossier verified {rep['verdict']} (exit {code})")
+    if code == 11 and not rep["report"].get("split_view_unsafe"):
+        a.notes.append("exit 11 without split_view_unsafe in the report")
     d["leaves"][a.rng.randrange(len(d["leaves"]))]["payload_hash"] = "ab" * 32
     tp = os.path.join(a.dir, "tampered.json")
     json.dump(d, open(tp, "w"))
     code2, so2, _ = a.op("cli.verify.tampered", cli, a, "verify", tp, "--identity", d["identity_pubkey"], "--directory", dpath, "--json", "--min-witnesses", str(MIN_WITNESSES))
-    if code2 != 30:
-        a.notes.append(f"tampered dossier exit {code2}, expected 30")
+    if code2 != 40:
+        a.notes.append(f"tampered dossier exit {code2}, expected 40 (INVALID)")
     code3, so3, _ = a.op("cli.diff", cli, a, "diff", pick, tp)
-    if code3 != 30:
-        a.notes.append(f"diff of tampered copy exit {code3}")
+    if code3 != 40:
+        a.notes.append(f"diff of tampered copy exit {code3}, expected 40")
+    # A head the verifier holds that the dossier does not reproduce: DIVERGED.
+    size = len(d["leaves"])
+    code4, so4, _ = a.op("cli.verify.known_head", cli, a, "verify", pick, "--identity", d["identity_pubkey"], "--known-head", f"{max(size - 1, 1)}:{'cd' * 32}", "--json")
+    if code4 != 30:
+        a.notes.append(f"contradicted --known-head exit {code4}, expected 30")
 
 
 def p_adversary(a: Agent):

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/0xAndersen/witness-log/discussions
+    about: How do I…, is this a good fit for…, design ideas. Discussions, so issues stay actionable.
+  - name: Security vulnerability
+    url: https://github.com/0xAndersen/witness-log/security/advisories/new
+    about: Report privately (see SECURITY.md). Please do not open a public issue.
+  - name: Run a witness
+    url: https://github.com/0xAndersen/witness-log/issues/1
+    about: The registry needs independent operators; issue #1 has the steps.
