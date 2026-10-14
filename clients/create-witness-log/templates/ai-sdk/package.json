@@ -13,8 +13,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@witness-log/ai-sdk": "^0.1.0",
-    "@witness-log/node": "^0.1.0",
+    "@witness-log/ai-sdk": "^0.2.0",
+    "@witness-log/node": "^0.2.0",
     "ai": "^5.0.0",
     "zod": "^4.1.8"
   }

@@ -212,3 +212,37 @@ def test_witnessed_dossier_json_rebuilds_the_last_round(tmp_path, witnesses):
     again = wl.open(p)
     assert json.loads(again.witnessed_dossier_json())["checkpoint"]["tree_size"] == 1
     again.close()
+
+
+def test_request_does_not_wait_behind_other_calls_on_the_log(tmp_path):
+    """0.5.0 (100,000-agent swarm: 0.8% of `request()` calls took over
+    50 ms): request() read the log's size and so queued behind whatever
+    another thread was doing with the same log. It no longer touches the
+    log; the background thread reads the size."""
+    import threading
+
+    log = wl.open(str(tmp_path / "busy.jsonl"))
+    for i in range(20000):
+        log.append_memory(b"%d" % i)
+    w = wl.Witnesser(log, {"witnesses": []}, str(tmp_path / "busy.jsonl"), start=False)
+    stop = threading.Event()
+
+    def busy():
+        while not stop.is_set():
+            log.to_dossier_json()  # holds the log for tens of ms each time
+
+    t = threading.Thread(target=busy)
+    t.start()
+    try:
+        time.sleep(0.2)
+        worst = 0.0
+        for _ in range(50):
+            t0 = time.perf_counter()
+            w.request()
+            worst = max(worst, time.perf_counter() - t0)
+            time.sleep(0.005)
+    finally:
+        stop.set()
+        t.join(30)
+        log.close()
+    assert worst < 0.02, f"request() blocked {worst * 1000:.0f} ms"

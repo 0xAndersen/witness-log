@@ -71,6 +71,10 @@ from . import canonical_json
 from . import open as open_journal
 
 PROFILE = "mcp.tools/call v1"
+# How long `audit__export` waits for a witnessing round already in flight.
+EXPORT_WAIT_S = 30.0
+# How long a host message waits for a crashed server to be replaced.
+RESTART_WAIT_S = 10.0
 
 INJECTED_TOOLS: List[Dict[str, Any]] = [
     {
@@ -137,6 +141,13 @@ class Proxy:
         self._out_lock = threading.Lock()
         self._child_lock = threading.Lock()
         self._state = threading.Lock()
+        # Signalled when a witnessing round ends, so an export can wait for
+        # a periodic round that is covering an older head.
+        self._submit_done = threading.Condition(self._state)
+        # Clear while the server is being replaced after a crash; host
+        # messages wait for it instead of hitting the dead server's pipe.
+        self._ready = threading.Event()
+        self._ready.set()
         self._pending: Dict[str, _Pending] = {}
         self._list_ids: set = set()
         self._local_ids: set = set()  # initialize replays whose response is swallowed
@@ -150,6 +161,7 @@ class Proxy:
         self._submitting = False
         self.last_verdict: Optional[str] = None
         self._closing = False
+        self._exit_code = 0
 
     # -- I/O ------------------------------------------------------------------
 
@@ -223,6 +235,7 @@ class Proxy:
         finally:
             with self._state:
                 self._submitting = False
+                self._submit_done.notify_all()
 
     # -- injected tools -----------------------------------------------------------
 
@@ -257,13 +270,20 @@ class Proxy:
             # The export is what gets handed on: witness the current head
             # first (synchronously, once, bounded by the round's timeout)
             # instead of exporting whatever the last periodic round covered.
+            #
+            # A periodic round may be running for an older head. Before
+            # 0.5.0 the export skipped witnessing in that case and handed
+            # on an unwitnessed dossier (about 1% of exports in the
+            # 100,000-agent swarm); now it waits for that round, then
+            # witnesses whatever it did not cover.
+            deadline = time.monotonic() + EXPORT_WAIT_S
             with self._state:
-                pending = self._since_submit > 0 or not self._witnessed_head()
-                if pending and not self._submitting:
+                while self._submitting and time.monotonic() < deadline:
+                    self._submit_done.wait(max(0.0, deadline - time.monotonic()))
+                pending = not self._submitting and (self._since_submit > 0 or not self._witnessed_head())
+                if pending:
                     self._submitting = True
                     self._since_submit = 0
-                else:
-                    pending = False
             if pending:
                 self._submit()
         dossier = self.log.to_dossier_json()
@@ -327,6 +347,7 @@ class Proxy:
             idx = self._record_intent(tool, params.get("arguments"))
             with self._state:
                 self._pending[_key(msg_id)] = _Pending(tool, idx, time.monotonic() + self.timeout)
+            self._ready.wait(RESTART_WAIT_S)
             try:
                 self._send_child(raw)
             except (BrokenPipeError, OSError) as e:
@@ -335,6 +356,7 @@ class Proxy:
         if method == "tools/list" and msg_id is not None:
             with self._state:
                 self._list_ids.add(_key(msg_id))
+        self._ready.wait(RESTART_WAIT_S)
         try:
             self._send_child(raw)
         except (BrokenPipeError, OSError) as e:
@@ -409,25 +431,40 @@ class Proxy:
                         self._handle_child(raw)
                     except Exception as e:  # noqa: BLE001 -- one bad message must not stop the pipe
                         sys.stderr.write(f"witness-log-mcp-proxy: dropped a server message: {e}\n")
+            self._ready.clear()
             code = child.wait()
             if self._closing:
+                self._ready.set()
                 return
             with self._state:
                 dead = {k: v for k, v in self._pending.items()}
-            for key, p in dead.items():
-                msg_id = _unkey(key)
-                self._fail_call(key, msg_id, f"witness-log-mcp-proxy: server exited with code {code} during {p.tool}")
+
+            def fail_dead() -> None:
+                for key, p in dead.items():
+                    msg_id = _unkey(key)
+                    self._fail_call(key, msg_id, f"witness-log-mcp-proxy: server exited with code {code} during {p.tool}")
+
             if self.restarts >= self.max_restarts:
                 sys.stderr.write(
                     f"witness-log-mcp-proxy: server exited with code {code}; restart limit ({self.max_restarts}) reached\n"
                 )
+                # Decide the exit status and make the journal durable before
+                # the host hears about the failed calls: once it does it may
+                # close stdin, and the main thread's exit must not report
+                # success for a proxy that gave up on its server.
                 self._closing = True
-                self.log.sync()
+                self._exit_code = code if isinstance(code, int) and code > 0 else 1
+                try:
+                    self.log.sync()
+                except OSError:
+                    pass
+                self._ready.set()
+                fail_dead()
                 try:
                     self._in.close()
                 except (OSError, ValueError):
                     pass
-                os._exit(code if isinstance(code, int) and code > 0 else 1)
+                os._exit(self._exit_code)
             self.restarts += 1
             sys.stderr.write(f"witness-log-mcp-proxy: server exited with code {code}; restarting ({self.restarts}/{self.max_restarts})\n")
             with self._child_lock:
@@ -442,6 +479,12 @@ class Proxy:
                         self._send_child(self._initialized_note)
                 except (OSError, ValueError) as e:
                     sys.stderr.write(f"witness-log-mcp-proxy: could not re-initialize the server: {e}\n")
+            # Only now tell the host its in-flight calls failed: it usually
+            # retries at once, and before 0.5.0 that retry could reach the
+            # dead server's pipe ("server unavailable") because the error
+            # went out before the replacement was running.
+            self._ready.set()
+            fail_dead()
 
     def _watch_timeouts(self) -> None:
         while not self._closing:
@@ -467,7 +510,7 @@ class Proxy:
                     sys.stderr.write(f"witness-log-mcp-proxy: dropped a host message: {e}\n")
         finally:
             self.close()
-        return 0
+        return self._exit_code
 
     def close(self) -> None:
         if self._closing:

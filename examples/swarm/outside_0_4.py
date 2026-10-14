@@ -843,6 +843,10 @@ def p_go_verifier(a: Agent):
 
 # ------------------------------------------------------------ witnesser
 
+def _noop() -> None:
+    return None
+
+
 def p_witnesser(a: Agent):
     """Background Witnesser: request() never blocks; flush() reaches WITNESSED; state file written."""
     import witness_log as wl
@@ -854,6 +858,13 @@ def p_witnesser(a: Agent):
         w.request()
         ms = (time.perf_counter() - t0) * 1000
         a.ops.append({"op": "witnesser.request", "ms": ms, "ok": ms < 50, **({} if ms < 50 else {"error": f"request() blocked {ms:.0f} ms"})})
+        # The same measurement around a call that does nothing: under 48
+        # threads on two cores a thread can wait that long for the GIL
+        # alone, and this is the floor request() is judged against.
+        t0 = time.perf_counter()
+        _noop()
+        ms = (time.perf_counter() - t0) * 1000
+        a.ops.append({"op": "scheduler.noop", "ms": ms, "ok": ms < 50, **({} if ms < 50 else {"error": f"a no-op call took {ms:.0f} ms"})})
     ok = a.op("witnesser.flush", w.flush, 60)
     st = w.status()
     d = w.dossier()

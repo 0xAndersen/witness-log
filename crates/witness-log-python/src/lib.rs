@@ -28,6 +28,30 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Carries a value across `Python::detach`'s `Ungil` (Send) bound.
+struct SameThread<T>(T);
+// SAFETY: `Python::detach` runs its closure on the calling thread and
+// returns on it, so the wrapped guard is created, used and dropped on one
+// thread; it never actually moves to another one.
+unsafe impl<T> Send for SameThread<T> {}
+
+/// `lock` for a thread that holds the GIL. Another thread may hold the
+/// mutex across a call made with the GIL released (an fsync, a dossier
+/// over a long log); waiting for it here with the GIL held would stall
+/// every Python thread in the process, so the wait happens with the GIL
+/// released, and the mutex is kept once taken (dropping and retaking it
+/// let a busy thread starve this one).
+fn lock_py<'a, T: Send>(py: Python<'_>, m: &'a Mutex<T>) -> MutexGuard<'a, T> {
+    match m.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => py.detach(|| SameThread(lock(m))).0,
+    }
+}
+
+const CLOSED_JOURNAL: &str =
+    "this JournaledLog is closed; open it again with witness_log.open(path)";
+
 pyo3::create_exception!(
     witness_log,
     WitnessLogError,
@@ -331,6 +355,35 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 #[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None))]
 #[allow(clippy::too_many_arguments)]
 fn verify_dossier_json(
+    py: Python<'_>,
+    dossier_json: &str,
+    threshold: f64,
+    expected_identity_pubkey: Option<String>,
+    trusted_directory_json: Option<String>,
+    min_witnesses: Option<usize>,
+    revocations_json: Option<String>,
+    known_heads: Option<Vec<String>>,
+    evidence_json: Option<String>,
+) -> PyResult<String> {
+    // Parsing and verifying a long dossier is real CPU work: release the
+    // GIL so other Python threads (an agent's event loop, its witnesser)
+    // keep running meanwhile.
+    py.detach(|| {
+        verify_dossier_json_detached(
+            dossier_json,
+            threshold,
+            expected_identity_pubkey,
+            trusted_directory_json,
+            min_witnesses,
+            revocations_json,
+            known_heads,
+            evidence_json,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_dossier_json_detached(
     dossier_json: &str,
     threshold: f64,
     expected_identity_pubkey: Option<String>,
@@ -733,7 +786,7 @@ impl PyJournaledLog {
     /// after the leaf exists, so a sidecar failure never loses a leaf;
     /// it surfaces as an error on this call instead.
     fn store_payload(&self, index: u64, payload: &[u8]) -> PyResult<()> {
-        if let Some(store) = lock(&self.payloads).as_mut() {
+        if let Some(store) = Python::attach(|py| lock_py(py, &self.payloads)).as_mut() {
             store
                 .record(index, payload)
                 .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
@@ -928,12 +981,27 @@ impl std::ops::DerefMut for OpenJournal<'_> {
 }
 
 impl PyJournaledLog {
+    /// Run `f` on the open journal with the GIL released, for calls that
+    /// do real work (dossiers, proofs, request bodies over a long log), so
+    /// other Python threads keep running meanwhile.
+    fn detached<R: Send>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut witness_log_core::journal::JournaledLog) -> PyResult<R> + Send,
+    ) -> PyResult<R> {
+        py.detach(|| {
+            let mut g = lock(&self.inner);
+            match g.as_mut() {
+                None => Err(PyIOError::new_err(CLOSED_JOURNAL)),
+                Some(j) => f(j),
+            }
+        })
+    }
+
     fn j(&self) -> PyResult<OpenJournal<'_>> {
-        let g = lock(&self.inner);
+        let g = Python::attach(|py| lock_py(py, &self.inner));
         if g.is_none() {
-            return Err(PyIOError::new_err(
-                "this JournaledLog is closed; open it again with witness_log.open(path)",
-            ));
+            return Err(PyIOError::new_err(CLOSED_JOURNAL));
         }
         Ok(OpenJournal(g))
     }
@@ -950,9 +1018,9 @@ impl PyJournaledLog {
     /// Both files are created 0600; protect and back them up together,
     /// like any key file.
     #[staticmethod]
-    fn create(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
+    fn create(py: Python<'_>, path: &str, identity_seed: &[u8]) -> PyResult<Self> {
         let identity = parse_identity_seed(identity_seed)?;
-        witness_log_core::journal::JournaledLog::create(path, identity)
+        py.detach(|| witness_log_core::journal::JournaledLog::create(path, identity))
             .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -962,9 +1030,9 @@ impl PyJournaledLog {
     /// `resume_with_identity(path, seed)` with the same seed (from a KMS,
     /// a secrets manager, an environment variable).
     #[staticmethod]
-    fn create_sealed(path: &str, identity_seed: &[u8]) -> PyResult<Self> {
+    fn create_sealed(py: Python<'_>, path: &str, identity_seed: &[u8]) -> PyResult<Self> {
         let identity = parse_identity_seed(identity_seed)?;
-        witness_log_core::journal::JournaledLog::create_sealed(path, identity)
+        py.detach(|| witness_log_core::journal::JournaledLog::create_sealed(path, identity))
             .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -972,11 +1040,15 @@ impl PyJournaledLog {
     /// Resume a sealed journal (or an unsealed one; the seed must then
     /// match). Returns `(log, dropped_trailing_lines)` like `resume`.
     #[staticmethod]
-    fn resume_with_identity(path: &str, identity_seed: &[u8]) -> PyResult<(Self, usize)> {
+    fn resume_with_identity(
+        py: Python<'_>,
+        path: &str,
+        identity_seed: &[u8],
+    ) -> PyResult<(Self, usize)> {
         let seed: [u8; 32] = identity_seed.try_into().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("identity_seed must be exactly 32 bytes")
         })?;
-        witness_log_core::journal::JournaledLog::resume_with_identity(path, &seed)
+        py.detach(|| witness_log_core::journal::JournaledLog::resume_with_identity(path, &seed))
             .map(|(inner, report)| (Self::wrap(path, inner), report.dropped_trailing_lines))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -984,8 +1056,8 @@ impl PyJournaledLog {
     /// Create a journaled log with a throwaway identity. For tests and
     /// demos. Dossiers from this log belong to a key you cannot reproduce.
     #[staticmethod]
-    fn create_ephemeral(path: &str) -> PyResult<Self> {
-        witness_log_core::journal::JournaledLog::create_ephemeral(path)
+    fn create_ephemeral(py: Python<'_>, path: &str) -> PyResult<Self> {
+        py.detach(|| witness_log_core::journal::JournaledLog::create_ephemeral(path))
             .map(|inner| Self::wrap(path, inner))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -994,8 +1066,8 @@ impl PyJournaledLog {
     /// a nonzero count means the previous process died mid-write and the
     /// torn line was discarded and physically truncated.
     #[staticmethod]
-    fn resume(path: &str) -> PyResult<(Self, usize)> {
-        witness_log_core::journal::JournaledLog::resume(path)
+    fn resume(py: Python<'_>, path: &str) -> PyResult<(Self, usize)> {
+        py.detach(|| witness_log_core::journal::JournaledLog::resume(path))
             .map(|(inner, report)| (Self::wrap(path, inner), report.dropped_trailing_lines))
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
@@ -1069,19 +1141,24 @@ impl PyJournaledLog {
     /// consequential operation cannot go unnoticed. Works for leaves from
     /// earlier sessions too: salts live in `<path>.salts` next to the
     /// journal and the forgotten salt is removed from that file.
-    fn forget(&self, index: u64) -> PyResult<bool> {
-        let erased = self
-            .j()?
-            .forget(index)
-            .map_err(|e| PyIOError::new_err(e.to_string()))?;
-        // The payload record goes whether or not a salt was left to
-        // forget: a payload with no salt is still a payload.
-        if let Some(store) = lock(&self.payloads).as_mut() {
-            store
-                .forget(&[index])
-                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
-        }
-        Ok(erased)
+    fn forget(&self, py: Python<'_>, index: u64) -> PyResult<bool> {
+        // Rewrites and fsyncs the salt sidecar: done with the GIL released.
+        py.detach(|| {
+            let erased = {
+                let mut g = lock(&self.inner);
+                let j = g.as_mut().ok_or_else(|| CLOSED_JOURNAL.to_string())?;
+                j.forget(index).map_err(|e| e.to_string())?
+            };
+            // The payload record goes whether or not a salt was left to
+            // forget: a payload with no salt is still a payload.
+            if let Some(store) = lock(&self.payloads).as_mut() {
+                store
+                    .forget(&[index])
+                    .map_err(|e| format!("payload sidecar: {e}"))?;
+            }
+            Ok(erased)
+        })
+        .map_err(PyIOError::new_err::<String>)
     }
 
     /// True if `forget(index)` would erase something: the leaf exists,
@@ -1102,17 +1179,22 @@ impl PyJournaledLog {
             .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
-    /// fsync. Blocks; call from a thread if you are async.
-    fn sync(&self) -> PyResult<()> {
-        self.j()?
-            .sync()
-            .map_err(|e| PyIOError::new_err(e.to_string()))?;
-        if let Some(store) = lock(&self.payloads).as_mut() {
-            store
-                .sync()
-                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
-        }
-        Ok(())
+    /// fsync. Blocks the calling thread (call it from a worker thread if
+    /// you are async); since 0.5.0 other Python threads keep running while
+    /// it waits, because the GIL is released for the fsync.
+    fn sync(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| {
+            {
+                let mut g = lock(&self.inner);
+                let j = g.as_mut().ok_or_else(|| CLOSED_JOURNAL.to_string())?;
+                j.sync().map_err(|e| e.to_string())?;
+            }
+            if let Some(store) = lock(&self.payloads).as_mut() {
+                store.sync().map_err(|e| format!("payload sidecar: {e}"))?;
+            }
+            Ok(())
+        })
+        .map_err(PyIOError::new_err::<String>)
     }
 
     fn tree_size(&self) -> PyResult<u64> {
@@ -1177,13 +1259,13 @@ impl PyJournaledLog {
                 .forget(&forgotten)
                 .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
         }
-        *lock(&self.payloads) = Some(store);
+        *Python::attach(|py| lock_py(py, &self.payloads)) = Some(store);
         Ok(())
     }
 
     /// The payload sidecar's path, or `None` when none is enabled.
     fn payload_store_path(&self) -> Option<String> {
-        lock(&self.payloads)
+        Python::attach(|py| lock_py(py, &self.payloads))
             .as_ref()
             .map(|s| s.path.to_string_lossy().into_owned())
     }
@@ -1191,7 +1273,7 @@ impl PyJournaledLog {
     /// The payload stored for leaf `index`, or `None` when no sidecar is
     /// enabled, the leaf was appended without one, or it was forgotten.
     fn payload<'py>(&self, py: Python<'py>, index: u64) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        let g = lock(&self.payloads);
+        let g = lock_py(py, &self.payloads);
         let store = match g.as_ref() {
             Some(s) => s,
             None => return Ok(None),
@@ -1251,10 +1333,12 @@ impl PyJournaledLog {
 
     /// Export a dossier of this log's own history, with key bindings
     /// populated correctly across restarts. Returns JSON.
-    fn to_dossier_json(&self) -> PyResult<String> {
-        let sth = self.j()?.log().checkpoint_self();
-        let dossier = witness_log_network::Dossier::from_log(self.j()?.log(), sth);
-        serde_json::to_string_pretty(&dossier).map_err(malformed_err)
+    fn to_dossier_json(&self, py: Python<'_>) -> PyResult<String> {
+        self.detached(py, |j| {
+            let sth = j.log().checkpoint_self();
+            let dossier = witness_log_network::Dossier::from_log(j.log(), sth);
+            serde_json::to_string_pretty(&dossier).map_err(malformed_err)
+        })
     }
 
     /// This log's canonical C2SP origin, `witness-log/<identity key hex>`.
@@ -1271,8 +1355,8 @@ impl PyJournaledLog {
     /// the witness last cosigned for this log (0 the first time; a 409
     /// reply's body tells you the right value).
     #[pyo3(signature = (old_size=0))]
-    fn add_checkpoint_body(&self, old_size: u64) -> PyResult<String> {
-        add_checkpoint_body(self.j()?.log(), old_size)
+    fn add_checkpoint_body(&self, py: Python<'_>, old_size: u64) -> PyResult<String> {
+        self.detached(py, |j| add_checkpoint_body(j.log(), old_size))
     }
 
     /// Dossier JSON for the current head from witness 200 responses:
@@ -1281,24 +1365,26 @@ impl PyJournaledLog {
     /// cosignatures are dropped, never counted.
     fn dossier_from_responses(
         &self,
+        py: Python<'_>,
         responses: Vec<(String, String)>,
     ) -> PyResult<(String, usize)> {
-        dossier_from_responses(self.j()?.log(), responses)
+        self.detached(py, |j| dossier_from_responses(j.log(), responses))
     }
 
     /// `add_checkpoint_body` for the earlier head of `size` leaves.
     #[pyo3(signature = (size, old_size=0))]
-    fn add_checkpoint_body_at(&self, size: u64, old_size: u64) -> PyResult<String> {
-        add_checkpoint_body_at(self.j()?.log(), size, old_size)
+    fn add_checkpoint_body_at(&self, py: Python<'_>, size: u64, old_size: u64) -> PyResult<String> {
+        self.detached(py, |j| add_checkpoint_body_at(j.log(), size, old_size))
     }
 
     /// `dossier_from_responses` for the earlier head of `size` leaves.
     fn dossier_from_responses_at(
         &self,
+        py: Python<'_>,
         size: u64,
         responses: Vec<(String, String)>,
     ) -> PyResult<(String, usize)> {
-        dossier_from_responses_at(self.j()?.log(), size, responses)
+        self.detached(py, |j| dossier_from_responses_at(j.log(), size, responses))
     }
 
     /// Root of the first `size` leaves, hex, or `None` if the log is
@@ -1309,8 +1395,12 @@ impl PyJournaledLog {
 
     /// `(tree_size, root_hex, proof)` proving the leaf at `index` is in the
     /// current tree. Verify offline with `witness_log.verify_inclusion`.
-    fn inclusion_proof(&self, index: u64) -> PyResult<Option<(u64, String, Vec<String>)>> {
-        Ok(inclusion_proof_of(self.j()?.log(), index))
+    fn inclusion_proof(
+        &self,
+        py: Python<'_>,
+        index: u64,
+    ) -> PyResult<Option<(u64, String, Vec<String>)>> {
+        self.detached(py, |j| Ok(inclusion_proof_of(j.log(), index)))
     }
 
     /// RFC 6962 leaf hash of the leaf at `index`, hex.
@@ -1320,8 +1410,10 @@ impl PyJournaledLog {
 
     /// JSON array of every leaf, in SPEC.md canonical serde form (same
     /// as a dossier's `leaves`).
-    fn leaves_json(&self) -> PyResult<String> {
-        serde_json::to_string(self.j()?.log().leaves()).map_err(malformed_err)
+    fn leaves_json(&self, py: Python<'_>) -> PyResult<String> {
+        self.detached(py, |j| {
+            serde_json::to_string(j.log().leaves()).map_err(malformed_err)
+        })
     }
 
     fn c2sp_checkpoint_text(&self, origin: &str) -> PyResult<String> {
@@ -1351,18 +1443,21 @@ impl PyJournaledLog {
     /// something else (a decorated function's closure, a REPL variable)
     /// still references this object, since the lock is held until the
     /// object is dropped.
-    fn close(&self) -> PyResult<()> {
-        let mut g = lock(&self.inner);
-        if let Some(j) = g.as_mut() {
-            j.sync().map_err(|e| PyIOError::new_err(e.to_string()))?;
-        }
-        *g = None;
-        Ok(())
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        py.detach(|| {
+            let mut g = lock(&self.inner);
+            if let Some(j) = g.as_mut() {
+                j.sync().map_err(|e| e.to_string())?;
+            }
+            *g = None;
+            Ok(())
+        })
+        .map_err(PyIOError::new_err::<String>)
     }
 
     /// True once `close()` has been called.
     fn is_closed(&self) -> bool {
-        lock(&self.inner).is_none()
+        Python::attach(|py| lock_py(py, &self.inner)).is_none()
     }
 
     fn __enter__(slf: pyo3::PyRef<'_, Self>) -> pyo3::PyRef<'_, Self> {
@@ -1375,7 +1470,7 @@ impl PyJournaledLog {
         _v: Option<Bound<'_, pyo3::PyAny>>,
         _tb: Option<Bound<'_, pyo3::PyAny>>,
     ) -> PyResult<bool> {
-        self.close()?;
+        Python::attach(|py| self.close(py))?;
         Ok(false)
     }
 }
@@ -1740,7 +1835,8 @@ impl PyWitnessService {
     /// `handle_add_checkpoint_http`, which also gives the content type.
     #[pyo3(signature = (body, now_unix_seconds=None))]
     fn handle_add_checkpoint(&self, body: &str, now_unix_seconds: Option<u64>) -> (u16, String) {
-        let (st, _, b) = self.handle(body, now_unix_seconds.unwrap_or_else(now_unix_s));
+        let now = now_unix_seconds.unwrap_or_else(now_unix_s);
+        let (st, _, b) = Python::attach(|py| py.detach(|| self.handle(body, now)));
         (st, b)
     }
 
@@ -1751,12 +1847,15 @@ impl PyWitnessService {
         body: &str,
         now_unix_seconds: Option<u64>,
     ) -> (u16, &'static str, String) {
-        self.handle(body, now_unix_seconds.unwrap_or_else(now_unix_s))
+        // Persisting the cosigned head fsyncs: release the GIL so an
+        // agent-run witness keeps serving its other threads meanwhile.
+        let now = now_unix_seconds.unwrap_or_else(now_unix_s);
+        Python::attach(|py| py.detach(|| self.handle(body, now)))
     }
 
     /// Number of logs this witness tracks.
     fn log_count(&self) -> usize {
-        lock(&self.inner).log_count()
+        Python::attach(|py| lock_py(py, &self.inner)).log_count()
     }
 }
 

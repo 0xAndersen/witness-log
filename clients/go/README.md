@@ -12,7 +12,7 @@ packages; Go services verify what they are handed.
 ## Install
 
 ```sh
-go get github.com/0xAndersen/witness-log/clients/go
+go get github.com/0xAndersen/witness-log/clients/go@latest
 go install github.com/0xAndersen/witness-log/clients/go/cmd/witness-log-verify@latest
 ```
 

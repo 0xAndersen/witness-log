@@ -17,13 +17,13 @@ named to let you `use` them:
 
 ```toml
 [dependencies]
-witness-log-core    = "0.4.3"   # log, Merkle tree, identity, redaction, journal, C2SP encoding
-witness-log-network = "0.4.3"   # witnesses, directories, quorum, dossiers, verification
+witness-log-core    = "0.5.0"   # log, Merkle tree, identity, redaction, journal, C2SP encoding
+witness-log-network = "0.5.0"   # witnesses, directories, quorum, dossiers, verification
 ed25519-dalek       = "2.1"     # SigningKey, for evidence windows and embedding a witness (§5, §7)
 serde_json          = "1"       # dossiers and directories are serde structs
 hex                 = "0.4"     # only if you print or parse raw 32-byte hashes yourself
 # from crates.io; or, for an unreleased fix:
-# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.4.3" }
+# witness-log-core = { git = "https://github.com/0xAndersen/witness-log", tag = "v0.5.0" }
 ```
 
 The versions of `ed25519-dalek`, `serde_json` and `hex` match the

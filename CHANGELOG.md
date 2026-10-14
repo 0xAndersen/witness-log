@@ -119,6 +119,58 @@ SPEC §9.1–§9.2 carry the normative text.
   describe the five verdicts; RFC-0002 is marked Implemented (0.5.0) with
   the resolution of its open questions.
 
+### Fixed (100,000-agent swarm against this release)
+
+`examples/swarm/reports/outside-100k-0.5.0.md` has the run: 100,000
+agents, 37 personas, 4.63 million operations, 0 crashes, and no regression
+from the 0.4.3 leaf and journal changes. Its two findings, plus one from
+the 10,000-agent confirmation run, are fixed with regression tests:
+
+- **Python: the GIL was held across fsync.** `JournaledLog.sync`,
+  `forget`, `close`, `create`/`resume` and `WitnessService` request
+  handling held the GIL while the disk flushed, so one thread's `sync`
+  stalled every Python thread in the process (a 1 ms sleep loop next to
+  eight syncing threads ran at a 44 ms median gap on the swarm host; it is
+  now 1.2 ms). They release it, as do `verify_dossier_json`,
+  `to_dossier_json`, `inclusion_proof`, `leaves_json` and the
+  add-checkpoint and dossier-from-responses calls. A thread waiting for a
+  log another thread is using waits without the GIL.
+- **`Witnesser.request()` blocked** (0.8% of calls over 50 ms, up to
+  ~0.5 s). It read the log's size and took the state lock, so it queued
+  behind the background round and the GIL. It now sets a flag and posts a
+  wakeup; the background thread reads the size. 0 of 2,310 calls over
+  50 ms in the confirmation run (max 0.2 ms).
+- **MCP proxy `audit__export` handed on an unwitnessed dossier** when it
+  arrived while a periodic `--submit-every` round was still covering an
+  older head (16 of 582 proxy agents). It now waits for that round, then
+  witnesses the head it did not cover.
+- **MCP proxy crash recovery**: the crashed call's error reached the host
+  before the replacement server was running, so a host that retried at
+  once could get "server unavailable". The error now goes out after the
+  restart, host messages wait for a restart in progress, and a proxy that
+  hits `--max-restarts` always exits non-zero.
+- **`verify` validated every leaf twice** since the INVALID split (once
+  for the boolean, once for the failure text): ~15% of a 10,000-leaf
+  verify, which tripped the overhead budget. Once now.
+
+### Changed
+
+- npm packages: `@witness-log/client` 0.3.0, `@witness-log/node` 0.2.0
+  (and its platform packages), `@witness-log/ai-sdk` 0.2.0,
+  `create-witness-log` 0.2.0, whose templates' `verify.mjs` take
+  `--known-head` and `--allow-sub-majority` and exit 40 when the two
+  verifiers disagree.
+- CI: every action on its first Node 24 major (no Node 20 deprecation
+  warnings); runners pinned to `ubuntu-24.04` ahead of the
+  `ubuntu-latest` move to 26; staticcheck pinned; the Pages deploy runs
+  only once `PAGES_ENABLED` is set, so `main` is not red while Pages is
+  off; Dependabot for actions and Cargo.
+- `CODE_OF_CONDUCT.md`, a pull request template, and an issue-template
+  config pointing questions to Discussions and vulnerabilities to private
+  advisories. `RELEASING.md` covers the Go module tag
+  (`clients/go/vX.Y.Z`) and the npm tags.
+- The README demo GIF shows the tamper case as INVALID, exit 40.
+
 ### Migration
 
 A script that treated exit 30 as "tampered" should treat `>= 30` as "do

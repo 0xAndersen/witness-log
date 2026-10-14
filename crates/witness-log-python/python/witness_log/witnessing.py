@@ -29,6 +29,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import queue
 import random
 import threading
 import time
@@ -380,7 +381,14 @@ class Witnesser:
         self._bmax = backoff_max
         self._post = _post
         self._cv = threading.Condition()
+        # Wakes the background thread. request() only puts to it, so it
+        # never contends for `_cv` with a thread that may be waiting for
+        # the GIL while holding it.
+        self._wakeups: "queue.SimpleQueue[None]" = queue.SimpleQueue()
         self._requested = 0
+        # Set by request(); the background thread reads the log's size, so
+        # request() itself never calls into the log.
+        self._want_latest = False
         self._witnessed = 0
         self._cosigs = 0
         self._rounds = 0
@@ -410,6 +418,7 @@ class Witnesser:
             self._stop = True
             self._cv.notify_all()
             t = self._thread
+        self._wakeups.put_nowait(None)
         if t is not None:
             t.join(timeout)
         with self._cv:
@@ -425,17 +434,15 @@ class Witnesser:
 
     def request(self) -> None:
         """Ask for the current head to be witnessed. Returns immediately;
-        never raises (a closed or broken log is reported in ``status``)."""
-        try:
-            size = self._log.tree_size()
-        except Exception as e:  # noqa: BLE001 -- never raise into the agent
-            self._record_error("exception", f"{type(e).__name__}: {e}", [])
-            return
-        with self._cv:
-            if size > self._requested:
-                self._requested = size
-                self._next_at = min(self._next_at, time.monotonic()) if self._fails == 0 else self._next_at
-            self._cv.notify_all()
+        never raises (a closed or broken log is reported in ``status``).
+
+        It does not call into the log: the background thread reads the
+        log's size. Before 0.5.0 it did, and could wait behind another
+        thread's call on the same log (0.8% of calls took over 50 ms in
+        the 100,000-agent swarm). It takes no lock either: a flag and a
+        wakeup, so it cannot queue behind the background thread."""
+        self._want_latest = True
+        self._wakeups.put_nowait(None)
 
     def status(self) -> WitnessStatus:
         with self._cv:
@@ -466,13 +473,19 @@ class Witnesser:
         """Request the current head and wait up to ``timeout`` seconds for
         it to be witnessed. ``True`` if it was; ``False`` on timeout (see
         ``status().last_error``). Never raises."""
-        self.request()
+        try:
+            size = self._log.tree_size()
+        except Exception as e:  # noqa: BLE001 -- never raise into the agent
+            self._record_error("exception", f"{type(e).__name__}: {e}", [])
+            return False
         deadline = time.monotonic() + max(0.0, timeout)
         with self._cv:
+            self._requested = max(self._requested, size)
             target = self._requested
             # A flush is an explicit "try now": skip any backoff wait.
             self._next_at = time.monotonic()
             self._cv.notify_all()
+            self._wakeups.put_nowait(None)
             while self._witnessed < target:
                 left = deadline - time.monotonic()
                 if left <= 0 or self._thread is None:
@@ -528,31 +541,49 @@ class Witnesser:
             self._cv.notify_all()
         return r
 
+    def _resolve_latest(self, tick: bool) -> None:
+        """Read the log's size (outside ``_cv``: the read can wait behind
+        the agent's own calls on the log) and request it."""
+        try:
+            size: Optional[int] = self._log.tree_size()
+        except Exception as e:  # noqa: BLE001
+            self._record_error("exception", f"{type(e).__name__}: {e}", [])
+            size = None
+        with self._cv:
+            if size is not None:
+                self._requested = max(self._requested, size)
+            if tick and self._requested <= self._witnessed:
+                self._next_at = time.monotonic() + self._interval
+            self._cv.notify_all()
+
     def _run(self) -> None:
         while True:
+            resolve = tick = False
+            wait: Optional[float] = -1.0  # -1: do not wait, act now
             with self._cv:
-                while not self._stop:
-                    now = time.monotonic()
-                    if self._interval > 0 and now >= self._next_at and self._requested <= self._witnessed:
-                        # Timer tick: pick up whatever the agent appended.
-                        try:
-                            self._requested = max(self._requested, self._log.tree_size())
-                        except Exception as e:  # noqa: BLE001
-                            self._last_error = {
-                                "time": time.time(),
-                                "kind": "exception",
-                                "message": f"{type(e).__name__}: {e}",
-                                "outcomes": [],
-                            }
-                        if self._requested <= self._witnessed:
-                            self._next_at = now + self._interval
-                    if self._requested > self._witnessed and now >= self._next_at:
-                        break
-                    pending = self._requested > self._witnessed or self._interval > 0
-                    wait = max(0.01, min(self._next_at - now, 1.0)) if pending else None
-                    self._cv.wait(wait)
                 if self._stop:
                     return
+                now = time.monotonic()
+                if self._want_latest:
+                    self._want_latest = False
+                    if self._fails == 0:
+                        self._next_at = min(self._next_at, now)
+                    resolve = True
+                elif self._interval > 0 and now >= self._next_at and self._requested <= self._witnessed:
+                    # Timer tick: pick up whatever the agent appended.
+                    resolve = tick = True
+                elif not (self._requested > self._witnessed and now >= self._next_at):
+                    pending = self._requested > self._witnessed or self._interval > 0
+                    wait = max(0.01, min(self._next_at - now, 1.0)) if pending else None
+            if wait is None or wait >= 0:
+                try:
+                    self._wakeups.get(timeout=wait)
+                except queue.Empty:
+                    pass
+                continue
+            if resolve:
+                self._resolve_latest(tick)
+                continue
             try:
                 r = self._round()
                 ok = r.refused is None and r.cosignatures >= self._min

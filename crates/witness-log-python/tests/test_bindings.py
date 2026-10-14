@@ -454,3 +454,75 @@ def test_corpus_13_verdicts_known_heads_and_evidence():
 
     with pytest.raises(ValueError):
         witness_log.verify_dossier_json(json.dumps(v["dossiers"]["full"]), 0.66, None, None, None, None, ["7"])
+
+
+def test_sync_releases_the_gil_and_threads_share_a_log_safely(tmp_path):
+    """0.5.0 (100,000-agent swarm: `Witnesser.request()` blocked >50 ms in
+    0.8% of calls): `sync`, `forget`, `close` and `open` held the GIL across
+    fsync, so one thread's sync stalled every Python thread in the process.
+    They now release it. Measured on a two-core host with eight threads
+    syncing: a 1 ms sleep loop went from a 44 ms median gap to 1.2 ms."""
+    import threading
+    import time
+
+    stop = threading.Event()
+    errors = []
+
+    def syncer(i):
+        try:
+            log = witness_log.open(str(tmp_path / f"s{i}.jsonl"))
+            while not stop.is_set():
+                log.append_intent(b"x" * 200)
+                log.sync()
+            log.close()
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=syncer, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    gaps = []
+    last = time.perf_counter()
+    end = time.monotonic() + 2.0
+    while time.monotonic() < end:
+        time.sleep(0.001)
+        now = time.perf_counter()
+        gaps.append(now - last)
+        last = now
+    stop.set()
+    for t in threads:
+        t.join(30)
+    assert not errors, errors
+    gaps.sort()
+    assert gaps[len(gaps) // 2] < 0.010, f"median gap {gaps[len(gaps) // 2] * 1000:.1f} ms: the GIL is held across fsync"
+
+    # One log shared by threads that append, sync, read and forget at once:
+    # no deadlock between the GIL and the log's own lock, nothing lost.
+    shared = witness_log.open(str(tmp_path / "shared.jsonl"))
+    n_per = 200
+
+    def appender():
+        for _ in range(n_per):
+            shared.append_memory(b"m")
+
+    def reader():
+        for _ in range(n_per):
+            shared.tree_size()
+            shared.root_hex()
+
+    def syncer_shared():
+        for _ in range(20):
+            shared.sync()
+
+    workers = [threading.Thread(target=f) for f in (appender, appender, reader, syncer_shared, syncer_shared)]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join(60)
+        assert not t.is_alive(), "deadlock between the GIL and the journal lock"
+    assert shared.tree_size() == 2 * n_per
+    assert shared.forget(0) is True
+    shared.close()
+    again, _ = witness_log.JournaledLog.resume(str(tmp_path / "shared.jsonl"))
+    assert again.tree_size() == 2 * n_per + 1
+    again.close()

@@ -9,7 +9,7 @@ in CI.
 ## Install
 
 ```sh
-go get github.com/0xAndersen/witness-log/clients/go
+go get github.com/0xAndersen/witness-log/clients/go@latest
 ```
 
 ## Verify a dossier an agent handed you

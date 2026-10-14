@@ -200,7 +200,58 @@ def test_crash_restarts_the_server_and_fails_the_inflight_call(tmp_path):
     assert len(leaves) == 6  # three calls, each with intent and result
 
 
-def _witness(i):
+def test_a_retry_right_after_a_crash_reaches_the_restarted_server(tmp_path):
+    """0.5.0 (10,000-agent confirmation swarm): the crashed call's error
+    went to the host before the replacement server was running, so a host
+    that retried at once could get "server unavailable" (a race needing
+    load to show). In-process, with a slow replacement: the crash error
+    arrives only once the new server is running, and the retry reaches it."""
+    from witness_log.mcp_proxy import Proxy
+
+    host_r, proxy_in = os.pipe()  # host writes requests to proxy_in
+    proxy_out, host_w = os.pipe()  # proxy writes responses to host_w
+    to_proxy = os.fdopen(proxy_in, "wb", buffering=0)
+    from_proxy = os.fdopen(proxy_out, "rb", buffering=0)
+    proxy = Proxy(
+        FAKE,
+        str(tmp_path / "inproc.jsonl"),
+        "fake",
+        max_restarts=5,
+        stdin=os.fdopen(host_r, "rb", buffering=0),
+        stdout=os.fdopen(host_w, "wb", buffering=0),
+    )
+    spawn = proxy._spawn
+    first = [True]
+
+    def slow_spawn():
+        if not first[0]:
+            time.sleep(0.5)  # a replacement that takes a while to start
+        first[0] = False
+        spawn()
+
+    proxy._spawn = slow_spawn
+    t = threading.Thread(target=proxy.run, daemon=True)
+    t.start()
+
+    def call(i, method, params):
+        to_proxy.write((json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params}) + "\n").encode())
+        line = from_proxy.readline()
+        return json.loads(line)
+
+    try:
+        assert "result" in call(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})
+        to_proxy.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+        r = call(2, "tools/call", {"name": "echo", "arguments": {"crash": True}})
+        assert "exited with code 3" in r["error"]["message"], r
+        ok = call(3, "tools/call", {"name": "echo", "arguments": {"retry": 1}})
+        assert "result" in ok, ok
+        assert json.loads(ok["result"]["content"][0]["text"]) == {"retry": 1}
+    finally:
+        to_proxy.close()
+        t.join(15)
+
+
+def _witness(i, delay=0.0):
     svc = wl.WitnessService.new(f"w{i}.test/px", os.urandom(32), None, True)
 
     class H(BaseHTTPRequestHandler):
@@ -208,6 +259,7 @@ def _witness(i):
             pass
 
         def do_POST(self):  # noqa: N802
+            time.sleep(delay)
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
             st, ct, out = svc.handle_add_checkpoint_http(body)
             b = out.encode()
@@ -260,6 +312,31 @@ def test_periodic_witnessing(tmp_path):
             httpd.shutdown()
     state = json.loads((tmp_path / "proxy.jsonl.witnesses.json").read_text())
     assert state["cosigned_size"] == 6  # the close-time submit covered the last call
+
+
+def test_export_waits_for_a_round_in_flight(tmp_path):
+    """0.5.0 (100,000-agent swarm, ~1% of proxy exports): an export that
+    arrived while a periodic round was still covering an older head skipped
+    witnessing and handed on an unwitnessed dossier. It now waits for that
+    round and then witnesses the head it did not cover."""
+    ws = [_witness(i, delay=0.6) for i in range(2)]
+    dpath = tmp_path / "trusted.json"
+    dpath.write_text(json.dumps({"witnesses": [e for _, e in ws]}))
+    c = ProxyClient(tmp_path, "--directory", str(dpath), "--submit-every", "2")
+    try:
+        c.handshake()
+        c.call("tools/call", {"name": "echo", "arguments": {"n": 1}})
+        c.call("tools/call", {"name": "echo", "arguments": {"n": 2}})  # starts a slow round for size 4
+        c.call("tools/call", {"name": "echo", "arguments": {"n": 3}})  # size 6, not covered by it
+        ex = c.call("tools/call", {"name": "audit__export"}, timeout=40)["result"]["structuredContent"]
+        assert ex["verdict"] == "witnessed", ex
+        exported = json.loads(pathlib.Path(ex["path"]).read_text())
+        assert exported["checkpoint"]["tree_size"] == 6
+        assert len(exported["witness_receipts"]) == 2
+    finally:
+        assert c.close() == 0
+        for httpd, _ in ws:
+            httpd.shutdown()
 
 
 def test_cli_argument_errors():
