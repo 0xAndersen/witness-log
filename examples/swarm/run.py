@@ -472,10 +472,13 @@ def t019():
     code, out, _ = cli("explain", "witnessed")
     assert code == 0 and "two distinct independent operators" in out, out
     code2, out2, _ = cli("explain", "--json")
-    assert code2 == 0 and len(json.loads(out2)) == 4
+    entries = json.loads(out2)
+    names = [e.get("verdict") for e in entries]
+    # Since 0.5.0: five verdicts plus the exit-11 split-view entry.
+    assert code2 == 0 and names == ["WITNESSED", "SPLIT-VIEW", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED", "INVALID"], names
     code3, _, _ = cli("explain", "bogus")
     assert code3 == 2
-    return "rule stated; 4 verdicts in JSON; unknown -> 2"
+    return "rule stated; 6 entries in JSON (5 verdicts + exit 11); unknown -> 2"
 
 
 @test("T020", "cli-verify", "`verify --help` exits 0 with usage", fixed_in="0.3.2")
