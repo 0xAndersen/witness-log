@@ -735,6 +735,8 @@ pub struct VerifyOptions {
     pub threshold: Option<f64>,
     /// Receipt-count gate as an absolute count; replaces `threshold`.
     pub min_witnesses: Option<u32>,
+    /// Revocations known out of band: one statement or a JSON array (SPEC §5).
+    pub revocations_json: Option<String>,
 }
 
 fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
@@ -776,11 +778,19 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
         Some(s) => Some(parse_directory(s)?),
         None => None,
     };
+    let revocations: Vec<witness_log_core::identity::RevocationStatement> =
+        match &o.revocations_json {
+            None => Vec::new(),
+            Some(s) if s.trim_start().starts_with('{') => {
+                vec![serde_json::from_str(s).map_err(invalid)?]
+            }
+            Some(s) => serde_json::from_str(s).map_err(invalid)?,
+        };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: o.identity.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: o.min_witnesses.map(|n| n as usize),
-        revocations: &[],
+        revocations: &revocations,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string(&report).map_err(fail)

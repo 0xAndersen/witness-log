@@ -113,11 +113,22 @@ func (b *KeyBinding) Verify() error {
 	return nil
 }
 
-// RevocationMessage is SPEC.md §5's revocation message.
-func RevocationMessage(identityPk []byte, asOfMs uint64, reason string) []byte {
-	msg := []byte("witness-log-revoke-v1")
-	msg = append(msg, identityPk...)
-	msg = putU64(msg, asOfMs)
+// RevocationMessage is SPEC.md §5's revocation message: v1 without an
+// index, v2 (RFC-0005) with one, under distinct prefixes so neither
+// signature verifies as the other.
+func RevocationMessage(identityPk []byte, asOfMs uint64, asOfIndex *uint64, reason string) []byte {
+	var msg []byte
+	if asOfIndex == nil {
+		msg = []byte("witness-log-revoke-v1")
+		msg = append(msg, identityPk...)
+		msg = putU64(msg, asOfMs)
+	} else {
+		msg = []byte("witness-log-revoke-v2")
+		msg = append(msg, identityPk...)
+		msg = putU64(msg, asOfMs)
+		msg = append(msg, 0x01)
+		msg = putU64(msg, *asOfIndex)
+	}
 	msg = append(msg, reason...)
 	return msg
 }
@@ -132,7 +143,7 @@ func (r *Revocation) Verify() error {
 	if !ok {
 		return ErrInvalidSignature
 	}
-	if !VerifyStrict(idPk, RevocationMessage(idPk, r.AsOfMs, r.Reason), sig) {
+	if !VerifyStrict(idPk, RevocationMessage(idPk, r.AsOfMs, r.AsOfIndex, r.Reason), sig) {
 		return ErrInvalidSignature
 	}
 	return nil

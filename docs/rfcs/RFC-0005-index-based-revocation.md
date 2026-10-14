@@ -1,7 +1,7 @@
 # RFC-0005: Index-based revocation cut-off
 
-Status: Draft
-Target: 0.5.0 (new signed field with a presence byte; corpus vector; verifier rule)
+Status: Implemented, experimental (0.4.3). Issuing a v2 statement needs an explicit opt-in (`log revoke --experimental`, `revoke_json(..., experimental=True)`); every verifier (Rust, Go, TypeScript, Python, Node, browser) enforces the cut-off. Item 4 (a witness `POST /revoke` endpoint) is not implemented yet.
+Target: stable in 0.5.0
 Related: SPEC §5 (RevocationStatement), §9.1 (bindings and revocations), THREAT_MODEL "Key compromise, identity key"; review round 2, finding W2
 
 ## Problem

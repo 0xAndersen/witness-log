@@ -70,25 +70,33 @@ neutral; the CLI prints it.
 
 ## Revocation
 
-A **RevocationStatement**, signed by the identity key:
+A revocation is a statement signed by the identity key itself: "this key
+is revoked as of `as_of_ms`". Publish it where your verifiers look; they
+apply it with `witness-log verify --revocations revocation.json` (or
+`revocations_json=` in Python, `revocations` in TypeScript and Go) even
+when a dossier omits it. Leaves and checkpoints signed at or after
+`as_of_ms` stop counting.
 
+```sh
+witness-log log revoke agent.jsonl --reason "key on a lost laptop" --out revocation.json
 ```
-"witness-log-revoke-v1" || identity_pubkey || as_of_ms (8B BE) || reason (UTF-8)
+
+Both timestamps are written by whoever holds the key, and after a
+compromise that may be the attacker, who can backdate. RFC-0005
+(experimental since 0.4.3) adds a position: `--as-of-index N` (or
+`--at-current-size`) also rejects every leaf at index N or later and
+every checkpoint larger than N, whatever its timestamps. Pair it with a
+witnessed checkpoint of size N; witnesses refuse a different root at
+that size, so the history below the cut-off cannot be rewritten either.
+
+```sh
+witness-log submit agent.jsonl --directory trusted.json --out last-good.json   # witness the last good head
+witness-log log revoke agent.jsonl --reason "compromised" --experimental --at-current-size --out revocation.json
 ```
 
-Leaves written by that identity's sessions after `as_of_ms` are untrusted.
-`IdentityKeypair::revoke(as_of_ms, reason)` produces the statement; it is
-carried in the dossier's `revocations` list (the `0x04` KeyRevocation leaf
-type exists in the wire format for logs that record it in-tree). Revocation
-is forward-only: it does not
-retroactively invalidate the history witnesses already cosigned, which is
-exactly what you want when a key leaks; the pre-leak record stands, and
-anything after the line is suspect.
-
-If the identity key is lost rather than leaked, there is no recovery: the
-identity is the key. Start a new identity and, if useful, record a
-`HandoffAttestation` from the old log's last state to the new one so an
-auditor can follow the thread.
+A verifier older than 0.4.3 rejects an index revocation outright (its
+signature does not verify under the v1 message), so the extension fails
+closed rather than being silently ignored.
 
 ## The canonical origin
 

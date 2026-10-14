@@ -1,6 +1,7 @@
 package witnesslog
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -83,8 +84,11 @@ type KeyBinding struct {
 type Revocation struct {
 	IdentityPubkey string `json:"identity_pubkey"`
 	AsOfMs         uint64 `json:"as_of_ms"`
-	Reason         string `json:"reason"`
-	Signature      string `json:"signature"`
+	// AsOfIndex (RFC-0005) is the tree size at which the revocation takes
+	// effect; nil for a v1 statement.
+	AsOfIndex *uint64 `json:"as_of_index,omitempty"`
+	Reason    string  `json:"reason"`
+	Signature string  `json:"signature"`
 }
 
 // Custody is how a session key's private half is held: one of the strings
@@ -297,4 +301,23 @@ func ParseDirectory(directoryJSON []byte) (*Directory, error) {
 		dir.Witnesses = append(dir.Witnesses, e)
 	}
 	return dir, nil
+}
+
+// ParseRevocations reads revocation statements as a JSON array or a single
+// object, the two shapes `witness-log log revoke` and a dossier's
+// `revocations` field produce.
+func ParseRevocations(raw []byte) ([]Revocation, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var one Revocation
+		if err := json.Unmarshal(trimmed, &one); err != nil {
+			return nil, err
+		}
+		return []Revocation{one}, nil
+	}
+	var many []Revocation
+	if err := json.Unmarshal(trimmed, &many); err != nil {
+		return nil, err
+	}
+	return many, nil
 }

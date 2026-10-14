@@ -25,9 +25,11 @@ const usage = `witness-log-verify — offline dossier verification in Go
 
 USAGE:
   witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
-                     [--threshold 0.0-1.0 | --min-witnesses N] [--json]
+                     [--threshold 0.0-1.0 | --min-witnesses N] [--revocations <file>] [--json]
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  a witness directory YOU trust, obtained out-of-band
+      --revocations  revocation statements you know of (JSON array or one object);
+                   applied even when the dossier omits them
       --threshold  quorum gate as a fraction of the directory (default 0.66)
       --min-witnesses N  quorum gate as an absolute receipt count
       --json       machine-readable report (same fields as witness-log verify --json)
@@ -156,6 +158,22 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		}
 	} else if hasFlag(args, "--directory") {
 		fmt.Fprintln(stderr, "--directory needs a path")
+		return witnesslog.ExitUsage
+	}
+	if revPath, ok := flagValue(args, "--revocations"); ok {
+		raw, err := readInput(revPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", revPath, err)
+			return witnesslog.ExitUsage
+		}
+		revs, err := witnesslog.ParseRevocations(raw)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", revPath, err)
+			return witnesslog.ExitUsage
+		}
+		opts.Revocations = revs
+	} else if hasFlag(args, "--revocations") {
+		fmt.Fprintln(stderr, "--revocations needs a path")
 		return witnesslog.ExitUsage
 	}
 	raw, err := readInput(path)

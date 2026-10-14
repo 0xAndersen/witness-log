@@ -20,6 +20,9 @@ import {
   verifyInclusion,
   verifyDisclosure,
   ed25519Verify,
+  verifyRevocation,
+  revocationMessage,
+  revocationCutOff,
   type Dossier,
   type Leaf,
   type WitnessDirectory,
@@ -126,6 +129,26 @@ describe("corpus vectors", { skip: existsSync(join(repo, "corpus")) ? false : "n
       assert.equal(bytesToHex(h), c.payload_hash, c.name);
       const leaf = { index: c.leaf_index, payload_hash: c.payload_hash } as Leaf;
       assert.equal(verifyDisclosure(leaf, hexToBytes(c.payload_hex), hexToBytes(c.salt_hex)), true);
+    }
+  });
+});
+
+describe("corpus 12: revocation statements", () => {
+  it("v1 and v2 messages, signatures, and the cut-off rules", () => {
+    const v = corpus("12_revocation.json");
+    const pk = hexToBytes(v.identity_pubkey);
+    for (const k of ["v1", "v2"]) {
+      const st = v[k].statement;
+      assert.equal(bytesToHex(revocationMessage(pk, st.as_of_ms, st.as_of_index, st.reason)), v[k].message_hex, k);
+      assert.equal(verifyRevocation(st), true, k);
+    }
+    assert.equal(verifyRevocation({ ...v.v2.statement, as_of_index: undefined }), false, "index stripped");
+    assert.equal(verifyRevocation({ ...v.v2.statement, as_of_index: v.v2.statement.as_of_index + 1 }), false, "index moved");
+    for (const c of v.cut_off_cases) {
+      const st = c.revocation === "v2" ? v.v2.statement : v.v1.statement;
+      const leaves = Array.from({ length: c.max_leaf_index + 1 }, (_, i) => ({ index: i, timestamp_ms: 0 }));
+      const err = revocationCutOff([st], leaves, c.checkpoint_timestamp_ms, c.checkpoint_tree_size);
+      assert.equal(err === null, c.valid, JSON.stringify(c) + " " + err);
     }
   });
 });

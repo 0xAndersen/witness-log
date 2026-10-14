@@ -50,6 +50,15 @@ const USAGE: &str = "usage:
       compare it with the leaf's payload_hash.
   witness-log log info <journal>
       Identity, size, root, leaf counts, whether the journal is sealed.
+  witness-log log revoke <journal> --reason TEXT [--as-of-ms MS] [--out revocation.json]
+                         [--experimental --as-of-index N | --experimental --at-current-size]
+      Sign a revocation of this journal's identity key (SPEC §5) and print it.
+      Verifiers apply it with `verify --revocations revocation.json` even when a
+      dossier omits it: leaves and checkpoints signed at or after as_of_ms (default
+      now) stop counting. --as-of-index N (RFC-0005, experimental, requires
+      --experimental) also cuts off by position: nothing at index N or later and
+      no head larger than N, whatever its timestamps; --at-current-size uses the
+      journal's size now. Pair it with a witnessed checkpoint of that size.
   Every command accepts --identity-seed-env NAME or --identity-seed-file F for a
   sealed journal.";
 
@@ -111,8 +120,85 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("export") => cmd_export(rest),
         Some("disclose") => cmd_disclose(rest),
         Some("info") => cmd_info(rest),
-        _ => usage_err("log: expected a subcommand (init, append, forget, export, disclose, info)"),
+        Some("revoke") => cmd_revoke(rest),
+        _ => usage_err(
+            "log: expected a subcommand (init, append, forget, export, disclose, info, revoke)",
+        ),
     }
+}
+
+// ---------------------------------------------------------------- revoke
+
+fn cmd_revoke(args: &[String]) -> ExitCode {
+    let positional = match split_args(
+        args,
+        &["--reason", "--as-of-ms", "--as-of-index", "--out"],
+        &["--experimental", "--at-current-size"],
+    ) {
+        Ok(p) => p,
+        Err(e) => return usage_err(&format!("log revoke: {e}")),
+    };
+    let [journal] = positional.as_slice() else {
+        return usage_err("log revoke: expected exactly one <journal> path");
+    };
+    let Some(reason) = crate::flag_value(args, "--reason") else {
+        return usage_err(
+            "log revoke: --reason TEXT is required (it is signed into the statement)",
+        );
+    };
+    let as_of_ms = match crate::flag_value(args, "--as-of-ms").map(|v| v.parse::<u64>()) {
+        None => None,
+        Some(Ok(v)) => Some(v),
+        Some(Err(_)) => {
+            return usage_err("log revoke: --as-of-ms must be milliseconds since the epoch")
+        }
+    };
+    let experimental = args.iter().any(|a| a == "--experimental");
+    let at_current = args.iter().any(|a| a == "--at-current-size");
+    let explicit_index = match crate::flag_value(args, "--as-of-index").map(|v| parse_index(&v)) {
+        None => None,
+        Some(Ok(v)) => Some(v),
+        Some(Err(e)) => return usage_err(&format!("log revoke: --as-of-index: {e}")),
+    };
+    if (explicit_index.is_some() || at_current) && !experimental {
+        return usage_err(
+            "log revoke: index-based revocation is RFC-0005 and experimental; add --experimental to sign a v2 statement (verifiers older than 0.4.3 reject it, which fails closed)",
+        );
+    }
+    if explicit_index.is_some() && at_current {
+        return usage_err("log revoke: pass either --as-of-index N or --at-current-size, not both");
+    }
+    let seed = match crate::identity_seed_from_args(args) {
+        Ok(s) => s,
+        Err(e) => return usage_err(&format!("log revoke: {e}")),
+    };
+    let (log, _) = match crate::replay_journal(journal, seed.as_deref()) {
+        Ok(x) => x,
+        Err(e) => return fail(format!("{journal}: {e}")),
+    };
+    let as_of_index = if at_current {
+        Some(log.tree_size())
+    } else {
+        explicit_index
+    };
+    let statement = log.revoke(as_of_ms, as_of_index, &reason);
+    let text = match serde_json::to_string_pretty(&statement) {
+        Ok(t) => t,
+        Err(e) => return fail(e),
+    };
+    if let Some(out) = crate::flag_value(args, "--out") {
+        if let Err(e) =
+            crate::witness_cmd::atomic_write_shared(Path::new(&out), format!("{text}\n").as_bytes())
+        {
+            return fail(format!("{out}: {e}"));
+        }
+        eprintln!(
+            "revocation for {} written to {out}; verifiers apply it with `witness-log verify ... --revocations {out}`",
+            statement.identity_pubkey
+        );
+    }
+    println!("{text}");
+    ExitCode::SUCCESS
 }
 
 // ------------------------------------------------------------------ init

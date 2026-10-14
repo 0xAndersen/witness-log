@@ -424,9 +424,19 @@ verdict. `undisclosed` is the weakest tier, never a neutral one.
 A **RevocationStatement** invalidates an identity key going forward:
 
 ```
-message = "witness-log-revoke-v1" || identity_pubkey (32B) || as_of_ms (8B BE) || reason (UTF-8 bytes)
+v1:  message = "witness-log-revoke-v1" || identity_pubkey (32B) || as_of_ms (8B BE) || reason (UTF-8 bytes)
+v2:  message = "witness-log-revoke-v2" || identity_pubkey (32B) || as_of_ms (8B BE) || 0x01 || as_of_index (8B BE) || reason
 signature = Ed25519_Sign(identity_signing_key, message)
 ```
+
+v2 (RFC-0005, experimental since 0.4.3) adds `as_of_index`, the tree size
+at which the revocation takes effect, under its own prefix so neither
+version's signature verifies as the other. A statement with
+`as_of_index` absent is v1 and serialises exactly as before. A verifier
+that does not implement v2 MUST reject a statement carrying
+`as_of_index` (its signature does not verify under the v1 message), so
+the extension fails closed. Corpus vector 12 pins both messages and the
+cut-off cases below.
 
 Leaves signed by a revoked identity's sessions after `as_of_ms` MUST be
 treated as untrusted by verifiers, and so MUST a checkpoint whose
@@ -434,8 +444,17 @@ treated as untrusted by verifiers, and so MUST a checkpoint whose
 the revocation signed it. Both timestamps are set by the key holder, so a
 verifier SHOULD apply revocations it knows about out of band (the
 reference `VerifyContext::revocations`, `verify --revocations`) rather
-than relying on the dossier to carry them. An index-based cut-off that
-witnesses can pin is proposed in RFC-0005.
+than relying on the dossier to carry them.
+
+With a v2 statement, a verifier MUST additionally reject every leaf
+whose `index` is at or past `as_of_index` and every checkpoint whose
+`tree_size` is greater than `as_of_index`, whatever their timestamps
+say. When several revocations apply, the earliest `as_of_ms` and the
+smallest `as_of_index` govern. The operator who revokes pairs the
+statement with a witnessed checkpoint of size `as_of_index`: witnesses
+refuse to cosign a different root at that size, so a holder of the
+compromised key can neither rewrite the history below the cut-off nor
+extend it in a way any verifier counts.
 
 ## 6. Signed Tree Head (checkpoint)
 

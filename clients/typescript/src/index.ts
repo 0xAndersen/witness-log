@@ -29,6 +29,8 @@ export {
   verifyReceipt,
   verifyKeyBinding,
   verifyRevocation,
+  revocationMessage,
+  revocationCutOff,
   evaluateQuorum,
   validateLeaf,
   validateLeaves,

@@ -1,0 +1,68 @@
+{
+  "cut_off_cases": [
+    {
+      "checkpoint_timestamp_ms": 1700000400000,
+      "checkpoint_tree_size": 3,
+      "max_leaf_index": 2,
+      "revocation": "v2",
+      "valid": true
+    },
+    {
+      "checkpoint_timestamp_ms": 1700000400000,
+      "checkpoint_tree_size": 4,
+      "max_leaf_index": 3,
+      "revocation": "v2",
+      "valid": true
+    },
+    {
+      "checkpoint_timestamp_ms": 1700000400000,
+      "checkpoint_tree_size": 5,
+      "max_leaf_index": 4,
+      "revocation": "v2",
+      "valid": false
+    },
+    {
+      "checkpoint_timestamp_ms": 1700000500000,
+      "checkpoint_tree_size": 4,
+      "max_leaf_index": 3,
+      "revocation": "v2",
+      "valid": false
+    },
+    {
+      "checkpoint_timestamp_ms": 1700000400000,
+      "checkpoint_tree_size": 9,
+      "max_leaf_index": 8,
+      "revocation": "v1",
+      "valid": true
+    },
+    {
+      "checkpoint_timestamp_ms": 1700000500000,
+      "checkpoint_tree_size": 9,
+      "max_leaf_index": 8,
+      "revocation": "v1",
+      "valid": false
+    }
+  ],
+  "description": "RevocationStatement signatures (SPEC.md §5) under the published fixed seed. v1: \"witness-log-revoke-v1\" || identity (32B) || as_of_ms (u64 BE) || reason. v2 (RFC-0005): \"witness-log-revoke-v2\" || identity || as_of_ms || 0x01 || as_of_index (u64 BE) || reason. An implementation MUST reproduce message_hex and verify signature for both, MUST reject the v2 statement with as_of_index removed or changed, and MUST apply the cut-off rules in cut_off_cases: with a v2 revocation at index n, a checkpoint of tree_size > n, or any leaf with index >= n, is not evidence; with any revocation, a checkpoint whose timestamp_ms >= as_of_ms is not evidence.",
+  "identity_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+  "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "v1": {
+    "message_hex": "7769746e6573732d6c6f672d7265766f6b652d763179b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad0496640000018bcfed09206b657920636f6d70726f6d69736564",
+    "statement": {
+      "as_of_ms": 1700000500000,
+      "identity_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "reason": "key compromised",
+      "signature": "bbba41138c2983e0f45576a1a9f82f106b124dddade41f4cfad9f57494b60a2f04b7c48c3ab7cb0dbc9d49e0ef47676b94134c4d5d0592dda6fc4fb1f6975005"
+    }
+  },
+  "v2": {
+    "message_hex": "7769746e6573732d6c6f672d7265766f6b652d763279b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad0496640000018bcfed09200100000000000000046b657920636f6d70726f6d69736564",
+    "statement": {
+      "as_of_index": 4,
+      "as_of_ms": 1700000500000,
+      "identity_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "reason": "key compromised",
+      "signature": "448ce73aa1b450b281db6e69a66837fb7b57e865b4dcfc4b7d88e8bc725bcfe7d1ceef03f5eb5de69baadc1db73a56a63f0b632335da0c5916c40240f6b31f01"
+    }
+  }
+}

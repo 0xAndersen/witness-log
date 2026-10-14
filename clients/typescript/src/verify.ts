@@ -94,6 +94,8 @@ export interface KeyBindingStatement {
 export interface RevocationStatement {
   identity_pubkey: string;
   as_of_ms: number;
+  /** RFC-0005: the tree size at which the revocation takes effect; absent in v1. */
+  as_of_index?: number | null;
   reason: string;
   signature: string;
 }
@@ -155,6 +157,8 @@ export interface VerifyDossierOptions {
   threshold?: number;
   /** Receipt-count gate as an absolute number of distinct cosigning witnesses; replaces `threshold`. */
   minWitnesses?: number;
+  /** Revocations you know about out of band; applied even when the dossier omits them (SPEC §5). */
+  revocations?: RevocationStatement[];
 }
 
 export interface DossierVerification {
@@ -540,6 +544,21 @@ export function verifyKeyBinding(b: KeyBindingStatement): boolean {
   return ed25519Verify(b.identity_pubkey, concat(parts), b.signature);
 }
 
+/** SPEC §5 revocation message: v1 without an index, v2 (RFC-0005) with one. */
+export function revocationMessage(identity: Uint8Array, asOfMs: number, asOfIndex: number | null | undefined, reason: string): Uint8Array {
+  if (asOfIndex === undefined || asOfIndex === null) {
+    return concat([utf8.encode("witness-log-revoke-v1"), identity, u64be(asOfMs), utf8.encode(reason)]);
+  }
+  return concat([
+    utf8.encode("witness-log-revoke-v2"),
+    identity,
+    u64be(asOfMs),
+    new Uint8Array([1]),
+    u64be(asOfIndex),
+    utf8.encode(reason),
+  ]);
+}
+
 /** SPEC §5 revocation signature. */
 export function verifyRevocation(r: RevocationStatement): boolean {
   let identity: Uint8Array;
@@ -549,8 +568,36 @@ export function verifyRevocation(r: RevocationStatement): boolean {
     return false;
   }
   if (identity.length !== 32) return false;
-  const msg = concat([utf8.encode("witness-log-revoke-v1"), identity, u64be(r.as_of_ms), utf8.encode(r.reason)]);
-  return ed25519Verify(r.identity_pubkey, msg, r.signature);
+  return ed25519Verify(r.identity_pubkey, revocationMessage(identity, r.as_of_ms, r.as_of_index, r.reason), r.signature);
+}
+
+/**
+ * SPEC §5 cut-off on already-verified revocations: no leaf and no checkpoint at or after the
+ * earliest `as_of_ms`; RFC-0005: no leaf at or past the smallest `as_of_index`, no head larger than it.
+ */
+export function revocationCutOff(
+  revocations: RevocationStatement[],
+  leaves: Pick<Leaf, "index" | "timestamp_ms">[],
+  checkpointTimestampMs: number,
+  checkpointTreeSize: number,
+): string | null {
+  let asOf: number | null = null;
+  let atIndex: number | null = null;
+  for (const r of revocations) {
+    asOf = asOf === null ? r.as_of_ms : Math.min(asOf, r.as_of_ms);
+    if (r.as_of_index !== undefined && r.as_of_index !== null) {
+      atIndex = atIndex === null ? r.as_of_index : Math.min(atIndex, r.as_of_index);
+    }
+  }
+  if (asOf !== null) {
+    if (checkpointTimestampMs >= asOf) return "the checkpoint is signed at or after the identity's revocation";
+    for (const l of leaves) if (l.timestamp_ms >= asOf) return `leaf ${l.index} postdates the identity's revocation`;
+  }
+  if (atIndex !== null) {
+    if (checkpointTreeSize > atIndex) return `checkpoint tree_size ${checkpointTreeSize} is past the revocation index ${atIndex}`;
+    for (const l of leaves) if (l.index >= atIndex) return `leaf ${l.index} is at or past the revocation index ${atIndex}`;
+  }
+  return null;
 }
 
 /** SPEC §7 native receipt or §9.3 C2SP cosignature receipt, against the dossier's checkpoint. */
@@ -661,6 +708,8 @@ function bindingsAndRevocationsValid(
   identity: string,
   bindings: KeyBindingStatement[],
   revocations: RevocationStatement[],
+  checkpointTimestampMs: number,
+  checkpointTreeSize: number,
 ): string | null {
   if (bindings.length === 0 && revocations.length === 0) return null;
   const id = identity.toLowerCase();
@@ -670,11 +719,9 @@ function bindingsAndRevocationsValid(
     if (!verifyKeyBinding(b)) return `key binding for session ${b.session_pubkey.slice(0, 8)}… has an invalid signature`;
     bySession.set(b.session_pubkey.toLowerCase(), b);
   }
-  let revokedAsOf: number | null = null;
   for (const r of revocations) {
     if (r.identity_pubkey.toLowerCase() !== id) return "a revocation names a different identity";
     if (!verifyRevocation(r)) return "a revocation has an invalid signature";
-    revokedAsOf = revokedAsOf === null ? r.as_of_ms : Math.min(revokedAsOf, r.as_of_ms);
   }
   for (const l of leaves) {
     const b = bySession.get(l.session_pubkey.toLowerCase());
@@ -682,11 +729,8 @@ function bindingsAndRevocationsValid(
     if (b.not_after_ms !== undefined && b.not_after_ms !== null && l.timestamp_ms > b.not_after_ms) {
       return `leaf ${l.index} postdates its session binding's expiry`;
     }
-    if (revokedAsOf !== null && l.timestamp_ms >= revokedAsOf) {
-      return `leaf ${l.index} postdates the identity's revocation`;
-    }
   }
-  return null;
+  return revocationCutOff(revocations, leaves, checkpointTimestampMs, checkpointTreeSize);
 }
 
 function asDirectory(d: WitnessDirectory | WitnessEntry[] | undefined): WitnessDirectory | undefined {
@@ -736,14 +780,23 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   const leafError = validateLeaves(leaves);
   if (leafError !== null) failures.push(leafError);
 
+  const ownRevocations = d.revocations ?? [];
+  const idLower = String(d.identity_pubkey ?? "").toLowerCase();
+  const allRevocations = ownRevocations.concat(
+    (opts.revocations ?? []).filter(
+      (r) => r.identity_pubkey.toLowerCase() === idLower && !ownRevocations.some((o) => o.signature === r.signature),
+    ),
+  );
   const bindingError = bindingsAndRevocationsValid(
     leaves,
     String(d.identity_pubkey ?? ""),
     d.key_bindings ?? [],
-    d.revocations ?? [],
+    allRevocations,
+    Number(checkpoint.timestamp_ms),
+    Number(checkpoint.tree_size),
   );
   if (bindingError !== null) failures.push(bindingError);
-  const bindingsAsserted = (d.key_bindings ?? []).length > 0 || (d.revocations ?? []).length > 0;
+  const bindingsAsserted = (d.key_bindings ?? []).length > 0 || allRevocations.length > 0;
 
   let rebuilt = "";
   try {

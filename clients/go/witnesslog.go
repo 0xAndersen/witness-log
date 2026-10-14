@@ -127,6 +127,10 @@ type Options struct {
 	// MinReceipts, when set, replaces the fraction gate with an absolute
 	// count of valid receipts from distinct witnesses in the directory.
 	MinReceipts *int
+	// Revocations the verifier knows about out of band. They apply whether
+	// or not the dossier carries them; statements for other identities are
+	// ignored (SPEC §5).
+	Revocations []Revocation
 }
 
 // Quorum mirrors the reference QuorumResult field for field.
@@ -219,12 +223,27 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 		r.Failures = append(r.Failures, "leaf structure: "+err.Error())
 	}
 
-	if err := bindingsAndRevocationsValid(d.Leaves, d.IdentityPubkey, d.KeyBindings, d.Revocations); err == nil {
+	revocations := append([]Revocation(nil), d.Revocations...)
+	for _, t := range opts.Revocations {
+		if normalizeHex(t.IdentityPubkey) != normalizeHex(d.IdentityPubkey) {
+			continue
+		}
+		dup := false
+		for _, have := range d.Revocations {
+			if have.Signature == t.Signature {
+				dup = true
+			}
+		}
+		if !dup {
+			revocations = append(revocations, t)
+		}
+	}
+	if err := bindingsAndRevocationsValid(d.Leaves, d.IdentityPubkey, d.KeyBindings, revocations, d.Checkpoint.TimestampMs, d.Checkpoint.TreeSize); err == nil {
 		r.BindingsValid = true
 	} else {
 		r.Failures = append(r.Failures, "key bindings: "+err.Error())
 	}
-	r.BindingsAsserted = len(d.KeyBindings) > 0 || len(d.Revocations) > 0
+	r.BindingsAsserted = len(d.KeyBindings) > 0 || len(revocations) > 0
 
 	hashes := make([]Hash, len(d.Leaves))
 	for i := range d.Leaves {
@@ -274,7 +293,7 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 // verify, every leaf's session key must have a binding, no leaf may fall
 // after its binding's not_after_ms, and no leaf may be at or after the
 // earliest revocation.
-func bindingsAndRevocationsValid(leaves []Leaf, identity string, bindings []KeyBinding, revocations []Revocation) error {
+func bindingsAndRevocationsValid(leaves []Leaf, identity string, bindings []KeyBinding, revocations []Revocation, checkpointTimestampMs, checkpointTreeSize uint64) error {
 	if len(bindings) == 0 && len(revocations) == 0 {
 		return nil
 	}
@@ -289,7 +308,6 @@ func bindingsAndRevocationsValid(leaves []Leaf, identity string, bindings []KeyB
 		}
 		bySession[normalizeHex(b.SessionPubkey)] = b
 	}
-	var revokedAsOf *uint64
 	for i := range revocations {
 		rv := &revocations[i]
 		if normalizeHex(rv.IdentityPubkey) != normalizeHex(identity) {
@@ -297,10 +315,6 @@ func bindingsAndRevocationsValid(leaves []Leaf, identity string, bindings []KeyB
 		}
 		if err := rv.Verify(); err != nil {
 			return fmt.Errorf("revocation: %w", err)
-		}
-		if revokedAsOf == nil || rv.AsOfMs < *revokedAsOf {
-			v := rv.AsOfMs
-			revokedAsOf = &v
 		}
 	}
 	for i := range leaves {
@@ -312,8 +326,44 @@ func bindingsAndRevocationsValid(leaves []Leaf, identity string, bindings []KeyB
 		if b.NotAfterMs != nil && l.TimestampMs > *b.NotAfterMs {
 			return fmt.Errorf("leaf %d: timestamp is after its session binding's not_after_ms", l.Index)
 		}
-		if revokedAsOf != nil && l.TimestampMs >= *revokedAsOf {
-			return fmt.Errorf("leaf %d: timestamp is at or after the identity's revocation", l.Index)
+	}
+	return revocationCutOff(revocations, leaves, checkpointTimestampMs, checkpointTreeSize)
+}
+
+// revocationCutOff applies SPEC §5 to already-verified revocations: no leaf
+// and no checkpoint at or after the earliest as_of_ms, and (RFC-0005) no
+// leaf at or past the smallest as_of_index and no head larger than it.
+func revocationCutOff(revocations []Revocation, leaves []Leaf, checkpointTimestampMs, checkpointTreeSize uint64) error {
+	var revokedAsOf, revokedAtIndex *uint64
+	for i := range revocations {
+		rv := &revocations[i]
+		if revokedAsOf == nil || rv.AsOfMs < *revokedAsOf {
+			v := rv.AsOfMs
+			revokedAsOf = &v
+		}
+		if rv.AsOfIndex != nil && (revokedAtIndex == nil || *rv.AsOfIndex < *revokedAtIndex) {
+			v := *rv.AsOfIndex
+			revokedAtIndex = &v
+		}
+	}
+	if revokedAsOf != nil {
+		if checkpointTimestampMs >= *revokedAsOf {
+			return fmt.Errorf("checkpoint is signed at or after the identity's revocation")
+		}
+		for i := range leaves {
+			if leaves[i].TimestampMs >= *revokedAsOf {
+				return fmt.Errorf("leaf %d: timestamp is at or after the identity's revocation", leaves[i].Index)
+			}
+		}
+	}
+	if revokedAtIndex != nil {
+		if checkpointTreeSize > *revokedAtIndex {
+			return fmt.Errorf("checkpoint tree_size %d is past the revocation index %d", checkpointTreeSize, *revokedAtIndex)
+		}
+		for i := range leaves {
+			if leaves[i].Index >= *revokedAtIndex {
+				return fmt.Errorf("leaf %d is at or past the revocation index %d", leaves[i].Index, *revokedAtIndex)
+			}
 		}
 	}
 	return nil

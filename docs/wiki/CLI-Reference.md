@@ -181,6 +181,19 @@ Identity, canonical origin, tree size, root, leaf counts by type, key
 bindings, salts held, sealed or not. For a sealed journal without its
 seed, the public facts from the header.
 
+```
+witness-log log revoke <journal> --reason TEXT [--as-of-ms MS] [--out revocation.json]
+                       [--experimental (--as-of-index N | --at-current-size)]
+```
+
+Sign a revocation of the journal's identity key (SPEC §5) and print it.
+`as_of_ms` defaults to the millisecond after now. Verifiers apply it with
+`verify --revocations <file>` whether or not a dossier carries it.
+`--as-of-index N` / `--at-current-size` (RFC-0005, needs `--experimental`)
+also cut off by position: nothing at index N or later and no head larger
+than N counts, whatever its timestamps. See
+[Keys and identity](Keys-and-Identity#revocation).
+
 ---
 
 ## submit

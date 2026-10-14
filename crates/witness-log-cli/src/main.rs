@@ -548,6 +548,7 @@ fn run_conform(candidate_dir: &str, reference_dir: &str) -> ExitCode {
         "09_external_anchor.json",
         "10_c2sp_checkpoint.json",
         "11_payload_hash.json",
+        "12_revocation.json",
     ];
     let mut mismatches = 0usize;
     let mut missing = 0usize;
@@ -712,6 +713,19 @@ pub(crate) fn parse_seed(raw: &[u8]) -> Result<zeroize::Zeroizing<[u8; 32]>, Str
 
 /// Replay a journal read-only, with the seed when the caller supplied
 /// one (required for a sealed journal; checked against an unsealed one).
+/// One revocation statement (what `log revoke` prints) or an array of them.
+fn parse_revocations(
+    text: &str,
+) -> Result<Vec<witness_log_core::identity::RevocationStatement>, String> {
+    if text.trim_start().starts_with('{') {
+        serde_json::from_str(text)
+            .map(|one| vec![one])
+            .map_err(|e| e.to_string())
+    } else {
+        serde_json::from_str(text).map_err(|e| e.to_string())
+    }
+}
+
 pub(crate) fn replay_journal(
     path: &str,
     seed: Option<&[u8; 32]>,
@@ -986,11 +1000,11 @@ fn run_verify(opts: &Options) -> ExitCode {
     {
         Some(p) => match std::fs::read_to_string(p)
             .map_err(|e| e.to_string())
-            .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+            .and_then(|t| parse_revocations(&t))
         {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("could not read revocations {p}: {e} (expected a JSON array of revocation statements)");
+                eprintln!("could not read revocations {p}: {e} (expected one statement as `log revoke` prints it, or a JSON array of them)");
                 return ExitCode::from(exit::USAGE);
             }
         },

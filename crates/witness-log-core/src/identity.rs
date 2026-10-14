@@ -88,19 +88,74 @@ impl IdentityKeypair {
     /// suspected compromise. Leaves after `as_of_ms` under this identity
     /// should be treated as untrusted by verifiers.
     pub fn revoke(&self, as_of_ms: u64, reason: &str) -> RevocationStatement {
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"witness-log-revoke-v1");
-        msg.extend_from_slice(&self.signing_key.verifying_key().to_bytes());
-        msg.extend_from_slice(&as_of_ms.to_be_bytes());
-        msg.extend_from_slice(reason.as_bytes());
+        self.sign_revocation(as_of_ms, None, reason)
+    }
+
+    /// RFC-0005 (experimental): a revocation that also names the tree size
+    /// at which it takes effect. Verifiers reject every leaf at index
+    /// `as_of_index` or later and every checkpoint larger than
+    /// `as_of_index`, whatever their timestamps say. Pair it with a
+    /// witnessed checkpoint of size `as_of_index`: witnesses refuse to
+    /// cosign a different root at that size, so whoever holds the
+    /// compromised key can neither rewrite the history below the cut-off
+    /// nor extend it. Signed under the `witness-log-revoke-v2` message,
+    /// which a verifier that only knows v1 rejects (fail-closed).
+    pub fn revoke_at_index(
+        &self,
+        as_of_ms: u64,
+        as_of_index: u64,
+        reason: &str,
+    ) -> RevocationStatement {
+        self.sign_revocation(as_of_ms, Some(as_of_index), reason)
+    }
+
+    fn sign_revocation(
+        &self,
+        as_of_ms: u64,
+        as_of_index: Option<u64>,
+        reason: &str,
+    ) -> RevocationStatement {
+        let pk = self.signing_key.verifying_key().to_bytes();
+        let msg = revocation_message(&pk, as_of_ms, as_of_index, reason);
         let signature = self.signing_key.sign(&msg);
         RevocationStatement {
-            identity_pubkey: hex::encode(self.signing_key.verifying_key().to_bytes()),
+            identity_pubkey: hex::encode(pk),
             as_of_ms,
+            as_of_index,
             reason: reason.to_string(),
             signature: hex::encode(signature.to_bytes()),
         }
     }
+}
+
+/// SPEC §5. v1 (no index): `"witness-log-revoke-v1" || identity (32B) ||
+/// as_of_ms (8B BE) || reason`. v2 (RFC-0005, with an index):
+/// `"witness-log-revoke-v2" || identity || as_of_ms || 0x01 || as_of_index
+/// (8B BE) || reason`. The prefix names the version, so a v2 signature can
+/// never be read as a v1 one with the index stripped.
+pub fn revocation_message(
+    identity_pubkey: &[u8; 32],
+    as_of_ms: u64,
+    as_of_index: Option<u64>,
+    reason: &str,
+) -> Vec<u8> {
+    let mut msg = Vec::new();
+    match as_of_index {
+        None => {
+            msg.extend_from_slice(b"witness-log-revoke-v1");
+            msg.extend_from_slice(identity_pubkey);
+            msg.extend_from_slice(&as_of_ms.to_be_bytes());
+        }
+        Some(index) => {
+            msg.extend_from_slice(b"witness-log-revoke-v2");
+            msg.extend_from_slice(identity_pubkey);
+            msg.extend_from_slice(&as_of_ms.to_be_bytes());
+            msg.push(0x01);
+            msg.extend_from_slice(&index.to_be_bytes());
+        }
+    }
+    msg.extend_from_slice(reason.as_bytes());
+    msg
 }
 
 pub struct SessionKeypair {
@@ -253,6 +308,11 @@ impl KeyBindingStatement {
 pub struct RevocationStatement {
     pub identity_pubkey: String,
     pub as_of_ms: u64,
+    /// RFC-0005 (experimental): the tree size at which the revocation
+    /// takes effect. Absent in v1 statements, which keep the timestamp
+    /// rule alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of_index: Option<u64>,
     pub reason: String,
     pub signature: String,
 }
@@ -270,11 +330,12 @@ impl RevocationStatement {
             .try_into()
             .map_err(|_| IdentityError::InvalidBindingSignature)?;
         let signature = Signature::from_bytes(&sig_bytes);
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"witness-log-revoke-v1");
-        msg.extend_from_slice(&identity_pk.to_bytes());
-        msg.extend_from_slice(&self.as_of_ms.to_be_bytes());
-        msg.extend_from_slice(self.reason.as_bytes());
+        let msg = revocation_message(
+            &identity_pk.to_bytes(),
+            self.as_of_ms,
+            self.as_of_index,
+            &self.reason,
+        );
         identity_pk
             .verify_strict(&msg, &signature)
             .map_err(|_| IdentityError::InvalidBindingSignature)
@@ -284,6 +345,28 @@ impl RevocationStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_revocation_is_bound_to_its_index_and_version() {
+        let id = IdentityKeypair::generate();
+        let r = id.revoke_at_index(5_000, 7, "compromised");
+        assert!(r.verify().is_ok());
+        let mut moved = r.clone();
+        moved.as_of_index = Some(8);
+        assert!(moved.verify().is_err(), "the index is signed");
+        let mut stripped = r.clone();
+        stripped.as_of_index = None;
+        assert!(stripped.verify().is_err(), "a v2 signature is not a v1 one");
+        let v1 = id.revoke(5_000, "compromised");
+        let mut upgraded = v1.clone();
+        upgraded.as_of_index = Some(7);
+        assert!(upgraded.verify().is_err(), "a v1 signature is not a v2 one");
+        let json = serde_json::to_string(&v1).unwrap();
+        assert!(
+            !json.contains("as_of_index"),
+            "v1 serialises exactly as before: {json}"
+        );
+    }
 
     #[test]
     fn binding_verifies_and_tamper_fails() {

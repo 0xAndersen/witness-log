@@ -617,6 +617,51 @@ fn main() {
         }),
     );
 
+    // 12. Revocation statements (SPEC §5, RFC-0005). v1 is the timestamp
+    // statement every release has signed; v2 adds the tree size at which
+    // the revocation takes effect under its own message prefix, so a v2
+    // signature cannot be replayed as a v1 one with the index stripped.
+    let rev_identity = IdentityKeypair::from_bytes(&FIXED_SEED);
+    let rev_pk: [u8; 32] = hex::decode(rev_identity.public_hex())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let v1 = rev_identity.revoke(1_700_000_500_000, "key compromised");
+    let v2 = rev_identity.revoke_at_index(1_700_000_500_000, 4, "key compromised");
+    let msg_v1 =
+        witness_log_core::identity::revocation_message(&rev_pk, v1.as_of_ms, None, &v1.reason);
+    let msg_v2 = witness_log_core::identity::revocation_message(
+        &rev_pk,
+        v2.as_of_ms,
+        v2.as_of_index,
+        &v2.reason,
+    );
+    write_json(
+        dir,
+        "12_revocation.json",
+        &json!({
+            "description": "RevocationStatement signatures (SPEC.md §5) under the published fixed seed. v1: \"witness-log-revoke-v1\" || identity (32B) || as_of_ms (u64 BE) || reason. v2 (RFC-0005): \"witness-log-revoke-v2\" || identity || as_of_ms || 0x01 || as_of_index (u64 BE) || reason. An implementation MUST reproduce message_hex and verify signature for both, MUST reject the v2 statement with as_of_index removed or changed, and MUST apply the cut-off rules in cut_off_cases: with a v2 revocation at index n, a checkpoint of tree_size > n, or any leaf with index >= n, is not evidence; with any revocation, a checkpoint whose timestamp_ms >= as_of_ms is not evidence.",
+            "seed_hex": hex::encode(FIXED_SEED),
+            "identity_pubkey": hex::encode(rev_pk),
+            "v1": {
+                "statement": serde_json::to_value(&v1).unwrap(),
+                "message_hex": hex::encode(&msg_v1),
+            },
+            "v2": {
+                "statement": serde_json::to_value(&v2).unwrap(),
+                "message_hex": hex::encode(&msg_v2),
+            },
+            "cut_off_cases": [
+                {"revocation": "v2", "checkpoint_tree_size": 3, "checkpoint_timestamp_ms": 1_700_000_400_000u64, "max_leaf_index": 2, "valid": true},
+                {"revocation": "v2", "checkpoint_tree_size": 4, "checkpoint_timestamp_ms": 1_700_000_400_000u64, "max_leaf_index": 3, "valid": true},
+                {"revocation": "v2", "checkpoint_tree_size": 5, "checkpoint_timestamp_ms": 1_700_000_400_000u64, "max_leaf_index": 4, "valid": false},
+                {"revocation": "v2", "checkpoint_tree_size": 4, "checkpoint_timestamp_ms": 1_700_000_500_000u64, "max_leaf_index": 3, "valid": false},
+                {"revocation": "v1", "checkpoint_tree_size": 9, "checkpoint_timestamp_ms": 1_700_000_400_000u64, "max_leaf_index": 8, "valid": true},
+                {"revocation": "v1", "checkpoint_tree_size": 9, "checkpoint_timestamp_ms": 1_700_000_500_000u64, "max_leaf_index": 8, "valid": false},
+            ],
+        }),
+    );
+
     println!("wrote conformance corpus to {dir}/");
 }
 

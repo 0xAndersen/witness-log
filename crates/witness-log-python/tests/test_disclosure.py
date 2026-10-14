@@ -402,3 +402,31 @@ def test_canonical_json_fast_path_matches_the_full_encoder():
     # out of the fast path: floats, big ints, non-ASCII keys
     for v in [{"a": 1.5}, {"a": 2**53}, {"é": 1}, {"a": float("nan")}]:
         assert witness_log.canonical_json(v) == full(v) or v.get("a") != v.get("a")
+
+
+def test_revoke_json_v1_and_rfc0005_index(tmp_path):
+    """`revoke_json` signs SPEC §5 revocations; an index cut-off (RFC-0005)
+    needs experimental=True and is enforced by `verify_dossier_json` when
+    the verifier passes it, even if the dossier omits it."""
+    import json
+
+    import witness_log as wl
+
+    log = wl.open(str(tmp_path / "a.jsonl"))
+    for i in range(3):
+        log.append_intent(b"x%d" % i)
+    before = log.to_dossier_json()
+    ident = log.identity_pubkey_hex()
+    with pytest.raises(ValueError, match="experimental"):
+        log.revoke_json("rotated", as_of_index=-1)
+    rev = json.loads(log.revoke_json("rotated", as_of_index=-1, experimental=True))
+    assert rev["as_of_index"] == 3 and rev["identity_pubkey"] == ident
+    v1 = json.loads(log.revoke_json("rotated"))
+    assert "as_of_index" not in v1
+    rep = json.loads(wl.verify_dossier_json(before, 0.66, ident, None, None, json.dumps(rev)))
+    assert rep["bindings_valid"] and rep["verdict"] == "unanchored"
+    log.append_intent(b"after")
+    after = log.to_dossier_json()
+    rep = json.loads(wl.verify_dossier_json(after, 0.66, ident, None, None, json.dumps([rev])))
+    assert not rep["bindings_valid"], rep
+    log.close()

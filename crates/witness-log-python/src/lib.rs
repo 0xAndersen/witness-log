@@ -322,13 +322,14 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// fraction with an absolute receipt count: the right gate when the
 /// directory is a registry of many witnesses.
 #[pyfunction]
-#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None))]
+#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None))]
 fn verify_dossier_json(
     dossier_json: &str,
     threshold: f64,
     expected_identity_pubkey: Option<String>,
     trusted_directory_json: Option<String>,
     min_witnesses: Option<usize>,
+    revocations_json: Option<String>,
 ) -> PyResult<String> {
     if min_witnesses == Some(0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -363,11 +364,21 @@ fn verify_dossier_json(
             ),
             None => None,
         };
+    // Revocations the caller knows about out of band: one statement (as
+    // `revoke_json` returns it) or an array of them.
+    let revocations: Vec<witness_log_core::identity::RevocationStatement> = match &revocations_json
+    {
+        None => Vec::new(),
+        Some(s) if s.trim_start().starts_with('{') => {
+            vec![serde_json::from_str(s).map_err(malformed_err)?]
+        }
+        Some(s) => serde_json::from_str(s).map_err(malformed_err)?,
+    };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: expected_identity_pubkey.as_deref(),
         trusted_directory: trusted_directory.as_ref(),
         min_receipts: min_witnesses,
-        revocations: &[],
+        revocations: &revocations,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)
@@ -1163,6 +1174,39 @@ impl PyJournaledLog {
     /// Sign a checkpoint over the current head. Returns JSON.
     fn checkpoint(&self) -> PyResult<String> {
         serde_json::to_string(&self.j()?.log().checkpoint_self()).map_err(malformed_err)
+    }
+
+    /// Sign a revocation of this log's identity key (SPEC §5) and return
+    /// it as JSON. `as_of_ms` defaults to now. `as_of_index` (RFC-0005,
+    /// experimental) also cuts off by position and needs
+    /// `experimental=True`; `-1` means "this log's size now". Publish the
+    /// result; verifiers apply it with `verify_dossier_json(...,
+    /// revocations_json=...)` or `witness-log verify --revocations`.
+    #[pyo3(signature = (reason, as_of_ms=None, as_of_index=None, experimental=false))]
+    fn revoke_json(
+        &self,
+        reason: &str,
+        as_of_ms: Option<u64>,
+        as_of_index: Option<i64>,
+        experimental: bool,
+    ) -> PyResult<String> {
+        let j = self.j()?;
+        let index = match as_of_index {
+            None => None,
+            Some(_) if !experimental => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "as_of_index is RFC-0005 and experimental; pass experimental=True to sign a v2 statement",
+                ))
+            }
+            Some(-1) => Some(j.log().tree_size()),
+            Some(n) if n >= 0 => Some(n as u64),
+            Some(n) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "as_of_index must be a tree size (>= 0) or -1 for the current size, got {n}"
+                )))
+            }
+        };
+        serde_json::to_string(&j.log().revoke(as_of_ms, index, reason)).map_err(malformed_err)
     }
 
     /// Export a dossier of this log's own history, with key bindings

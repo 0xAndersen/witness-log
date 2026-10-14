@@ -881,6 +881,7 @@ fn bindings_and_revocations_valid(
     key_bindings: &[KeyBindingStatement],
     revocations: &[RevocationStatement],
     checkpoint_timestamp_ms: u64,
+    checkpoint_tree_size: u64,
 ) -> bool {
     // No binding or revocation data supplied at all. This is the common
     // case today (see `Dossier::key_bindings`'s doc comment on the
@@ -914,7 +915,6 @@ fn bindings_and_revocations_valid(
         binding_by_session.insert(normalize_hex(&b.session_pubkey), b);
     }
 
-    let mut revoked_as_of: Option<u64> = None;
     for r in revocations {
         if normalize_hex(&r.identity_pubkey) != normalize_hex(identity_pubkey) {
             return false;
@@ -922,24 +922,7 @@ fn bindings_and_revocations_valid(
         if r.verify().is_err() {
             return false;
         }
-        revoked_as_of = Some(match revoked_as_of {
-            Some(existing) => existing.min(r.as_of_ms),
-            None => r.as_of_ms,
-        });
     }
-    // A checkpoint the revoked key signed at or after the revocation is
-    // not evidence of anything: whoever holds the key now signed it. The
-    // leaf cut-off below is on timestamps the same holder sets, so on
-    // its own it only catches an honest clock; the checkpoint rule and
-    // verifier-supplied revocations (`VerifyContext::revocations`) are
-    // what make omitting or backdating the statement visible. An
-    // index-based cut-off that witnesses can pin is RFC-0005.
-    if let Some(as_of) = revoked_as_of {
-        if checkpoint_timestamp_ms >= as_of {
-            return false;
-        }
-    }
-
     for l in leaves {
         let session_key = normalize_hex(&l.session_pubkey);
         let binding = match binding_by_session.get(&session_key) {
@@ -954,13 +937,60 @@ fn bindings_and_revocations_valid(
                 return false;
             }
         }
-        if let Some(as_of) = revoked_as_of {
-            if l.timestamp_ms >= as_of {
-                return false;
+    }
+    revocation_cut_off(
+        revocations,
+        leaves.iter().map(|l| (l.index, l.timestamp_ms)),
+        checkpoint_timestamp_ms,
+        checkpoint_tree_size,
+    )
+    .is_ok()
+}
+
+/// SPEC §5's cut-off over revocations whose signatures are already
+/// verified. With any revocation: no leaf and no checkpoint at or after
+/// the earliest `as_of_ms` (a checkpoint the revoked key signed after the
+/// revocation is not evidence: whoever holds the key now signed it). With
+/// an RFC-0005 index: no leaf at or past the smallest `as_of_index` and no
+/// head larger than it, whatever the timestamps say, because timestamps
+/// are written by the same key holder the revocation defends against.
+/// `leaves` yields `(index, timestamp_ms)`. Corpus vector 12 pins the
+/// cases.
+pub fn revocation_cut_off(
+    revocations: &[RevocationStatement],
+    leaves: impl IntoIterator<Item = (u64, u64)>,
+    checkpoint_timestamp_ms: u64,
+    checkpoint_tree_size: u64,
+) -> Result<(), String> {
+    let as_of = revocations.iter().map(|r| r.as_of_ms).min();
+    let at_index = revocations.iter().filter_map(|r| r.as_of_index).min();
+    if let Some(t) = as_of {
+        if checkpoint_timestamp_ms >= t {
+            return Err("the checkpoint is signed at or after the identity's revocation".into());
+        }
+    }
+    if let Some(n) = at_index {
+        if checkpoint_tree_size > n {
+            return Err(format!(
+                "checkpoint tree_size {checkpoint_tree_size} is past the revocation index {n}"
+            ));
+        }
+    }
+    for (index, ts) in leaves {
+        if let Some(t) = as_of {
+            if ts >= t {
+                return Err(format!("leaf {index} postdates the identity's revocation"));
+            }
+        }
+        if let Some(n) = at_index {
+            if index >= n {
+                return Err(format!(
+                    "leaf {index} is at or past the revocation index {n}"
+                ));
             }
         }
     }
-    true
+    Ok(())
 }
 
 impl Dossier {
@@ -1024,6 +1054,7 @@ impl Dossier {
             &self.key_bindings,
             &all_revocations,
             self.checkpoint.timestamp_ms,
+            self.checkpoint.tree_size,
         );
         let bindings_asserted = !self.key_bindings.is_empty() || !all_revocations.is_empty();
 

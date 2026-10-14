@@ -324,6 +324,29 @@ impl WitnessLog {
         self.identity.to_bytes()
     }
 
+    /// Sign a revocation of this log's identity (SPEC §5). `as_of_ms`
+    /// defaults to the millisecond after now. `as_of_index` (RFC-0005, experimental) names the
+    /// tree size at which the revocation takes effect; pass this log's
+    /// current size to say "nothing after what is here now". The
+    /// statement is returned, not appended: publish it where verifiers
+    /// look (`verify --revocations`, the registry, the dossier).
+    pub fn revoke(
+        &self,
+        as_of_ms: Option<u64>,
+        as_of_index: Option<u64>,
+        reason: &str,
+    ) -> crate::identity::RevocationStatement {
+        // Default: the millisecond after now and after the newest leaf, so
+        // every leaf and checkpoint this log signed before the call stays
+        // on the valid side of `>= as_of_ms` even within one millisecond.
+        let newest = self.leaves.last().map_or(0, |l| l.timestamp_ms);
+        let at = as_of_ms.unwrap_or_else(|| now_ms().max(newest).saturating_add(1));
+        match as_of_index {
+            Some(n) => self.identity.revoke_at_index(at, n, reason),
+            None => self.identity.revoke(at, reason),
+        }
+    }
+
     /// Every key binding this log knows about, oldest first, ending with
     /// the current session's.
     ///

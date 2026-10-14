@@ -134,6 +134,14 @@ class JournaledLog:
     # Attached by ``witness_log/__init__.py`` (Python, not Rust); listed
     # here because they are methods of this class at runtime.
     def disclose(self, index: int) -> dict[str, Any]: ...
+    def revoke_json(
+        self,
+        reason: str,
+        as_of_ms: Optional[int] = None,
+        as_of_index: Optional[int] = None,
+        experimental: bool = False,
+    ) -> str:
+        """Sign a revocation of this identity (SPEC §5); `as_of_index` is RFC-0005 and needs `experimental=True`."""
     def witnessed_dossier_json(self, state_path: Optional[str] = None) -> Optional[str]:
         """Dossier for the latest cosigned head, with its receipts, rebuilt
         from ``<journal>.witnesses.json`` (attached in ``__init__``)."""
@@ -188,6 +196,7 @@ def verify_dossier_json(
     expected_identity_pubkey: Optional[str] = None,
     trusted_directory_json: Optional[str] = None,
     min_witnesses: Optional[int] = None,
+    revocations_json: Optional[str] = None,
 ) -> str: ...
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str

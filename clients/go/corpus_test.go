@@ -692,7 +692,7 @@ func TestCorpusComplete(t *testing.T) {
 		"01_leaf_encoding.json": true, "02_merkle_roots.json": true, "03_inclusion_proofs.json": true,
 		"04_signed_tree_head.json": true, "05_redaction_continuity.json": true, "06_consistency_proof.json": true,
 		"07_handoff_attestation.json": true, "08_authorization_event.json": true, "09_external_anchor.json": true,
-		"10_c2sp_checkpoint.json": true, "11_payload_hash.json": true,
+		"10_c2sp_checkpoint.json": true, "11_payload_hash.json": true, "12_revocation.json": true,
 	}
 	n := 0
 	for _, e := range entries {
@@ -706,5 +706,67 @@ func TestCorpusComplete(t *testing.T) {
 	}
 	if n != len(covered) {
 		t.Errorf("corpus has %d vectors, tests cover %d", n, len(covered))
+	}
+}
+
+func TestCorpus12Revocation(t *testing.T) {
+	var v struct {
+		IdentityPubkey string `json:"identity_pubkey"`
+		V1             struct {
+			Statement  Revocation `json:"statement"`
+			MessageHex string     `json:"message_hex"`
+		} `json:"v1"`
+		V2 struct {
+			Statement  Revocation `json:"statement"`
+			MessageHex string     `json:"message_hex"`
+		} `json:"v2"`
+		CutOffCases []struct {
+			Revocation            string `json:"revocation"`
+			CheckpointTreeSize    uint64 `json:"checkpoint_tree_size"`
+			CheckpointTimestampMs uint64 `json:"checkpoint_timestamp_ms"`
+			MaxLeafIndex          uint64 `json:"max_leaf_index"`
+			Valid                 bool   `json:"valid"`
+		} `json:"cut_off_cases"`
+	}
+	readCorpus(t, "12_revocation.json", &v)
+	pk, _ := hex.DecodeString(v.IdentityPubkey)
+	for name, c := range map[string]struct {
+		r   Revocation
+		msg string
+	}{"v1": {v.V1.Statement, v.V1.MessageHex}, "v2": {v.V2.Statement, v.V2.MessageHex}} {
+		got := RevocationMessage(pk, c.r.AsOfMs, c.r.AsOfIndex, c.r.Reason)
+		if hex.EncodeToString(got) != c.msg {
+			t.Errorf("%s: message %x want %s", name, got, c.msg)
+		}
+		if err := c.r.Verify(); err != nil {
+			t.Errorf("%s: must verify: %v", name, err)
+		}
+	}
+	stripped := v.V2.Statement
+	stripped.AsOfIndex = nil
+	if stripped.Verify() == nil {
+		t.Error("v2 with the index stripped must not verify")
+	}
+	moved := v.V2.Statement
+	n := *moved.AsOfIndex + 1
+	moved.AsOfIndex = &n
+	if moved.Verify() == nil {
+		t.Error("v2 with a different index must not verify")
+	}
+	for i, c := range v.CutOffCases {
+		rv := v.V1.Statement
+		if c.Revocation == "v2" {
+			rv = v.V2.Statement
+		}
+		leaves := make([]Leaf, 0, c.MaxLeafIndex+1)
+		for j := uint64(0); j <= c.MaxLeafIndex; j++ {
+			leaves = append(leaves, Leaf{Index: j, TimestampMs: 0, SessionPubkey: "s"})
+		}
+		// No bindings: only the revocation rules can fail, so bindings are
+		// supplied as covering the placeholder session key.
+		err := revocationCutOff([]Revocation{rv}, leaves, c.CheckpointTimestampMs, c.CheckpointTreeSize)
+		if (err == nil) != c.Valid {
+			t.Errorf("cut-off case %d: valid=%v want %v (%v)", i, err == nil, c.Valid, err)
+		}
 	}
 }

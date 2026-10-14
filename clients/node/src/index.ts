@@ -485,6 +485,7 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
         directoryJson: opts.directory === undefined ? undefined : JSON.stringify(opts.directory),
         threshold: opts.threshold,
         minWitnesses: opts.minWitnesses,
+        revocationsJson: opts.revocations === undefined ? undefined : JSON.stringify(opts.revocations),
       }),
     ),
   ) as DossierReport;
