@@ -21,7 +21,7 @@ pinned. Disposition per finding:
 | C1 | info | accepted as is (the log's own signature covers the bytes) |
 | C2 | info | fixed: empty signature refused |
 | I1, M1 | info | documented; pinned by tests |
-| P1 | plausible | open: roll back the in-memory leaf on a failed append (tracked for 0.4.3) |
+| P1 | plausible → confirmed | fixed in 0.4.3: a failed journal or salt write rolls the leaf back out of memory and cuts the partial record off the file; journaled `forget` writes the tombstone first and erases second, so a failure changes nothing or leaves a recorded erasure resume completes; an injected short write proves it (`failed_append_tests`) |
 | P2, P3 | plausible | documented limitations |
 
 The review as delivered follows.

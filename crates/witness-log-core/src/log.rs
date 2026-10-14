@@ -504,6 +504,15 @@ impl WitnessLog {
             return false;
         }
         self.salts.forget(target_index);
+        self.append_tombstone(target_index);
+        true
+    }
+
+    /// Append the 0x03 Redaction leaf for `target_index` without touching
+    /// the salt. `JournaledLog::forget` journals this record first and
+    /// erases the salt second, so a failure at any step either changes
+    /// nothing or leaves a recorded erasure that resume completes.
+    pub(crate) fn append_tombstone(&mut self, target_index: u64) -> u64 {
         self.append(AppendArgs {
             leaf_type: LeafType::Redaction,
             payload: b"",
@@ -517,8 +526,13 @@ impl WitnessLog {
             anchor_url: None,
             anchor_proof_json: None,
             anchor_proof_hash: None,
-        });
-        true
+        })
+    }
+
+    /// Erase the salt for `index` (the second half of a journaled
+    /// forget). `false` if there was none.
+    pub(crate) fn erase_salt(&mut self, index: u64) -> bool {
+        self.salts.forget(index)
     }
 
     /// A session binding with a TTL (`resume_with_ttl`) stops covering
@@ -551,6 +565,35 @@ impl WitnessLog {
         self.prior_bindings.push(old);
         self.session = session;
         self.session_number = session_number;
+    }
+
+    /// Undo the most recent append, which must be the leaf at `index`.
+    /// For `JournaledLog`: when the journal (or the salt sidecar) refuses
+    /// a write, the leaf is already in this tree; leaving it there would
+    /// let a checkpoint sign a head that a restart cannot reproduce, and
+    /// the next append at that index after a restart would contradict it
+    /// (review round 2, P1). Returns `false`, changing nothing, if `index`
+    /// is not the last leaf.
+    pub(crate) fn rollback_last(&mut self, index: u64) -> bool {
+        let Some(last) = self.leaves.last() else {
+            return false;
+        };
+        if last.index != index || self.tree.size() != index.saturating_add(1) {
+            return false;
+        }
+        let was_marker = matches!(
+            LeafType::from_tag(last.leaf_type),
+            Some(LeafType::Redaction) | Some(LeafType::KeyRevocation)
+        );
+        self.leaves.pop();
+        self.tree.truncate(index);
+        if !was_marker {
+            self.salts.discard(index);
+        }
+        // An error the store recorded for this commit belongs to the leaf
+        // that no longer exists; the caller already has it.
+        let _ = self.salts.take_error();
+        true
     }
 
     fn append(&mut self, args: AppendArgs<'_>) -> u64 {

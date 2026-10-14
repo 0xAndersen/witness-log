@@ -57,6 +57,16 @@ pub trait SaltStore: Send {
     /// Returns `false` if there was nothing to forget (already forgotten,
     /// or never had a payload).
     fn forget(&mut self, leaf_index: u64) -> bool;
+    /// Undo the `commit` for a leaf that never reached the journal (its
+    /// append failed and was rolled back). Unlike `forget` this is not an
+    /// erasure of a committed leaf and needs no rewrite: a persistent
+    /// store drops the salt from memory, and the record already on disk
+    /// is discarded on resume (`reconcile` drops indices at or past the
+    /// replayed tree size) or superseded by the next commit at the same
+    /// index (the latest record for an index wins).
+    fn discard(&mut self, leaf_index: u64) {
+        let _ = self.forget(leaf_index);
+    }
     fn has_salt(&self, leaf_index: u64) -> bool;
     /// Recompute the committed hash for a still-live leaf, e.g. to verify a
     /// payload against the tree before redacting it. `None` if the salt is
@@ -303,9 +313,12 @@ impl SaltStore for FileSaltStore {
         let salt = rand_salt();
         self.salts.insert(leaf_index, salt);
         let r = Self::record_line(leaf_index, &salt)
-            .and_then(|line| crate::journal::write_line(&mut self.file, &line));
+            .and_then(|line| crate::journal::append_record(&mut self.file, &line));
         self.note(r);
         payload_hash(payload, &salt, leaf_index)
+    }
+    fn discard(&mut self, leaf_index: u64) {
+        self.salts.remove(&leaf_index);
     }
     fn forget(&mut self, leaf_index: u64) -> bool {
         if self.salts.remove(&leaf_index).is_none() {

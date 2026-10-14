@@ -140,6 +140,29 @@ pub(crate) fn write_line(file: &mut File, line: &str) -> std::io::Result<()> {
     file.write_all(buf.as_bytes())
 }
 
+/// Append one record at the end of `file`; if the write fails, cut the
+/// file back to its length before the write so the next record does not
+/// glue onto a partial one. The undo's own failure is folded into the
+/// returned error.
+pub(crate) fn append_record(file: &mut File, line: &str) -> std::io::Result<()> {
+    let before = file.seek(SeekFrom::End(0))?;
+    match write_line(file, line) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let undone = file
+                .set_len(before)
+                .and_then(|()| file.seek(SeekFrom::End(0)).map(|_| ()));
+            match undone {
+                Ok(()) => Err(e),
+                Err(e2) => Err(std::io::Error::new(
+                    e.kind(),
+                    format!("{e}; and truncating the partial record failed: {e2}"),
+                )),
+            }
+        }
+    }
+}
+
 /// If the file does not end with a newline (a record whose terminator
 /// never reached the disk), write one before anything is appended, so
 /// the next record starts on its own line. The file must be positioned
@@ -189,6 +212,15 @@ pub struct LeafJournal {
     /// available failure.
     path: std::path::PathBuf,
     file_id: Option<FileId>,
+    /// Set when a failed write could not be undone (the file could not be
+    /// truncated back to its length before the write). Every later write
+    /// and `sync` refuses with this message: appending after a partial
+    /// record would glue onto it. Reopen with `resume`, which heals the
+    /// torn tail.
+    broken: Option<String>,
+    /// Test hook: fail the next record write before it reaches the file.
+    #[cfg(test)]
+    pub(crate) fail_next_write: bool,
 }
 
 /// (device, inode) on Unix; `None` elsewhere, where only existence is
@@ -407,6 +439,9 @@ impl LeafJournal {
             _lock: lock,
             path: std::path::PathBuf::from(path),
             file_id,
+            broken: None,
+            #[cfg(test)]
+            fail_next_write: false,
         })
     }
 
@@ -447,6 +482,9 @@ impl LeafJournal {
             _lock: lock,
             path: std::path::PathBuf::from(path),
             file_id,
+            broken: None,
+            #[cfg(test)]
+            fail_next_write: false,
         })
     }
 
@@ -480,7 +518,46 @@ impl LeafJournal {
                 ),
             ));
         }
-        write_line(&mut self.file, &line)
+        self.write_record(&line)
+    }
+
+    /// Write one record; on failure, cut the file back to its length
+    /// before the write so no partial record is left for the next one to
+    /// glue onto. If even that fails, the journal is marked broken and
+    /// refuses further writes until it is reopened.
+    fn write_record(&mut self, line: &str) -> std::io::Result<()> {
+        if let Some(why) = &self.broken {
+            return Err(std::io::Error::other(why.clone()));
+        }
+        let before = self.file.seek(SeekFrom::End(0))?;
+        #[cfg(test)]
+        let result = if std::mem::take(&mut self.fail_next_write) {
+            // Simulate a short write: half the record lands, then the error.
+            let half = line.len() / 2;
+            let _ = self
+                .file
+                .write_all(line.as_bytes().get(..half).unwrap_or_default());
+            Err(std::io::Error::other("injected write failure"))
+        } else {
+            write_line(&mut self.file, line)
+        };
+        #[cfg(not(test))]
+        let result = write_line(&mut self.file, line);
+        if let Err(e) = result {
+            let undone = self
+                .file
+                .set_len(before)
+                .and_then(|()| self.file.seek(SeekFrom::End(0)).map(|_| ()));
+            if let Err(e2) = undone {
+                self.broken = Some(format!(
+                    "journal {} is in an unknown state: a write failed ({e}) and could not be \
+                     undone ({e2}); reopen it with resume, which heals the torn tail",
+                    self.path.display()
+                ));
+            }
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Whether an external-anchor leaf with these fields fits in one
@@ -505,7 +582,7 @@ impl LeafJournal {
     pub fn append_binding(&mut self, binding: &KeyBindingStatement) -> std::io::Result<()> {
         let record = JournalRecord::Binding(Box::new(binding.clone()));
         let line = serde_json::to_string(&record).map_err(std::io::Error::other)?;
-        write_line(&mut self.file, &line)
+        self.write_record(&line)
     }
 
     /// Flush + fsync. Callers choose their own durability cadence (every
@@ -519,6 +596,9 @@ impl LeafJournal {
     /// already gone -- but it turns silent loss into a loud failure at
     /// exactly the point the caller asked for durability.
     pub fn sync(&mut self) -> std::io::Result<()> {
+        if let Some(why) = &self.broken {
+            return Err(std::io::Error::other(why.clone()));
+        }
         self.file.flush()?;
         self.file.sync_all()?;
         let current = match std::fs::metadata(&self.path) {
@@ -1005,33 +1085,36 @@ impl JournaledLog {
         Ok(idx)
     }
 
-    /// See `WitnessLog::forget`. `forget` appends a new Redaction leaf,
-    /// same as every other append here — mirroring it is what makes a
-    /// GDPR redaction survive a restart instead of the tombstone leaf and
-    /// the redaction itself both silently vanishing from the replayed
-    /// history while surviving in the live, unpersisted tree.
+    /// See `WitnessLog::forget`: append a 0x03 Redaction leaf naming
+    /// `target_index` and erase that leaf's salt, permanently.
     ///
-    /// The salt is removed from the sidecar file before the tombstone is
-    /// journaled. If that rewrite fails, this returns the error and the
-    /// tombstone is not written; on the next resume the salt is restored
-    /// from the unchanged sidecar and the request can be retried.
+    /// Order matters for crash and I/O-failure behaviour (review round 2,
+    /// P1). The tombstone is journaled first: if that write fails, nothing
+    /// happened (the leaf is rolled back out of memory, the salt is still
+    /// there) and the call can be retried. Only then is the salt erased
+    /// from the sidecar: if that rewrite fails, the erasure is already on
+    /// the record, the salt is gone from memory, and the next `resume`
+    /// drops it from the sidecar (`reconcile` removes the salt of every
+    /// leaf a tombstone names). Memory never holds a tombstone the
+    /// journal does not, and a recorded erasure always completes.
     pub fn forget(&mut self, target_index: u64) -> std::io::Result<bool> {
-        let size_before = self.log.leaves().len();
-        let did_forget = self.log.forget(target_index);
+        if !self.log.can_forget(target_index) {
+            return Ok(false);
+        }
+        let idx = self.log.append_tombstone(target_index);
+        self.journal_leaf_at(idx)?;
+        self.log.erase_salt(target_index);
         if let Some(e) = self.log.take_salt_error() {
-            return Err(e);
+            return Err(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "erasure of leaf {target_index} is recorded, but rewriting the salt sidecar \
+                     failed ({e}); the salt is gone from memory and is removed from the sidecar \
+                     on the next resume"
+                ),
+            ));
         }
-        // `get` rather than indexing: the length comparison makes the
-        // index safe today, but a checked lookup keeps the no-panic
-        // guarantee structural. If the tombstone leaf somehow isn't
-        // there, the redaction still happened in memory -- report that
-        // truthfully rather than aborting the caller's process.
-        if did_forget {
-            if let Some(tombstone) = self.log.leaves().get(size_before) {
-                self.journal.append(tombstone)?;
-            }
-        }
-        Ok(did_forget)
+        Ok(true)
     }
 
     /// Journal the leaf at `idx`, looked up rather than indexed.
@@ -1045,7 +1128,20 @@ impl JournaledLog {
     /// Also surfaces a salt-sidecar write failure from the append that
     /// just happened: a leaf whose salt did not reach disk could not be
     /// forgotten after a restart, and the caller must hear about it now.
+    ///
+    /// On any failure the leaf is rolled back out of the in-memory tree,
+    /// so memory never runs ahead of the journal: a checkpoint can only
+    /// sign a head a restart reproduces, and the caller can retry the
+    /// append (review round 2, P1).
     fn journal_leaf_at(&mut self, idx: u64) -> std::io::Result<()> {
+        let result = self.journal_leaf_at_inner(idx);
+        if result.is_err() {
+            self.log.rollback_last(idx);
+        }
+        result
+    }
+
+    fn journal_leaf_at_inner(&mut self, idx: u64) -> std::io::Result<()> {
         if let Some(e) = self.log.take_salt_error() {
             return Err(e);
         }
@@ -1644,5 +1740,125 @@ mod sealed_identity_tests {
         );
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(JournaledLog::salts_path(&p));
+    }
+}
+
+/// Review round 2, P1: an append whose journal write fails must not leave
+/// the leaf in the in-memory tree (a checkpoint would sign a head a restart
+/// cannot reproduce, and the next append after a restart would fork it).
+#[cfg(test)]
+mod failed_append_tests {
+    use super::*;
+    use crate::identity::IdentityKeypair;
+
+    fn tmp(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("wl-p1-{tag}-{}-{nanos}.jsonl", std::process::id()))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn cleanup(p: &str) {
+        let _ = std::fs::remove_file(p);
+        let _ = std::fs::remove_file(JournaledLog::salts_path(p));
+    }
+
+    #[test]
+    fn failed_append_rolls_back_and_the_next_append_reuses_the_index() {
+        let p = tmp("rollback");
+        cleanup(&p);
+        let mut jl = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        jl.append_intent(b"a").unwrap();
+        jl.append_intent(b"b").unwrap();
+        let root_before = jl.log().root_hex();
+        jl.journal.fail_next_write = true;
+        let err = jl
+            .append_intent(b"c")
+            .expect_err("the injected failure surfaces");
+        assert!(err.to_string().contains("injected"), "{err}");
+        assert_eq!(
+            jl.log().tree_size(),
+            2,
+            "the failed leaf is not in the tree"
+        );
+        assert_eq!(
+            jl.log().root_hex(),
+            root_before,
+            "the root is the one before the attempt"
+        );
+        assert!(
+            !jl.can_forget(2),
+            "no salt survives for the rolled-back index"
+        );
+        // The half-written record was cut off: the retry lands cleanly.
+        let idx = jl.append_intent(b"c2").unwrap();
+        assert_eq!(idx, 2);
+        jl.sync().unwrap();
+        let live_root = jl.log().root_hex();
+        drop(jl);
+        let (again, report) = JournaledLog::resume(&p).unwrap();
+        assert_eq!(
+            report.dropped_trailing_lines, 0,
+            "no torn line was left behind"
+        );
+        assert_eq!(again.log().tree_size(), 3);
+        assert_eq!(
+            again.log().root_hex(),
+            live_root,
+            "restart reproduces the live head"
+        );
+        drop(again);
+        cleanup(&p);
+    }
+
+    #[test]
+    fn failed_tombstone_write_changes_nothing_and_forget_can_be_retried() {
+        let p = tmp("forget");
+        cleanup(&p);
+        let mut jl = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        let i = jl.append_memory(b"alice@example.com").unwrap();
+        jl.journal.fail_next_write = true;
+        assert!(jl.forget(i).is_err());
+        assert_eq!(jl.log().tree_size(), 1, "no tombstone in memory");
+        assert!(
+            jl.can_forget(i),
+            "the salt is untouched; the request can be retried"
+        );
+        assert!(jl.forget(i).unwrap());
+        assert!(!jl.can_forget(i));
+        jl.sync().unwrap();
+        drop(jl);
+        let (again, _) = JournaledLog::resume(&p).unwrap();
+        assert_eq!(again.log().tree_size(), 2);
+        assert!(!again.can_forget(i), "the erasure survives the restart");
+        drop(again);
+        cleanup(&p);
+    }
+
+    #[test]
+    fn a_checkpoint_after_a_failed_append_matches_the_restarted_log() {
+        let p = tmp("checkpoint");
+        cleanup(&p);
+        let mut jl = JournaledLog::create(&p, IdentityKeypair::generate()).unwrap();
+        for i in 0..5u8 {
+            jl.append_intent(&[i]).unwrap();
+        }
+        jl.journal.fail_next_write = true;
+        let _ = jl.append_result(b"lost");
+        let sth = jl.log().checkpoint_self();
+        assert_eq!(sth.tree_size, 5);
+        jl.sync().unwrap();
+        drop(jl);
+        let (again, _) = JournaledLog::resume(&p).unwrap();
+        assert!(
+            again.log().verify_continuity(&sth).is_ok(),
+            "the head signed after the failure is one the journal reproduces"
+        );
+        drop(again);
+        cleanup(&p);
     }
 }

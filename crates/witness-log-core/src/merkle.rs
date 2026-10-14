@@ -105,6 +105,28 @@ impl MerkleTree {
         (n - 1) as u64
     }
 
+    /// Drop every leaf at index `size` and above, rebuilding the spine from
+    /// the leaves that remain. O(size); used only to undo an append whose
+    /// journal write failed, so the in-memory tree never runs ahead of
+    /// what is on disk. A `size` at or past the current size is a no-op.
+    pub fn truncate(&mut self, size: u64) {
+        let Ok(keep) = usize::try_from(size) else {
+            return;
+        };
+        if keep >= self.leaves.len() {
+            return;
+        }
+        let kept: Vec<Hash> = self
+            .leaves
+            .get(..keep)
+            .map(<[Hash]>::to_vec)
+            .unwrap_or_default();
+        *self = Self::new();
+        for h in kept {
+            self.append(h);
+        }
+    }
+
     /// RFC 6962 §2.1 root computation (MTH). The empty tree's root is
     /// SHA-256 of the empty string. O(log n) via the maintained spine.
     ///
