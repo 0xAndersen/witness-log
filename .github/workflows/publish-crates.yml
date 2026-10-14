@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: crates-io
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable

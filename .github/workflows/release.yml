@@ -38,7 +38,7 @@ jobs:
     name: tag matches Cargo.toml version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - shell: bash
         run: |
           v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
@@ -62,8 +62,8 @@ jobs:
           - { os: macos-latest, target: aarch64, manylinux: "" }
           - { os: windows-latest, target: x64, manylinux: "" }
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -72,7 +72,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
           path: dist
@@ -81,12 +81,12 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist
@@ -108,7 +108,7 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin, exe: witness-log }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, exe: witness-log.exe }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -120,7 +120,7 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.exe }} out/
           cp LICENSE README.md out/
           tar czf witness-log-${RELEASE_TAG}-${{ matrix.target }}.tar.gz -C out .
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: witness-log-*.tar.gz
@@ -134,12 +134,12 @@ jobs:
     steps:
       # Python artifacts only, by name: the CLI archives are .tar.gz too and
       # must never reach PyPI.
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
           pattern: wheel-*
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: sdist
           path: dist
@@ -154,7 +154,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
