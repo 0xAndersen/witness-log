@@ -21,11 +21,19 @@ its framework lazily, so ``import witness_log`` never needs them.
   ``pip install "witness-log[llamaindex]"``)
 * ``witness_log.integrations.crewai`` -- ``witness_crewai`` (CrewAI global
   tool-call hooks; ``pip install "witness-log[crewai]"``)
+* ``witness_log.integrations.claude_agent_sdk`` -- ``witness_hooks`` /
+  ``WitnessLogClaudeHooks`` (Claude Agent SDK ``PreToolUse`` /
+  ``PostToolUse`` / ``PostToolUseFailure`` hooks;
+  ``pip install "witness-log[claude-agent-sdk]"``)
 
 Payload shapes match :func:`witness_log.step`: the intent commits to
 ``{"tool", "args", "t", ...}``, the result to ``{"tool", "intent_index",
-"outcome", "value"}``. A failure to append is never raised into the
-framework unless ``raise_on_error=True``; it is kept in ``.errors``.
+"outcome", "value"}``. The Claude Agent SDK adapter is the exception: it
+writes the Claude Code hook's ``hook.claude-code v1`` payloads (results
+add ``intent_index``), so its records read like ``witness-log-hook``'s. A
+failure to append is never raised into the framework unless
+``raise_on_error=True``; it is kept in ``.errors``. (The Claude Agent SDK
+adapter never raises; its ``strict=True`` denies the tool call instead.)
 
 Two building blocks are shared by every adapter and usable on their own:
 :class:`Recorder` (the two leaves on one log, payloads kept for later

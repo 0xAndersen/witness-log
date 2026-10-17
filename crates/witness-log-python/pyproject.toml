@@ -29,6 +29,8 @@ google-adk = ["google-adk>=2.0"]
 pydantic-ai = ["pydantic-ai-slim>=2.0"]
 autogen = ["autogen-agentchat>=0.7", "autogen-core>=0.7"]
 llamaindex = ["llama-index-core>=0.14"]
+# 0.1.50: query() with a string prompt sends hooks (older releases only did so for streamed prompts).
+claude-agent-sdk = ["claude-agent-sdk>=0.1.50"]
 # Every adapter except crewai (its mcp<2 pin conflicts with the mcp extra).
 all-frameworks = [
     "langchain-core>=1.0",
@@ -39,6 +41,7 @@ all-frameworks = [
     "autogen-agentchat>=0.7",
     "autogen-core>=0.7",
     "llama-index-core>=0.14",
+    "claude-agent-sdk>=0.1.50",
 ]
 
 # witness-log-mcp needs the `mcp` extra; the other three are stdlib-only.
