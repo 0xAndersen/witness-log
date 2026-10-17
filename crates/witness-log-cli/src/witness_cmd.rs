@@ -71,7 +71,7 @@ const USAGE: &str = "usage:
       A sealed journal needs its seed: --identity-seed-env NAME or --identity-seed-file F.
   witness-log witness verify-evidence <evidence.json> [--vkey <log vkey>]
       Check an equivocation proof a witness recorded under evidence/:
-      exit 0 if it proves two signed roots for one size, 30 if not.";
+      exit 0 if it proves two signed roots for one size, 40 if not, 2 unreadable.";
 
 #[derive(Serialize, Deserialize, Clone)]
 struct WitnessConfig {
