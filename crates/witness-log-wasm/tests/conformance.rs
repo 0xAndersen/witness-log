@@ -417,8 +417,7 @@ fn corpus_13_verdicts() {
         );
         assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
         assert_eq!(
-            r["quorum"]["distinct_independent_operators"],
-            e["independent_operators"],
+            r["quorum"]["distinct_independent_operators"], e["independent_operators"],
             "{name}"
         );
     }
