@@ -339,6 +339,69 @@ def test_export_waits_for_a_round_in_flight(tmp_path):
             httpd.shutdown()
 
 
+def _rewrite_journal(journal, n):
+    """Replace `journal` with `n` leaves of different history under the
+    same identity (an unsealed journal keeps the seed in its header)."""
+    log = wl.open(journal)
+    seed = bytes(log.identity_bytes())
+    log.close()
+    for suffix in ("", ".salts", ".lock"):
+        try:
+            os.remove(journal + suffix)
+        except FileNotFoundError:
+            pass
+    forged = wl.open(journal, identity_seed=seed)
+    for i in range(n):
+        forged.append_intent(f"rewritten history {i}".encode())
+    forged.close()
+
+
+def test_export_flags_a_journal_rewritten_or_truncated_after_witnessing(tmp_path):
+    """0.5.0 (security review 3, F2, proxy side): audit__export verified
+    its dossier with no known head, and `witnessed_dossier_json` is rebuilt
+    from the journal (cosignatures it no longer matches are dropped), so a
+    journal rewritten after witnessing exported with no sign of it. The
+    head witnesses cosigned, from <journal>.witnesses.json, is now a known
+    head."""
+    ws = [_witness(i) for i in range(2)]
+    dpath = tmp_path / "trusted.json"
+    dpath.write_text(json.dumps({"witnesses": [e for _, e in ws]}))
+    try:
+        c = ProxyClient(tmp_path, "--directory", str(dpath))
+        try:
+            c.handshake()
+            c.call("tools/call", {"name": "echo", "arguments": {"n": 1}})
+            c.call("tools/call", {"name": "echo", "arguments": {"n": 2}})
+            ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
+            assert ex["verdict"] == "witnessed" and not ex.get("tamper_alerts"), ex
+        finally:
+            assert c.close() == 0
+        cosigned = json.loads((tmp_path / "proxy.jsonl.witnesses.json").read_text())["cosigned_size"]
+        assert cosigned == 4
+
+        _rewrite_journal(c.journal, cosigned + 3)
+        c = ProxyClient(tmp_path, "--directory", str(dpath))
+        try:
+            c.handshake()
+            ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
+            assert ex["verdict"] == "diverged", ex
+            assert any(a.startswith("contradiction: known head") for a in ex["tamper_alerts"]), ex
+        finally:
+            c.close()
+
+        _rewrite_journal(c.journal, cosigned - 1)
+        c = ProxyClient(tmp_path, "--directory", str(dpath))
+        try:
+            c.handshake()
+            ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
+            assert any("truncated after witnessing" in a for a in ex["tamper_alerts"]), ex
+        finally:
+            c.close()
+    finally:
+        for httpd, _ in ws:
+            httpd.shutdown()
+
+
 def test_cli_argument_errors():
     r = subprocess.run([sys.executable, "-m", "witness_log.mcp_proxy", "--name", "x", "--journal", "j"], capture_output=True, text=True)
     assert r.returncode == 2 and "no server command" in r.stderr

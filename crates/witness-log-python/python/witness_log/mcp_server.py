@@ -59,7 +59,7 @@ from typing import Any, Callable, Dict, Literal, Optional, Union
 
 import witness_log as wl
 
-from .witnessing import submit_round
+from .witnessing import load_state, submit_round
 
 try:  # official SDK 2.x
     from mcp.server.mcpserver import MCPServer as _Server
@@ -233,15 +233,54 @@ def _proof(log: wl.JournaledLog, index: int) -> Dict[str, Any]:
     }
 
 
-def _load_witnessed(session_id: str, log: wl.JournaledLog) -> Optional[Dict[str, Any]]:
-    """The latest witnessed dossier, if it is still a prefix of this log."""
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _read_witnessed(session_id: str) -> "tuple[Optional[Dict[str, Any]], Optional[str]]":
+    """The latest witnessed dossier on disk, *not* checked against the
+    journal, and why it could not be read (``(None, None)`` when there is
+    none). This is what a rewritten or truncated journal is checked
+    against, so it must not be filtered by what the journal now says."""
     p = _witnessed_path(session_id)
     try:
-        doc = json.loads(p.read_text())
+        text = p.read_text()
+    except FileNotFoundError:
+        return None, None
+    except OSError as e:
+        return None, f"could not read the witnessed head in {p}: {e}"
+    try:
+        doc = json.loads(text)
         size = int(doc["checkpoint"]["tree_size"])
         root = str(doc["checkpoint"]["root_hash"]).lower()
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError) as e:
+        return None, f"the witnessed head in {p} is unreadable ({type(e).__name__}: {e})"
+    if size < 0 or not _HEX64.match(root):
+        return None, f"the witnessed head in {p} is malformed (size {size}, root {root[:80]!r})"
+    return doc, None
+
+
+def _witnessed_heads(session_id: str, witnessed: Optional[Dict[str, Any]]) -> "list[str]":
+    """Every head witnesses cosigned for this session, as ``<size>:<root>``:
+    the witnessed dossier's, and the one in ``journal.jsonl.witnesses.json``
+    (the CLI-compatible state ``submit_to_witnesses`` also writes)."""
+    heads = []
+    if witnessed is not None:
+        cp = witnessed["checkpoint"]
+        heads.append(f'{int(cp["tree_size"])}:{str(cp["root_hash"]).lower()}')
+    st = load_state(str(_journal_path(session_id)) + ".witnesses.json")
+    root = st["cosigned_root"].lower()
+    if st["cosigned_size"] > 0 and _HEX64.match(root):
+        heads.append(f'{st["cosigned_size"]}:{root}')
+    return sorted(set(heads))
+
+
+def _load_witnessed(session_id: str, log: wl.JournaledLog) -> Optional[Dict[str, Any]]:
+    """The latest witnessed dossier, if it is still a prefix of this log."""
+    doc, _ = _read_witnessed(session_id)
+    if doc is None:
         return None
+    size = int(doc["checkpoint"]["tree_size"])
+    root = str(doc["checkpoint"]["root_hash"]).lower()
     return doc if log.root_hex_at(size) == root else None
 
 
@@ -502,9 +541,12 @@ async def verify_chain_integrity(
     instead of a fraction of the directory; use it when the directory is
     large.
 
-    When the chain has grown since its last witnessed head, that head is
-    passed to the verifier as a known head: a journal rewritten after it
-    was witnessed no longer reproduces it and the verdict is "diverged".
+    Every head witnesses cosigned for this session (the kept witnessed
+    dossier, and the witnessing state next to the journal) is passed to
+    the verifier as a known head, read from disk without first checking it
+    against the journal: a journal rewritten after it was witnessed no
+    longer reproduces it and the verdict is "diverged"; one truncated below
+    it cannot be checked against it, which is a tamper alert too.
 
     Returns: verdict (witnessed / consistent_unwitnessed / unanchored /
     diverged / invalid), the full check report, and a list of tamper
@@ -516,32 +558,45 @@ async def verify_chain_integrity(
     async with lock:
         dossier = json.loads(log.to_dossier_json())
         ident = log.identity_pubkey_hex()
+        on_disk, unreadable = _read_witnessed(session_id)
+        known = _witnessed_heads(session_id, on_disk)
+        # Only a witnessed dossier the journal still reproduces may stand
+        # in for the current one (it carries the cosignatures). In 0.5.0
+        # this filtered value was also the only source of known heads, so
+        # the check could never contradict the journal (security review 3,
+        # F2).
         witnessed = _load_witnessed(session_id, log)
     if witnessed is not None and witnessed["checkpoint"]["tree_size"] == dossier["checkpoint"]["tree_size"]:
         dossier = witnessed
     td = json.dumps(trusted_directory) if trusted_directory is not None else None
-    known = None
-    if witnessed is not None and witnessed["checkpoint"]["tree_size"] != dossier["checkpoint"]["tree_size"]:
-        known = [f'{witnessed["checkpoint"]["tree_size"]}:{witnessed["checkpoint"]["root_hash"]}']
     report = json.loads(
-        wl.verify_dossier_json(json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known)
+        wl.verify_dossier_json(json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known or None)
     )
-    alerts = [
-        f"{check} failed"
-        for check in (
-            "checkpoint_signature_valid",
-            "identity_bound",
-            "leaves_structurally_valid",
-            "bindings_valid",
-            "merkle_continuity_valid",
-        )
-        if report.get(check) is False
-    ] + [f"contradiction: {c}" for c in report.get("contradictions", [])]
+    alerts = (
+        [
+            f"{check} failed"
+            for check in (
+                "checkpoint_signature_valid",
+                "identity_bound",
+                "leaves_structurally_valid",
+                "bindings_valid",
+                "merkle_continuity_valid",
+            )
+            if report.get(check) is False
+        ]
+        + [f"contradiction: {c}" for c in report.get("contradictions", [])]
+        + [
+            f"the journal has {dossier['checkpoint']['tree_size']} leaves, fewer than its witnessed head {h}: "
+            "it was truncated after witnessing"
+            for h in report.get("known_heads_unchecked", [])
+        ]
+        + ([unreadable] if unreadable else [])
+    )
     out: Dict[str, Any] = {"verdict": report.get("verdict"), "tamper_alerts": alerts, "report": report}
-    if witnessed is not None:
-        out["witnessed_size"] = witnessed["checkpoint"]["tree_size"]
+    if on_disk is not None:
+        out["witnessed_size"] = on_disk["checkpoint"]["tree_size"]
         out["witnessed_verdict"] = json.loads(
-            wl.verify_dossier_json(json.dumps(witnessed), DEFAULT_THRESHOLD, ident, td, min_witnesses)
+            wl.verify_dossier_json(json.dumps(on_disk), DEFAULT_THRESHOLD, ident, td, min_witnesses)
         ).get("verdict")
     return out
 

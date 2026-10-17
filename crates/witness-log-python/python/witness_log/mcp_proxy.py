@@ -51,8 +51,11 @@ Injected tools, appended to every ``tools/list`` response and answered
 by the proxy: ``audit__status`` -> ``{leaf_count, root, identity,
 journal, calls, restarts, witnessed, last_verdict}``; ``audit__export``
 -> writes ``<journal>.dossier.json`` and returns ``{path, sha256,
-bytes, verdict}`` (the verdict is ``unanchored`` unless a directory was
-given, since a verifier needs a directory it trusts).
+bytes, verdict, tamper_alerts}`` (the verdict is ``unanchored`` unless a
+directory was given, since a verifier needs a directory it trusts; the
+head witnesses last cosigned is checked as a known head, so a journal
+rewritten after witnessing is ``diverged`` and one truncated below it is
+a tamper alert).
 """
 
 from __future__ import annotations
@@ -247,6 +250,19 @@ class Proxy:
         except (OSError, ValueError, TypeError):
             return False
 
+    def _cosigned_head(self) -> Optional[str]:
+        """``<size>:<root>`` that witnesses last cosigned for this journal,
+        from ``<journal>.witnesses.json``, *not* checked against the
+        journal: it is what a rewritten or truncated journal is checked
+        against."""
+        from .witnessing import load_state
+
+        st = load_state(self.log.path() + ".witnesses.json")
+        root = st["cosigned_root"].lower()
+        if st["cosigned_size"] > 0 and len(root) == 64 and all(c in "0123456789abcdef" for c in root):
+            return f'{st["cosigned_size"]}:{root}'
+        return None
+
     def _status(self) -> Dict[str, Any]:
         witnessed = self._witnessed_head()
         with self._state:
@@ -308,10 +324,34 @@ class Proxy:
         # default of 2 from two operators), not on a fraction of the whole
         # directory: against a 20-witness directory the fraction gate turned
         # every WITNESSED export into CONSISTENT-UNWITNESSED.
-        verdict = json.loads(
-            _core.verify_dossier_json(dossier, 0.66, self.log.identity_pubkey_hex(), td, 2 if td else None)
-        ).get("verdict")
-        return {"path": path, "sha256": _sha256(data), "bytes": len(data), "verdict": verdict}
+        #
+        # The head witnesses last cosigned is a known head, read without
+        # checking it against the journal. `witnessed_dossier_json` is
+        # rebuilt from the journal and drops cosignatures it no longer
+        # matches, so it cannot reveal a journal rewritten after witnessing;
+        # this does (security review 3, F2).
+        known = self._cosigned_head()
+        report = json.loads(
+            _core.verify_dossier_json(
+                dossier, 0.66, self.log.identity_pubkey_hex(), td, 2 if td else None, None, [known] if known else None
+            )
+        )
+        alerts = (
+            list(report.get("failures", []))
+            + [f"contradiction: {c}" for c in report.get("contradictions", [])]
+            + [
+                f"the journal has {self.log.tree_size()} leaves, fewer than its witnessed head {h}: "
+                "it was truncated after witnessing"
+                for h in report.get("known_heads_unchecked", [])
+            ]
+        )
+        return {
+            "path": path,
+            "sha256": _sha256(data),
+            "bytes": len(data),
+            "verdict": report.get("verdict"),
+            "tamper_alerts": alerts,
+        }
 
     def _answer_local(self, msg_id: Any, tool: str) -> None:
         try:
