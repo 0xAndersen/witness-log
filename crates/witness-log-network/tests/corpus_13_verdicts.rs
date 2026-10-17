@@ -104,7 +104,9 @@ fn corpus_vector_13_verdicts() {
             "{name}"
         );
         assert_eq!(
-            r.quorum.as_ref().map(|q| q.distinct_independent_operators as u64),
+            r.quorum
+                .as_ref()
+                .map(|q| q.distinct_independent_operators as u64),
             e["independent_operators"].as_u64(),
             "{name}"
         );
