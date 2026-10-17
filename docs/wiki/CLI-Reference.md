@@ -122,6 +122,31 @@ leaves. Exit 0 bound, 30 mismatch, 10 nothing to bind, 2 usage.
 
 ---
 
+## doctor
+
+```
+witness-log doctor [<journal>] [--directory <trusted.json>] [--subject-org ORG]
+                   [--witness <witness dir>] [--offline] [--json]
+                   [--identity-seed-env NAME | --identity-seed-file F]
+```
+
+Checks what you give it and prints, for each problem, the command that
+fixes it. Changes nothing. One line per check: `✓` fine, `!` worth
+fixing, `✗` will not work, `·` information.
+
+| given | checked |
+|---|---|
+| (always) | version; whether `https://` witnesses are reachable, and against which roots (`WITNESS_LOG_CA_FILE` must load if set) |
+| `<journal>` | replays (a sealed journal needs its seed flag); journal and `.salts` private (Unix); `.salts` present; a lock left by a dead process; against `<journal>.witnesses.json`: never submitted, *k* leaves not yet witnessed, up to date, or **contradicting the cosigned head** (truncated, replaced or edited: do not submit) |
+| `--directory` | parses; duplicate keys; independent operators (project-operated never count; `--subject-org` and a listed log key are excluded, as in `verify`); **whether WITNESSED is reachable at all**; the default `submit --min`; then `GET /` on every witness (16 at a time, 5 s each): reachable, serves the key the directory lists, open enrollment. `--offline` skips the network |
+| `--witness DIR` | `witness.json` readable with an operator org; `witness.key` present and private; `logs/` writable and how many logs; equivocation proofs in `evidence/`; its public URL answers with its own key (unless `--offline`) |
+
+`--json` prints `{version, ok, problems, warnings, findings: [{section,
+level: "ok"|"info"|"warn"|"fail", what, fix}]}`; the wording of `what`
+and `fix` is not part of the contract, `level` and `ok` are.
+
+Exit: 0 nothing is `✗`; 1 something is; 2 usage.
+
 ## testnet
 
 ```

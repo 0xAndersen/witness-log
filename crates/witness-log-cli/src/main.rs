@@ -115,6 +115,7 @@ mod c2sp_cmd;
 mod demo;
 mod diff;
 mod directory_cmd;
+mod doctor;
 mod explain;
 mod http;
 mod journal_serve;
@@ -161,6 +162,15 @@ USAGE:
                    never count as independent operators
       Omitting --identity and --directory is a legal, meaningful run, but
       the strongest reachable verdict is UNANCHORED — see `explain` below.
+
+  witness-log doctor [<journal>] [--directory <trusted.json>] [--subject-org ORG]
+                     [--witness <dir>] [--offline] [--json]
+      Check a setup and say what to fix, changing nothing: can this binary
+      reach https:// witnesses; does the journal replay, are its files
+      private, is it behind or contradicting what witnesses cosigned; is
+      WITNESSED reachable with the directory at all, and does every witness
+      answer with the key the directory lists; is a witness state directory
+      sound. Exit 0 nothing broken, 1 something will not work.
 
   witness-log testnet up [--witnesses 3] [--dir ./.witness-testnet] [--out trusted.json]
   witness-log testnet status [--dir DIR]
@@ -388,6 +398,7 @@ fn main() -> ExitCode {
         Some("log") => log_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("journal") => journal_serve::run(args.get(2..).unwrap_or(&[])),
         Some("directory") => directory_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("doctor") => doctor::run(args.get(2..).unwrap_or(&[])),
         Some("testnet") => testnet::run(args.get(2..).unwrap_or(&[])),
         Some("explain") => {
             let json = args.iter().any(|a| a == "--json");

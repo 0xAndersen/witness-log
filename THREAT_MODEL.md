@@ -164,14 +164,21 @@ guarantees, and what it doesn't:
   cosigned unless the root is identical.
 - **It never forgets what it cosigned.** The new record is written,
   fsynced and atomically renamed into place (then the directory fsynced)
-  *before* the cosignature is released; if that fails, the record is
-  rolled back and no cosignature leaves the process. A lock file stops
+  *before* the cosignature is released; if that fails, no cosignature
+  leaves the process and the file on disk stays the authority (the
+  decision ran on a copy; the in-memory cache changes only after the
+  write succeeds). A lock file stops
   two processes serving one state directory, and the server re-checks it
   holds the lock before every cosignature (exiting if another process
   took over). Stale locks from crashed processes are detected on Unix; on
-  Windows the operator removes them. Startup aborts on any unreadable or
-  inconsistent record, and on a missing state directory, rather than
-  silently starting from empty. Re-adding a known log never resets it.
+  Windows the operator removes them. Startup refuses a missing `logs/` or any
+  file there that is not a record, rather than silently starting from
+  empty. Since 0.6.0 records are read on demand, not all at startup (a
+  witness with 100,000 logs starts in about half a second and 3 MiB), so a
+  record that cannot be read fails its own log closed, HTTP 500 when that
+  log next submits, and is never treated as a new log; other logs keep
+  being served. Deleting a damaged record to clear the error would turn it
+  into exactly that new log: restore it from backup instead. Re-adding a known log never resets it.
   **The one thing no code can catch is a key restored without its
   memory**: `witness.key` with an empty `logs/` is a witness that will
   cosign whatever size-N root it is shown next, contradicting what the
