@@ -36,6 +36,7 @@
 **Trust it**
 - [Verification and verdicts](Verification-and-Verdicts)
 - [Getting witnessed](Getting-Witnessed)
+- [Pilot: three organisations](Pilot-Three-Organisations)
 - [Operator onboarding](Operator-Onboarding)
 - [Witness status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md)
 - [Running a witness](Running-a-Witness)

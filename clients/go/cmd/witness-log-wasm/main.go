@@ -29,6 +29,7 @@ type verifyOptions struct {
 	Revocations            json.RawMessage   `json:"revocations"`
 	KnownHeads             []string          `json:"known_heads"`
 	Evidence               []json.RawMessage `json:"evidence"`
+	SubjectOrg             string            `json:"subject_org"`
 }
 
 func fail(msg string) string {
@@ -184,6 +185,7 @@ func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string
 		}
 		o.Evidence = append(o.Evidence, p)
 	}
+	o.SubjectOrg = opts.SubjectOrg
 	report := d.Verify(dir, o)
 	var origin any
 	if pk, err := hex.DecodeString(d.Checkpoint.SignerPubkey); err == nil && len(pk) == 32 {

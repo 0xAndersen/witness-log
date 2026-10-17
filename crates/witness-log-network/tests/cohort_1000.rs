@@ -432,6 +432,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             revocations: &[],
             known_heads: &[],
             evidence: &[],
+            subject_org: None,
         };
         let r = dossier.verify(0.0, &ctx);
         *verdicts.entry(r.verdict.to_string()).or_default() += 1;
@@ -558,6 +559,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             revocations: &[],
             known_heads: &[],
             evidence: &[],
+            subject_org: None,
         };
         let r = dossier.verify(0.0, &ctx);
         f5.check(

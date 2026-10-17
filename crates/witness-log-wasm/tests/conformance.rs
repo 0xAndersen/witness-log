@@ -382,6 +382,7 @@ fn corpus_13_verdicts() {
                 .iter()
                 .map(|k| v["evidence"][k.as_str().unwrap()].clone())
                 .collect(),
+            subject_org: c["subject_org"].as_str().map(str::to_string),
             ..Default::default()
         };
         let dir = c["trusted_directory"]
@@ -415,5 +416,10 @@ fn corpus_13_verdicts() {
             "{name}"
         );
         assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
+        assert_eq!(
+            r["quorum"]["distinct_independent_operators"],
+            e["independent_operators"],
+            "{name}"
+        );
     }
 }

@@ -1326,6 +1326,7 @@ fn cmd_submit(args: &[String]) -> ExitCode {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let verdict = result
         .dossier

@@ -39,7 +39,9 @@ from `@witness-log/client`, shares no code with the writer) and
 `verifyDossierNative` is the Rust reference verifier, the same code
 `witness-log verify` runs. They take the same options (`identity`,
 `directory`, `threshold` or `minWitnesses`, `revocations`, and
-`knownHeads`, `evidence`, `allowSubMajority`) and return the same shape:
+`knownHeads`, `evidence`, `allowSubMajority`, `subjectOrg`, the organisation
+that operates the log, whose own witnesses then never count as
+independent) and return the same shape:
 `verdict` (`WITNESSED | CONSISTENT-UNWITNESSED | UNANCHORED | DIVERGED |
 INVALID`), `exitCode` (0/11/10/20/30/40), `ok` (WITNESSED with exit 0),
 `splitViewUnsafe`, `failures` (why INVALID), `contradictions` (why

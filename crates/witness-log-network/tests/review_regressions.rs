@@ -66,6 +66,7 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let pinned_report = dossier.verify(0.66, &ctx);
     assert_eq!(pinned_report.verdict, Verdict::Invalid);

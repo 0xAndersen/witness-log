@@ -38,6 +38,7 @@ const r = verifyDossier(JSON.parse(readFileSync("dossier.json", "utf8")), {
   identity: AGENT_KEY,                   // obtained out of band, never from the dossier
   directory: trusted,                    // {witnesses: [...]} YOU trust; without it the ceiling is UNANCHORED
   minWitnesses: 2,                       // or threshold: 0.66 (the default)
+  subjectOrg: "Alpha Payments",          // who operates this log: its own witnesses never count as independent
   knownHeads: ["4:0f1e…9a2b"],           // optional: heads you kept earlier for this identity
   evidence: [proof],                     // optional: witness equivocation proofs (the file's "proof" object)
   allowSubMajority: false,               // the default: a sub-majority WITNESSED is exit 11
@@ -94,9 +95,9 @@ if (!r.ok) throw new Error(`audit trail is ${r.verdict}`);   // WITNESSED with e
 `r.verdict` is `"WITNESSED" | "CONSISTENT-UNWITNESSED" | "UNANCHORED" |
 "DIVERGED" | "INVALID"` with `r.exitCode` 0 / 11 / 10 / 20 / 30 / 40,
 `r.splitViewUnsafe`, and `r.report` the verifier's full report.
-`cli.verify` also takes `allowSubMajority`, `knownHeads` (strings
+`cli.verify` also takes `allowSubMajority`, `subjectOrg`, `knownHeads` (strings
 `"<size>:<root hex>"`), `evidence` (paths or parsed evidence files) and
-`revocations`, passed to the CLI as `--allow-sub-majority`,
+`revocations`, passed to the CLI as `--allow-sub-majority`, `--subject-org`,
 `--known-head`, `--evidence` and `--revocations`. Usage errors (unreadable file, bad flag; exit 2)
 reject with `WitnessLogCLIError`. Dossiers and directories may be paths or
 objects (objects are written to a private temp file).

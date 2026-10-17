@@ -91,8 +91,10 @@ hashes up the path. `ceil(log2 N)` hashes. §4.
 
 **Independence.** Scored by distinct `operator_org` among valid receipts,
 deduplicated by witness key. WITNESSED requires ≥2. Project-operated
-witnesses share one bucket. Compute-provider diversity is a second,
-separately reported axis. §7.
+witnesses share one bucket. Witnesses of the log's own operator count as
+none: the operator of a directory entry whose key is the log's identity,
+and the verifier's `--subject-org` when given. Compute-provider diversity
+is a second, separately reported axis. §7, §9.1.
 
 **Intent / Result.** The two leaf types (0x01, 0x02) the decorator and MCP
 server write around every tool call: what the agent decided, before; what
@@ -173,6 +175,11 @@ erased. §8.
 **Session key.** Ephemeral Ed25519 keypair for one process run, recorded
 on each leaf it writes, vouched for by a binding. §5.
 
+**`subject_org` / `--subject-org`.** The organisation the verifier knows
+operates the log being checked. Its witnesses still count as receipts but
+never as independent operators. Can only lower a verdict. Since 0.6.0.
+§9.1.
+
 **Split view.** A log showing one history to some witnesses and another
 to the rest, so two conflicting dossiers each reach WITNESSED and no
 witness saw both. Ruled out among honest witnesses when the cosigners are
@@ -191,8 +198,8 @@ CONSISTENT-UNWITNESSED (10), UNANCHORED (20), DIVERGED (30), INVALID (40).
 §9.2. See [Verification and verdicts](Verification-and-Verdicts).
 
 **`VerifyContext`.** The verifier's inputs: expected identity, trusted
-directory, minimum receipts, revocations it knows of, known heads and
-equivocation proofs. The trust boundary; nothing in it comes from the
+directory, minimum receipts, revocations it knows of, known heads,
+equivocation proofs and the log's operator (`subject_org`). The trust boundary; nothing in it comes from the
 dossier.
 
 **Witness.** A service with one key and a memory of the last head it

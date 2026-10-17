@@ -199,6 +199,7 @@ def verify_dossier_json(
     revocations_json: Optional[str] = None,
     known_heads: Optional[list[str]] = None,
     evidence_json: Optional[str] = None,
+    subject_org: Optional[str] = None,
 ) -> str:
     """The reference verifier's report as JSON (``witness-log verify --json``'s
     ``report``). ``verdict`` is one of witnessed, consistent_unwitnessed,

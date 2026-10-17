@@ -29,6 +29,7 @@ if err != nil { log.Fatal(err) }
 verdict, report, err := witnesslog.VerifyDossier(dossier, dir, witnesslog.Options{
     ExpectedIdentityPubkey: "9f6d…4d1e", // the log you expect, obtained out-of-band
     Threshold:              0.66,
+    SubjectOrg:             "Alpha Payments", // who operates this log: its own witnesses never count as independent
 })
 if err != nil { log.Fatal(err) }
 fmt.Println(verdict, report.ExitCode(false)) // WITNESSED 0

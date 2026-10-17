@@ -16,7 +16,7 @@ Python bindings, MCP server, CLI.
 | use it from the terminal or any language | [Quickstart: CLI](Quickstart-CLI) |
 | give Claude Code / Claude Desktop / Cursor / any MCP host an audit trail with zero code | [MCP integration](MCP-Integration) |
 | audit an MCP server you already run, or record a coding agent's tool calls from its hooks | [MCP proxy](MCP-Proxy) · [Hooks](Hooks) |
-| wire it into LangChain, LangGraph, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex | [Framework guides](Framework-Guides) |
+| wire it into LangChain, LangGraph, OpenAI Agents SDK, Claude Agent SDK, CrewAI, AutoGen, Google ADK, LlamaIndex | [Framework guides](Framework-Guides) |
 | verify from Go | [Quickstart: Go](Quickstart-Go) |
 | verify in a browser, nothing installed | [Browser verifier](Browser-Verifier) |
 | use it from Java / anything else | [Other languages](Other-Languages) |
@@ -25,7 +25,7 @@ Python bindings, MCP server, CLI.
 | understand the witness protocol on the wire (200/409/422) | [Witness protocol walkthrough](Witness-Protocol-Walkthrough) |
 | understand erasure, keys and sessions in depth | [Redaction explained](Redaction-Explained) · [Keys and identity](Keys-and-Identity) |
 | run a witness in two minutes (docker one-liner, cloud-init paste, binary) | [Operator onboarding](Operator-Onboarding) · [Running a witness](Running-a-Witness) · [live status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) |
-| get my logs WITNESSED | [Getting witnessed](Getting-Witnessed) |
+| get my logs WITNESSED | [Getting witnessed](Getting-Witnessed) · [Pilot: three organisations, one witness each](Pilot-Three-Organisations) |
 | use it for GDPR / SOC 2 / EU AI Act / audit evidence | [Compliance](Compliance) |
 | know what it does *not* protect against | [Threat model](Threat-Model) |
 | implement the wire format in another language, or map it to SCITT | [Specification and interoperability](Spec-and-Interop) · [SCITT mapping](SCITT-Mapping) |

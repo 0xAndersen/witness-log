@@ -373,8 +373,70 @@ fn main() {
     });
     let by_name = |n: &str| -> Dossier { serde_json::from_value(dossiers[n].clone()).unwrap() };
 
+    // The organisation that operates the log, as the verifier knows it
+    // (`--subject-org`): its own witnesses never count as independent.
+    let subject_cases: Vec<(Case, &str)> = vec![
+        (
+            (
+                "subject org named, 4 of 4: three others remain",
+                "full",
+                true,
+                None,
+                None,
+                vec![],
+                vec![],
+                false,
+            ),
+            "corpus-operator-0",
+        ),
+        (
+            (
+                "subject org named, 2 of 4: one other is not enough",
+                "two_of_four",
+                true,
+                None,
+                Some(2),
+                vec![],
+                vec![],
+                false,
+            ),
+            "corpus-operator-0",
+        ),
+        (
+            (
+                "subject org matched after case and space normalization",
+                "two_of_four",
+                true,
+                None,
+                Some(2),
+                vec![],
+                vec![],
+                false,
+            ),
+            "  Corpus-Operator-0 ",
+        ),
+        (
+            (
+                "subject org not in the directory changes nothing",
+                "two_of_four",
+                true,
+                None,
+                Some(2),
+                vec![],
+                vec![],
+                true,
+            ),
+            "some other org",
+        ),
+    ];
+    let all_cases: Vec<(Case, Option<&str>)> = cases
+        .into_iter()
+        .map(|c| (c, None))
+        .chain(subject_cases.into_iter().map(|(c, o)| (c, Some(o))))
+        .collect();
+
     let mut out_cases = Vec::new();
-    for (name, d, use_dir, id, min, heads, ev, allow) in cases {
+    for ((name, d, use_dir, id, min, heads, ev, allow), subject_org) in all_cases {
         let expected_identity = match id {
             Some("pinned") => Some(identity_hex.clone()),
             Some("wrong") => Some(wrong_identity.clone()),
@@ -392,6 +454,7 @@ fn main() {
             revocations: &[],
             known_heads: &known_heads,
             evidence: &proofs,
+            subject_org,
         };
         let r = by_name(d).verify(0.66, &ctx);
         let exit_code = if r.split_view_unsafe && !allow {
@@ -415,6 +478,7 @@ fn main() {
             "known_heads": heads,
             "evidence": ev,
             "allow_sub_majority": allow,
+            "subject_org": subject_org,
             "expect": {
                 "verdict": r.verdict,
                 "exit_code": exit_code,
@@ -424,6 +488,7 @@ fn main() {
                 "contradictions": r.contradictions.len(),
                 "known_heads_unchecked": r.known_heads_unchecked.len(),
                 "valid_receipts": r.quorum.as_ref().map(|q| q.valid_receipts),
+                "independent_operators": r.quorum.as_ref().map(|q| q.distinct_independent_operators),
             },
         }));
     }
@@ -435,6 +500,9 @@ fn main() {
             the threshold gate), known_heads (\"<size>:<root hex>\") and the named evidence \
             proofs; the verdict, exit code and report fields must equal expect. exit_code is \
             the CLI's: 11 when split_view_unsafe and allow_sub_majority is false. \
+            subject_org, when not null, is the organisation that operates the log \
+            (`verify --subject-org`): witnesses with that operator_org, normalized like \
+            every operator label, never count as independent operators. \
             has_failures is whether report.failures is non-empty; failure wording is not \
             normative. Every key here is public and for testing only.",
         "identity_pubkey": identity_hex,

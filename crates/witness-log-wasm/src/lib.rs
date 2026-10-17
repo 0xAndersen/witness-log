@@ -77,6 +77,10 @@ pub struct VerifyOptions {
     /// this identity makes the verdict DIVERGED.
     #[serde(default)]
     pub evidence: Vec<Value>,
+    /// The organisation that operates this log; witnesses with that
+    /// `operator_org` never count as independent operators.
+    #[serde(default)]
+    pub subject_org: Option<String>,
 }
 
 /// Exit code `witness-log verify` (strict, the default) returns for this
@@ -277,6 +281,7 @@ pub fn verify_dossier_value(
         revocations: &options.revocations,
         known_heads: &known_heads,
         evidence: &evidence,
+        subject_org: options.subject_org.as_deref(),
     };
     let threshold = options.threshold.unwrap_or(DEFAULT_QUORUM_THRESHOLD);
     let report: DossierReport = dossier.verify(threshold, &ctx);

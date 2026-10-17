@@ -39,6 +39,14 @@ from `verify` only with `--known-head` or `--evidence`
 - `--identity` ties the verdict to a party. Without it, WITNESSED means
   "independent operators cosigned *a* log", not "*this party's* log"; the
   output warns. A gate passes both.
+- `--subject-org <org>` names who operates the log. That operator's
+  witnesses still count as receipts but never as independent operators.
+  The verifier can work this out by itself only when your directory lists
+  the log's own key; an organisation that runs both an agent and a
+  witness is otherwise counted as independent of itself. A name your
+  directory does not contain changes nothing. Since 0.6.0; the libraries
+  take it as `subject_org` (Python, wasm), `subjectOrg` (TypeScript,
+  Node) and `SubjectOrg` (Go).
 
 Two more inputs bring evidence you already hold about the same identity.
 Neither can raise a verdict; each can only make a valid dossier DIVERGED:

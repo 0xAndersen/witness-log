@@ -8,7 +8,8 @@
 //	witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
 //	                   [--threshold 0.0-1.0 | --min-witnesses N]
 //	                   [--allow-sub-majority | --no-strict] [--revocations <file>]
-//	                   [--known-head <size>:<root>] [--evidence <file>] [--json]
+//	                   [--known-head <size>:<root>] [--evidence <file>]
+//	                   [--subject-org ORG] [--json]
 //	witness-log-verify bind <a.json> <b.json> [--json]
 //	witness-log-verify disclose <dossier.json> <leaf-index> <payload-file> <salt-hex>
 package main
@@ -31,7 +32,8 @@ USAGE:
   witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
                      [--threshold 0.0-1.0 | --min-witnesses N]
                      [--allow-sub-majority | --no-strict] [--revocations <file>]
-                     [--known-head <size>:<root>] [--evidence <file>] [--json]
+                     [--known-head <size>:<root>] [--evidence <file>]
+                     [--subject-org ORG] [--json]
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  a witness directory YOU trust, obtained out-of-band
       --revocations  revocation statements you know of (JSON array or one object);
@@ -45,6 +47,8 @@ USAGE:
                    identity (repeatable); not reproduced -> DIVERGED
       --evidence <file>  a witness equivocation proof (repeatable); if it
                    verifies for this identity -> DIVERGED
+      --subject-org ORG  the organisation that operates this log; its own
+                   witnesses never count as independent operators
       --json       machine-readable report (same fields as witness-log verify --json)
 
   witness-log-verify bind <a.json> <b.json> [--json]
@@ -263,6 +267,12 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		}
 		opts.Evidence = append(opts.Evidence, p)
 	}
+	if v, ok := flagValue(args, "--subject-org"); ok && strings.TrimSpace(v) != "" {
+		opts.SubjectOrg = v
+	} else if hasFlag(args, "--subject-org") {
+		fmt.Fprintln(stderr, "--subject-org requires the organisation that operates this log")
+		return witnesslog.ExitUsage
+	}
 	strict := !hasFlag(args, "--no-strict")
 	allowSubFlag := hasFlag(args, "--allow-sub-majority")
 	allowSub := allowSubFlag || !strict
@@ -291,6 +301,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			"threshold_used":     threshold,
 			"min_witnesses_used": opts.MinReceipts,
 			"identity_pinned":    opts.ExpectedIdentityPubkey != "",
+			"subject_org":        subjectOrgJSON(opts.SubjectOrg),
 			"directory_pinned":   directory != nil,
 			"strict":             strict,
 			"allow_sub_majority": allowSubFlag,
@@ -465,4 +476,12 @@ func runDisclose(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "✓ leaf %d (%s) commits to this payload\n", idx, witnesslog.LeafTypeName(d.Leaves[idx].LeafType))
 	return 0
+}
+
+// subjectOrgJSON is null when no --subject-org was given, like the Rust CLI.
+func subjectOrgJSON(org string) any {
+	if org == "" {
+		return nil
+	}
+	return org
 }

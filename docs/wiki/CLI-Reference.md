@@ -53,7 +53,7 @@ of a sub-majority WITNESSED (exit 0) for one release; it does not turn
 witness-log verify <dossier.json> [--identity <hex>] [--directory <trusted.json>]
                    [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
                    [--revocations <path>] [--known-head <size>:<root hex>] [--evidence <file>]
-                   [--json] [--explain]
+                   [--subject-org <org>] [--json] [--explain]
 ```
 
 Offline. Checks the checkpoint signature, identity binding, leaf
@@ -67,6 +67,7 @@ INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 |---|---|
 | `--identity <hex>` | the identity you expect, from outside the file; without it the verdict says nothing about *whose* log this is |
 | `--directory <path>` | the directory you trust, `{"witnesses":[...]}` or a bare array; without it the best verdict is UNANCHORED |
+| `--subject-org <org>` | the organisation that operates this log. Its witnesses still count as receipts but never as independent operators, so an organisation that runs both an agent and a witness is not counted as independent of itself. Compared with `operator_org` after trimming, case-folding and collapsing spaces; a name not in your directory changes nothing. Since 0.6.0 |
 | `--threshold f` | count gate as a fraction of the directory (default 0.66) |
 | `--min-witnesses N` | count gate as an absolute number; use for large directories. A gate at or below half the directory is allowed; a WITNESSED result that is not a strict majority exits 11 |
 | `--allow-sub-majority` | accept WITNESSED from fewer than a strict majority of the directory as exit 0 (the split-view warning is still printed) |
@@ -75,7 +76,7 @@ INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 | `--revocations <path>` | revocations you know of (one statement or an array); applied whether or not the dossier carries them |
 | `--known-head <size>:<root hex>` | a head you already trust for this identity (a checkpoint you kept, a cosignature you saw). If the dossier's first `<size>` leaves give a different root: DIVERGED. A head larger than the dossier cannot be checked and is listed in `report.known_heads_unchecked`, not an error. Repeatable |
 | `--evidence <file>` | a witness equivocation proof, as `witness serve` writes it under `evidence/` (`{"kind":"equivocation","proof":{...}}`) or a bare proof. If it verifies under the key named by the canonical origin `witness-log/<identity hex>` (the proof's own `log_vkey` must be that key), the identity signed two roots for one size: DIVERGED. A proof for another identity or signed by another key is ignored. Repeatable |
-| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `report`, the inputs used |
+| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `subject_org`, `report`, the inputs used |
 | `--explain` | one line under each check: what it proves and does not |
 
 The `--json` `report` carries every check, `quorum`, `internally_consistent`,
@@ -241,6 +242,12 @@ receipts, writes the dossier (0644) and the client state
 (`<journal>.witnesses.json`, 0600). Refuses to publish a history that
 contradicts a head witnesses already cosigned for this identity.
 
+Witness URLs may be `http://` or `https://` (since 0.6.0; registry
+witnesses are `https://`). TLS certificates are checked against the
+Mozilla root set compiled into the binary; set `WITNESS_LOG_CA_FILE` to a
+PEM file to trust exactly the CA certificates in it instead (a private
+CA). The same applies to `directory build --url` and `testnet`.
+
 Fail-closed:
 
 - `--min` defaults to `max(2, N/2 + 1)` for a directory of N witnesses: a
@@ -295,7 +302,7 @@ witness-log directory build [--registry DIR | --url URL] [--include-project] --o
 
 Collects `DIR/*.json` (one directory entry per file, sorted by file name;
 default `DIR` is `./registry/witnesses`) or a directory document fetched
-from an `http://` URL into `{"witnesses": [...]}`, the schema
+from an `http://` or `https://` URL into `{"witnesses": [...]}`, the schema
 `registry/build_directory.py` prints and `verify`/`submit` read.
 Project-operated entries are left out unless `--include-project`. A
 malformed entry or a duplicate key fails the build and names the file.

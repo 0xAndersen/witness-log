@@ -303,6 +303,7 @@ describe("corpus 13: both verifiers agree on every verdict case", () => {
         knownHeads: c.known_heads,
         evidence: c.evidence.map((k: string) => v.evidence[k]),
         allowSubMajority: c.allow_sub_majority,
+        subjectOrg: c.subject_org ?? undefined,
       };
       const ts = bothVerdicts(v.dossiers[c.dossier], opts);
       const rs = verifyDossierNative(v.dossiers[c.dossier], opts);

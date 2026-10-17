@@ -98,10 +98,11 @@ one command is planned for 0.4.0.
 
 ```sh
 git clone https://github.com/0xAndersen/witness-log && cd witness-log
-python3 registry/build_directory.py > trusted.json       # every registered witness
+witness-log directory build --out trusted.json           # every registered witness
 jq '.witnesses | length' trusted.json                     # 0 today
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json --min 2
-witness-log verify dossier.json --identity "$AGENT_IDENTITY" --directory trusted.json --min-witnesses 2
+witness-log verify dossier.json --identity "$AGENT_IDENTITY" --directory trusted.json \
+  --min-witnesses 2 --subject-org "<your organisation>"
 ```
 
 With zero entries `submit` has nobody to talk to and exits 1; the verdict
@@ -109,9 +110,10 @@ against an empty directory is CONSISTENT-UNWITNESSED. Once the registry
 holds more than three witnesses, two cosignatures are not a majority of
 it: `verify` reports WITNESSED and exits 11 (split view possible) unless
 you verify against the subset you submit to or pass `--allow-sub-majority`. That is the honest
-state of the network, not a bug in your setup. The registry builder as a
-CLI subcommand (`witness-log directory build`, no clone needed) is planned
-for 0.4.0. Live status of registered witnesses:
+state of the network, not a bug in your setup. (`python3
+registry/build_directory.py > trusted.json` builds the same file.) If
+your organisation runs one of the registered witnesses, `--subject-org`
+keeps it from counting as independent of your own agent. Live status of registered witnesses:
 [STATUS.md](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md).
 
 ## The network's side
@@ -127,6 +129,10 @@ witnesses. Three ways to grow it:
 2. Ask a partner, customer, auditor or university to run one. The playbook
    is one page and executable by a coding agent. Independence between two
    parties who already transact is exactly the property an audit trail wants.
+   Three organisations with one witness each is the smallest group in which
+   every member's logs reach WITNESSED without anyone else
+   ([Pilot: three organisations](Pilot-Three-Organisations)); two need a
+   third party both trust.
 3. Public witnesses from the Certificate Transparency ecosystem can cosign
    witness-log checkpoints without any witness-log-specific code (same
    protocol and note format); see [Spec and interop](Spec-and-Interop).
@@ -149,6 +155,7 @@ witnesses. Three ways to grow it:
 
 - `--identity`: the key you expected, from somewhere the log's operator does not control.
 - `--directory`: *your* list. Never the dossier's.
+- `--subject-org`: the organisation that operates the log you are checking. Its own witnesses then never count as independent of it. Without it, an operator that also runs a witness in your directory counts as one of its own two independent operators. Since 0.6.0.
 - `--min-witnesses`: an absolute count (3 is a sensible floor), and above half your directory if you want the gate itself to resist a split view. Since 0.5.0 `verify` exits 11 for a WITNESSED dossier whose cosigners are not a strict majority of your directory, whatever gate you set; `--allow-sub-majority` accepts it as 0 ([RFC-0002](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0002-verdict-strictness-and-INVALID.md)).
 - `--known-head <size>:<root>`: a head you saw earlier for this identity (a receipt you kept). A dossier that no longer reproduces it is DIVERGED, exit 30.
 - Two independent operators: enforced by the verdict, not optional.

@@ -105,6 +105,9 @@ struct Options {
     known_heads: Vec<witness_log_network::KnownHead>,
     /// `--evidence <file>`, repeatable: witness equivocation proofs.
     evidence_paths: Vec<String>,
+    /// `--subject-org ORG`: the organisation that operates this log, as
+    /// the caller knows it. Its own witnesses never count as independent.
+    subject_org: Option<String>,
 }
 
 mod bind;
@@ -133,7 +136,7 @@ USAGE:
   witness-log verify <dossier.json> [--identity <hex-pubkey>] [--directory <path.json>]
                      [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
                      [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>]
-                     [--json] [--explain]
+                     [--subject-org ORG] [--json] [--explain]
       Verify a dossier fully offline: checkpoint signature, identity
       binding, leaf structural validity, key-binding validity, Merkle
       continuity rebuilt from the leaves, and (when a --directory is
@@ -153,6 +156,8 @@ USAGE:
                    whose leaves do not reproduce it is DIVERGED (repeatable)
       --evidence <file>  a witness equivocation proof; if it verifies for this identity
                    the verdict is DIVERGED (repeatable)
+      --subject-org ORG  the organisation that operates this log; its own witnesses
+                   never count as independent operators
       Omitting --identity and --directory is a legal, meaningful run, but
       the strongest reachable verdict is UNANCHORED — see `explain` below.
 
@@ -676,7 +681,7 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--subject-org ORG] [--json] [--explain]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --revocations <path>  revocation statements you know of (one statement or a JSON array); applied even if the
@@ -690,6 +695,7 @@ const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity
   --no-strict  the 0.4 exit codes, without 11 (for one release)
   --known-head <size>:<root hex>  a head you already trust; not reproduced -> DIVERGED
   --evidence <file>  a witness equivocation proof for this identity -> DIVERGED
+  --subject-org ORG  who operates this log; witnesses of that operator_org never count as independent
   Exit: 0 WITNESSED, 11 WITNESSED by fewer than a directory majority, 10 CONSISTENT-UNWITNESSED,
         20 UNANCHORED, 30 DIVERGED, 40 INVALID, 2 usage";
 
@@ -856,6 +862,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut allow_sub_majority = false;
     let mut known_heads = Vec::new();
     let mut evidence_paths = Vec::new();
+    let mut subject_org: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -951,6 +958,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 directory_path = Some(v.clone());
                 i += 2;
             }
+            "--subject-org" => {
+                let v = args
+                    .get(i + 1)
+                    .filter(|v| !v.starts_with("--") && !v.trim().is_empty())
+                    .ok_or("--subject-org requires the organisation that operates this log")?;
+                subject_org = Some(v.clone());
+                i += 2;
+            }
             other if other.starts_with("--") => {
                 // Previously any unrecognized token fell through to the
                 // positional-argument branch below and was silently
@@ -987,6 +1002,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         allow_sub_majority,
         known_heads,
         evidence_paths,
+        subject_org,
     })
 }
 
@@ -1104,6 +1120,7 @@ fn run_verify(opts: &Options) -> ExitCode {
         revocations: &revocations,
         known_heads: &opts.known_heads,
         evidence: &evidence,
+        subject_org: opts.subject_org.as_deref(),
     };
 
     let report = dossier.verify(opts.threshold, &ctx);
@@ -1116,6 +1133,7 @@ fn run_verify(opts: &Options) -> ExitCode {
             "threshold_used": opts.threshold,
             "min_witnesses_used": opts.min_witnesses,
             "identity_pinned": opts.identity.is_some(),
+            "subject_org": opts.subject_org,
             "directory_pinned": opts.directory_path.is_some(),
             "strict": opts.strict,
             "allow_sub_majority": opts.allow_sub_majority,
@@ -1410,6 +1428,15 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
                     result.distinct_independent_operators,
                     result.distinct_operators_represented,
                     result.distinct_operators_in_directory
+                );
+            }
+            if let Some(org) = &opts.subject_org {
+                println!(
+                    "    Witnesses operated by {org:?} (this log's own operator, per --subject-org) are not counted as independent."
+                );
+            } else if result.distinct_independent_operators > 0 {
+                println!(
+                    "    Tip: pass --subject-org <who operates this log> so that operator's own witnesses are never counted as independent of it."
                 );
             }
             if opts.explain {

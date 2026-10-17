@@ -173,6 +173,8 @@ jobs:
         run: |
           pip install "mcp>=2" anyio
           pytest -q integrations/mcp -p anyio
+      - name: Three-organisation pilot (CLI only, --subject-org)
+        run: WITNESS_LOG_BIN=target/release/witness-log python examples/pilot-triangle/run.py
       - name: Live witness network (10 scenarios, 10 witnesses)
         run: python examples/live-network/scenarios.py
       - name: Swarm (100 scenarios, 12 witnesses, 25 agents)

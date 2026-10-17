@@ -451,6 +451,7 @@ fn submit(state: &Arc<Mutex<State>>, req: &Request) -> Response {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let verdict = report
         .dossier

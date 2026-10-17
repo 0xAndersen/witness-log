@@ -745,6 +745,9 @@ pub struct VerifyOptions {
     /// `{"kind": "equivocation", "proof": {...}}`); one that verifies for
     /// this identity makes the verdict DIVERGED.
     pub evidence_json: Option<String>,
+    /// The organisation that operates this log; witnesses with that
+    /// `operator_org` never count as independent operators.
+    pub subject_org: Option<String>,
 }
 
 fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
@@ -824,6 +827,7 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
         revocations: &revocations,
         known_heads: &known_heads,
         evidence: &evidence,
+        subject_org: o.subject_org.as_deref(),
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string(&report).map_err(fail)

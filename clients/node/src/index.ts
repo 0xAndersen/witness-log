@@ -499,6 +499,7 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
           return `${k.tree_size}:${k.root_hash}`;
         }),
         evidenceJson: opts.evidence === undefined ? undefined : JSON.stringify(opts.evidence),
+        subjectOrg: opts.subjectOrg,
       }),
     ),
   ) as DossierReport;
