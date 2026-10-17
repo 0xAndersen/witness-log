@@ -316,3 +316,36 @@ describe("corpus 13: both verifiers agree on every verdict case", () => {
     }
   });
 });
+
+describe("corpus 14: both verifiers agree on every fleet anchor case (RFC-0001, experimental)", () => {
+  const corpusFile = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus", "14_fleet_anchor.json");
+  it("verdict, exit code, quorum, fleet status and path fields", { skip: !existsSync(corpusFile) }, () => {
+    const v = JSON.parse(readFileSync(corpusFile, "utf8"));
+    for (const c of v.cases) {
+      const opts = {
+        directory: c.trusted_directory ? v.trusted_directory : undefined,
+        threshold: c.threshold,
+        minWitnesses: c.min_witnesses ?? undefined,
+        allowSubMajority: c.allow_sub_majority,
+        subjectOrg: c.subject_org ?? undefined,
+        acceptFleetAnchor: c.accept_fleet_anchor,
+      };
+      const ts = bothVerdicts(v.dossiers[c.dossier], opts);
+      const rs = verifyDossierNative(v.dossiers[c.dossier], opts);
+      const e = c.expect;
+      for (const r of [ts, rs]) {
+        assert.equal(r.report.verdict, e.verdict, c.name);
+        assert.equal(r.exitCode, e.exit_code, c.name);
+        assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
+        assert.equal(r.report.fleet_anchor?.status ?? null, e.fleet_anchor_status, c.name);
+        assert.equal(r.report.fleet_anchor?.fleet_tree_size ?? null, e.fleet_tree_size, c.name);
+        if (c.accept_fleet_anchor) {
+          assert.deepEqual(r.report.witnessed_via, e.witnessed_via, c.name);
+          assert.deepEqual(r.report.witness_paths, e.witness_paths, c.name);
+        } else {
+          assert.equal("witnessed_via" in r.report, false, c.name);
+        }
+      }
+    }
+  });
+});

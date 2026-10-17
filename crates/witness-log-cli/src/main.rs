@@ -108,6 +108,9 @@ struct Options {
     /// `--subject-org ORG`: the organisation that operates this log, as
     /// the caller knows it. Its own witnesses never count as independent.
     subject_org: Option<String>,
+    /// `--accept-fleet-anchor` (RFC-0001, experimental): count the
+    /// dossier's fleet anchor. Requires `--subject-org`.
+    accept_fleet_anchor: bool,
 }
 
 mod bind;
@@ -117,6 +120,7 @@ mod diff;
 mod directory_cmd;
 mod doctor;
 mod explain;
+mod fleet_cmd;
 mod http;
 mod journal_serve;
 mod log_cmd;
@@ -160,6 +164,10 @@ USAGE:
                    the verdict is DIVERGED (repeatable)
       --subject-org ORG  the organisation that operates this log; its own witnesses
                    never count as independent operators
+      --accept-fleet-anchor  EXPERIMENTAL (RFC-0001): also count witnesses that cosigned
+                   the fleet log holding this checkpoint (needs --subject-org, the
+                   organisation that runs that fleet log); without it a fleet_anchor
+                   is ignored
       Omitting --identity and --directory is a legal, meaningful run, but
       the strongest reachable verdict is UNANCHORED — see `explain` below.
 
@@ -197,6 +205,18 @@ USAGE:
       Same as `witness submit`: get the journal's head cosigned and write
       a dossier. Fail-closed: --min defaults to a majority of the directory
       (never below 2) and a 422 refusal exits 20.
+      --fleet <url> [--fleet-wait SECS]  EXPERIMENTAL (RFC-0001): also (or, without
+      --directory, only) append the head to the organisation's fleet log and add a
+      fleet_anchor to the dossier.
+
+  witness-log fleet init <dir> --origin <org-domain>/witness-log/fleet --org ORG
+  witness-log fleet serve <dir> [--listen 127.0.0.1:7480] [--directory trusted.json --witness-every SECS]
+  witness-log fleet witness <dir> --directory <trusted.json> [--min N]
+      EXPERIMENTAL (RFC-0001, not part of the specification): one append-only log
+      per organisation whose entries are its agents' signed checkpoints, so that
+      witnesses enroll one log per organisation (`witness add-log`) instead of one
+      per agent. Refuses an agent checkpoint that forks the one it holds (422,
+      evidence/). `fleet witness` gets the fleet checkpoint cosigned. No tlog-tiles.
 
   witness-log journal serve <journal> [--listen 127.0.0.1:7390] [--directory trusted.json] [--allow-remote]
       A small HTTP front for one journal, for agents in any language:
@@ -396,6 +416,7 @@ fn main() -> ExitCode {
             witness_cmd::run(&rest)
         }
         Some("log") => log_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("fleet") => fleet_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("journal") => journal_serve::run(args.get(2..).unwrap_or(&[])),
         Some("directory") => directory_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("doctor") => doctor::run(args.get(2..).unwrap_or(&[])),
@@ -693,7 +714,7 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--subject-org ORG] [--json] [--explain]
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--subject-org ORG] [--accept-fleet-anchor] [--json] [--explain]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --revocations <path>  revocation statements you know of (one statement or a JSON array); applied even if the
@@ -708,6 +729,8 @@ const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity
   --known-head <size>:<root hex>  a head you already trust; not reproduced -> DIVERGED
   --evidence <file>  a witness equivocation proof for this identity -> DIVERGED
   --subject-org ORG  who operates this log; witnesses of that operator_org never count as independent
+  --accept-fleet-anchor  EXPERIMENTAL (RFC-0001): count witnesses that cosigned the fleet log holding this
+               checkpoint (needs --subject-org); fleet cosigners never make a dossier split-view resistant
   Exit: 0 WITNESSED, 11 WITNESSED by fewer than a directory majority, 10 CONSISTENT-UNWITNESSED,
         20 UNANCHORED, 30 DIVERGED, 40 INVALID, 2 usage";
 
@@ -875,9 +898,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut known_heads = Vec::new();
     let mut evidence_paths = Vec::new();
     let mut subject_org: Option<String> = None;
+    let mut accept_fleet_anchor = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--accept-fleet-anchor" => {
+                accept_fleet_anchor = true;
+                i += 1;
+            }
             "--threshold" => {
                 let v = args
                     .get(i + 1)
@@ -1001,6 +1029,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
         }
     }
+    // A fleet log is run by the organisation whose agents it records; its
+    // own witnesses must not count as independent, and the verifier can
+    // only exclude them if it says who that is.
+    if accept_fleet_anchor && subject_org.is_none() {
+        return Err(
+            "--accept-fleet-anchor requires --subject-org ORG: the organisation that runs the \
+             fleet log (and its agents), whose own witnesses never count as independent"
+                .to_string(),
+        );
+    }
     Ok(Options {
         path: path.ok_or(VERIFY_USAGE)?,
         threshold,
@@ -1015,6 +1053,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         known_heads,
         evidence_paths,
         subject_org,
+        accept_fleet_anchor,
     })
 }
 
@@ -1133,13 +1172,14 @@ fn run_verify(opts: &Options) -> ExitCode {
         known_heads: &opts.known_heads,
         evidence: &evidence,
         subject_org: opts.subject_org.as_deref(),
+        accept_fleet_anchor: opts.accept_fleet_anchor,
     };
 
     let report = dossier.verify(opts.threshold, &ctx);
     let overall_ok = report.is_internally_consistent();
 
     if opts.json {
-        let output = serde_json::json!({
+        let mut output = serde_json::json!({
             "path": opts.path,
             "identity_pubkey": dossier.identity_pubkey,
             "threshold_used": opts.threshold,
@@ -1153,6 +1193,10 @@ fn run_verify(opts: &Options) -> ExitCode {
             "verdict": report.verdict.to_string(),
             "report": report,
         });
+        // Only when given, so the JSON of every other run is unchanged.
+        if opts.accept_fleet_anchor {
+            output["accept_fleet_anchor"] = serde_json::Value::Bool(true);
+        }
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
         return ExitCode::from(verify_exit_code(&report, opts));
     }
@@ -1163,10 +1207,19 @@ fn run_verify(opts: &Options) -> ExitCode {
     // The five-valued verdict is THE result — see Verdict's doc comment.
     // "VERIFIED/FAILED" undersells what the anchor rule distinguishes.
     print!("Verdict: {}", report.verdict);
+    let via = report.witnessed_via.flatten();
     match report.verdict {
-        witness_log_network::Verdict::Witnessed => {
-            print!(" \u{2014} proofs verify and at least {} independent operators from your trusted directory cosigned this checkpoint", witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED);
-        }
+        witness_log_network::Verdict::Witnessed => match via {
+            Some(witness_log_network::fleet::WitnessedVia::Fleet) => print!(
+                " (via the fleet log, EXPERIMENTAL) \u{2014} proofs verify, this checkpoint is in a fleet log checkpoint that at least {} independent operators from your trusted directory cosigned",
+                witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED
+            ),
+            Some(witness_log_network::fleet::WitnessedVia::Both) => print!(
+                " (directly and via the fleet log, EXPERIMENTAL) \u{2014} proofs verify and at least {} independent operators from your trusted directory cosigned this checkpoint or a fleet log checkpoint that includes it",
+                witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED
+            ),
+            _ => print!(" \u{2014} proofs verify and at least {} independent operators from your trusted directory cosigned this checkpoint", witness_log_network::MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED),
+        },
         witness_log_network::Verdict::ConsistentUnwitnessed => {
             print!(
                 " \u{2014} cryptography is sound; {}; do NOT treat as fully verified",
@@ -1250,7 +1303,13 @@ fn run_verify(opts: &Options) -> ExitCode {
     let _ = overall_ok;
     let code = verify_exit_code(&report, opts);
     if report.split_view_unsafe {
-        if code == exit::SPLIT_VIEW_UNSAFE {
+        if code == exit::SPLIT_VIEW_UNSAFE
+            && via.is_some_and(|v| v != witness_log_network::fleet::WitnessedVia::Direct)
+        {
+            println!(
+                "Exit 11: WITNESSED, but fewer than a strict majority of your directory cosigned this log directly. Witnesses that cosigned only the fleet log committed to its head, not to this agent's: a conflicting checkpoint of this agent would have been recorded in a fleet log, not refused by them. --allow-sub-majority accepts this as exit 0."
+            );
+        } else if code == exit::SPLIT_VIEW_UNSAFE {
             println!(
                 "Exit 11: WITNESSED, but not by a strict majority of your directory (strict is the default since 0.5.0; see the split-view warning above). --allow-sub-majority accepts this as exit 0."
             );
@@ -1470,7 +1529,17 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
                     result.total_directory_witnesses / 2 + 1
                 );
             }
-            if result.meets_count_threshold && !result.split_view_resistant {
+            let fleet_only = report
+                .witness_paths
+                .map(|p| p.fleet.witnesses - p.on_both)
+                .unwrap_or(0);
+            if result.meets_count_threshold && !result.split_view_resistant && fleet_only > 0 {
+                let direct = result.valid_receipts - fleet_only;
+                println!(
+                    "\u{26A0} Split view possible: {direct} of {} directory witnesses cosigned this log directly, not a majority. The {fleet_only} that cosigned only the fleet log committed to the fleet log's head, not to this agent's, so they would not refuse a conflicting checkpoint of this agent; it would be recorded in a fleet log instead.",
+                    result.total_directory_witnesses,
+                );
+            } else if result.meets_count_threshold && !result.split_view_resistant {
                 println!(
                     "\u{26A0} Split view possible: {} of {} directory witnesses cosigned, not a majority. A conflicting history cosigned by a disjoint set of the other {} would also pass this gate, and no witness would see both.",
                     result.valid_receipts,
@@ -1512,6 +1581,46 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
                 }
             }
         }
+    }
+    render_fleet_anchor(report, opts);
+}
+
+/// RFC-0001 (experimental): what was done with the dossier's fleet anchor.
+fn render_fleet_anchor(report: &DossierReport, opts: &Options) {
+    use witness_log_network::fleet::FleetAnchorStatus;
+    let Some(f) = &report.fleet_anchor else {
+        return;
+    };
+    let origin = f.origin.as_deref().unwrap_or("(malformed)");
+    match f.status {
+        FleetAnchorStatus::Ignored => println!(
+            "\u{2139} Fleet anchor (EXPERIMENTAL, RFC-0001) from {origin}: not used. Pass --accept-fleet-anchor --subject-org <who runs that fleet log> to count the witnesses that cosigned it."
+        ),
+        FleetAnchorStatus::Verified => {
+            let p = report.witness_paths.unwrap_or_default();
+            println!(
+                "\u{2713} Fleet anchor (EXPERIMENTAL): entry {} of {origin} is in its checkpoint of size {}; {} witness{} from your directory cosigned it ({} independent operator{}), {} of them also directly",
+                f.entry_index.unwrap_or(0),
+                f.fleet_tree_size.unwrap_or(0),
+                p.fleet.witnesses,
+                if p.fleet.witnesses == 1 { "" } else { "es" },
+                p.fleet.independent_operators,
+                if p.fleet.independent_operators == 1 { "" } else { "s" },
+                p.on_both
+            );
+            println!(
+                "    A fleet cosigner committed to the fleet log's head, not to this agent's: a conflicting checkpoint of this agent would be recorded in the fleet log (which refuses it itself, but is run by the agent's own organisation), not refused by that witness."
+            );
+        }
+        FleetAnchorStatus::Failed => {
+            println!("\u{2717} Fleet anchor (EXPERIMENTAL) from {origin} not used:");
+            for why in &f.failures {
+                println!("    {why}");
+            }
+        }
+    }
+    if opts.explain {
+        println!("    A fleet anchor can only add cosigners, and only when it fully verifies: the entry is this checkpoint signed by this identity, it is included in the fleet checkpoint, and the cosignatures verify under keys in your directory. One witness key counts once across both paths. See docs/wiki/Fleet-Log.md.");
     }
 }
 

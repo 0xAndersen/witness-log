@@ -422,3 +422,54 @@ fn corpus_13_verdicts() {
         );
     }
 }
+
+/// Corpus vector 14 (RFC-0001, experimental): fleet anchors through the
+/// wasm verifier's `accept_fleet_anchor` option.
+#[test]
+fn corpus_14_fleet_anchor() {
+    let v = read_json("corpus/14_fleet_anchor.json");
+    let directory = v["trusted_directory"].to_string();
+    for c in v["cases"].as_array().unwrap() {
+        let name = c["name"].as_str().unwrap();
+        let dossier = v["dossiers"][c["dossier"].as_str().unwrap()].to_string();
+        let accept = c["accept_fleet_anchor"].as_bool().unwrap();
+        let opts = VerifyOptions {
+            threshold: c["threshold"].as_f64(),
+            min_receipts: c["min_witnesses"].as_u64().map(|n| n as usize),
+            allow_sub_majority: c["allow_sub_majority"].as_bool().unwrap(),
+            subject_org: c["subject_org"].as_str().map(str::to_string),
+            accept_fleet_anchor: accept,
+            ..Default::default()
+        };
+        let dir = c["trusted_directory"]
+            .as_bool()
+            .unwrap()
+            .then_some(directory.as_str());
+        let out = verify_dossier_value(&dossier, dir, &opts).unwrap();
+        let e = &c["expect"];
+        let r = &out["report"];
+        assert_eq!(r["verdict"], e["verdict"], "{name}");
+        assert_eq!(out["exit_code"], e["exit_code"], "{name}");
+        assert_eq!(r["split_view_unsafe"], e["split_view_unsafe"], "{name}");
+        assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
+        assert_eq!(
+            r["quorum"]["distinct_independent_operators"], e["independent_operators"],
+            "{name}"
+        );
+        assert_eq!(
+            r["fleet_anchor"]["status"], e["fleet_anchor_status"],
+            "{name}"
+        );
+        assert_eq!(
+            r["fleet_anchor"]["fleet_tree_size"], e["fleet_tree_size"],
+            "{name}"
+        );
+        if accept {
+            assert_eq!(r.get("witnessed_via"), Some(&e["witnessed_via"]), "{name}");
+            assert_eq!(r.get("witness_paths"), Some(&e["witness_paths"]), "{name}");
+        } else {
+            assert!(r.get("witnessed_via").is_none(), "{name}");
+            assert!(r.get("witness_paths").is_none(), "{name}");
+        }
+    }
+}

@@ -56,6 +56,7 @@ fn dossier_json(log: &WitnessLog, signing_key: &SigningKey, identity_hex: &str) 
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     serde_json::to_string_pretty(&d).expect("dossier must serialize")
 }

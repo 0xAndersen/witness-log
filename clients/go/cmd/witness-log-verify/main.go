@@ -9,7 +9,7 @@
 //	                   [--threshold 0.0-1.0 | --min-witnesses N]
 //	                   [--allow-sub-majority | --no-strict] [--revocations <file>]
 //	                   [--known-head <size>:<root>] [--evidence <file>]
-//	                   [--subject-org ORG] [--json]
+//	                   [--subject-org ORG] [--accept-fleet-anchor] [--json]
 //	witness-log-verify bind <a.json> <b.json> [--json]
 //	witness-log-verify disclose <dossier.json> <leaf-index> <payload-file> <salt-hex>
 package main
@@ -33,7 +33,7 @@ USAGE:
                      [--threshold 0.0-1.0 | --min-witnesses N]
                      [--allow-sub-majority | --no-strict] [--revocations <file>]
                      [--known-head <size>:<root>] [--evidence <file>]
-                     [--subject-org ORG] [--json]
+                     [--subject-org ORG] [--accept-fleet-anchor] [--json]
       --identity   the identity pubkey you expect, obtained out-of-band
       --directory  a witness directory YOU trust, obtained out-of-band
       --revocations  revocation statements you know of (JSON array or one object);
@@ -49,6 +49,8 @@ USAGE:
                    verifies for this identity -> DIVERGED
       --subject-org ORG  the organisation that operates this log; its own
                    witnesses never count as independent operators
+      --accept-fleet-anchor  EXPERIMENTAL (RFC-0001): also count witnesses that
+                   cosigned the fleet log holding this checkpoint (needs --subject-org)
       --json       machine-readable report (same fields as witness-log verify --json)
 
   witness-log-verify bind <a.json> <b.json> [--json]
@@ -101,6 +103,7 @@ func hasFlag(args []string, flag string) bool {
 // switches take no value; every other --flag consumes the next argument.
 var switches = map[string]bool{
 	"--json": true, "--strict": true, "--no-strict": true, "--allow-sub-majority": true,
+	"--accept-fleet-anchor": true,
 }
 
 func positional(args []string) []string {
@@ -273,6 +276,11 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--subject-org requires the organisation that operates this log")
 		return witnesslog.ExitUsage
 	}
+	opts.AcceptFleetAnchor = hasFlag(args, "--accept-fleet-anchor")
+	if opts.AcceptFleetAnchor && opts.SubjectOrg == "" {
+		fmt.Fprintln(stderr, "--accept-fleet-anchor requires --subject-org ORG: the organisation that runs the fleet log (and its agents), whose own witnesses never count as independent")
+		return witnesslog.ExitUsage
+	}
 	strict := !hasFlag(args, "--no-strict")
 	allowSubFlag := hasFlag(args, "--allow-sub-majority")
 	allowSub := allowSubFlag || !strict
@@ -309,12 +317,25 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			"verdict":            verdict.String(),
 			"report":             report,
 		}
+		if opts.AcceptFleetAnchor {
+			out["accept_fleet_anchor"] = true
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(out)
 		return report.ExitCode(allowSub)
 	}
 	renderText(stdout, path, report, directory != nil, opts.ExpectedIdentityPubkey != "")
+	if f := report.FleetAnchor; f != nil {
+		switch f.Status {
+		case "ignored":
+			fmt.Fprintln(stdout, "Fleet anchor (EXPERIMENTAL, RFC-0001): present, not used (pass --accept-fleet-anchor --subject-org ORG).")
+		case "verified":
+			fmt.Fprintf(stdout, "Fleet anchor (EXPERIMENTAL): verified; %d witness(es) from your directory cosigned the fleet checkpoint; witnessed via %s.\n", report.WitnessPaths.Fleet.Witnesses, viaText(report.WitnessedVia))
+		default:
+			fmt.Fprintf(stdout, "Fleet anchor (EXPERIMENTAL): not used: %s\n", strings.Join(f.Failures, "; "))
+		}
+	}
 	code := report.ExitCode(allowSub)
 	if report.SplitViewUnsafe {
 		if code == witnesslog.ExitSplitViewUnsafe {
@@ -476,6 +497,14 @@ func runDisclose(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "✓ leaf %d (%s) commits to this payload\n", idx, witnesslog.LeafTypeName(d.Leaves[idx].LeafType))
 	return 0
+}
+
+// viaText renders Report.WitnessedVia for text output.
+func viaText(v *witnesslog.WitnessedVia) string {
+	if v == nil || *v == "" {
+		return "neither path (not WITNESSED)"
+	}
+	return string(*v)
 }
 
 // subjectOrgJSON is null when no --subject-org was given, like the Rust CLI.

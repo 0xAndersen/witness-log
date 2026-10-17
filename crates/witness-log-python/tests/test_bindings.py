@@ -458,6 +458,40 @@ def test_corpus_13_verdicts_known_heads_and_evidence():
         witness_log.verify_dossier_json(json.dumps(v["dossiers"]["full"]), 0.66, None, None, None, None, ["7"])
 
 
+def test_corpus_14_fleet_anchor():
+    """RFC-0001 (EXPERIMENTAL) through the binding: accept_fleet_anchor
+    counts a fleet checkpoint's cosigners; without it the field is ignored
+    and the report carries no witnessed_via."""
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "corpus", "14_fleet_anchor.json")
+    if not os.path.exists(path):
+        pytest.skip("corpus not available")
+    v = json.load(open(path))
+    for c in v["cases"]:
+        r = json.loads(
+            witness_log.verify_dossier_json(
+                json.dumps(v["dossiers"][c["dossier"]]),
+                c["threshold"],
+                None,
+                json.dumps(v["trusted_directory"]) if c["trusted_directory"] else None,
+                c["min_witnesses"],
+                subject_org=c["subject_org"],
+                accept_fleet_anchor=c["accept_fleet_anchor"],
+            )
+        )
+        e = c["expect"]
+        assert r["verdict"] == e["verdict"], c["name"]
+        assert r["split_view_unsafe"] == e["split_view_unsafe"], c["name"]
+        assert (r["quorum"] or {}).get("valid_receipts") == e["valid_receipts"], c["name"]
+        assert (r["quorum"] or {}).get("distinct_independent_operators") == e["independent_operators"], c["name"]
+        assert (r.get("fleet_anchor") or {}).get("status") == e["fleet_anchor_status"], c["name"]
+        assert (r.get("fleet_anchor") or {}).get("fleet_tree_size") == e["fleet_tree_size"], c["name"]
+        if c["accept_fleet_anchor"]:
+            assert r["witnessed_via"] == e["witnessed_via"], c["name"]
+            assert r["witness_paths"] == e["witness_paths"], c["name"]
+        else:
+            assert "witnessed_via" not in r and "witness_paths" not in r, c["name"]
+
+
 def test_sync_releases_the_gil_and_threads_share_a_log_safely(tmp_path):
     """0.5.0 (100,000-agent swarm: `Witnesser.request()` blocked >50 ms in
     0.8% of calls): `sync`, `forget`, `close` and `open` held the GIL across

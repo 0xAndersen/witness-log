@@ -74,6 +74,7 @@ fn finding02_backward_clock_step_no_longer_diverges_an_honest_log() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let report = dossier.verify(0.66, &VerifyContext::default());
     assert_ne!(

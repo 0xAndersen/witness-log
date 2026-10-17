@@ -365,6 +365,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             witness_directory: directory.clone(),
             key_bindings: a.log.all_bindings(),
             revocations: vec![],
+            fleet_anchor: None,
         };
 
         // Unanchored: must never exceed Unanchored, however many
@@ -387,6 +388,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         };
         let r = dossier.verify(0.03, &ctx);
         f4.check(
@@ -473,6 +475,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             witness_directory: directory.clone(),
             key_bindings: vec![],
             revocations: vec![],
+            fleet_anchor: None,
         };
         let r = d.verify(0.03, &VerifyContext::default());
         f5.check(
@@ -515,6 +518,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
             witness_directory: fake_dir,
             key_bindings: fake.all_bindings(),
             revocations: vec![],
+            fleet_anchor: None,
         };
         let r = d.verify(0.03, &VerifyContext::default());
         f5.check(
@@ -591,6 +595,7 @@ fn fleet_of_100_agents_behaves_correctly_under_concurrency() {
                 witness_directory: WitnessDirectory::default(),
                 key_bindings: vec![],
                 revocations: vec![],
+                fleet_anchor: None,
             };
             let ra = mk(la, ca).verify(0.03, &VerifyContext::default());
             let rb = mk(lb, cb).verify(0.03, &VerifyContext::default());
@@ -762,6 +767,7 @@ fn witnessed_verdict_does_not_degrade_as_the_directory_grows() {
             witness_directory: WitnessDirectory::default(),
             key_bindings: log.all_bindings(),
             revocations: vec![],
+            fleet_anchor: None,
         };
         let subject_hex = subject.public_hex();
         let ctx = VerifyContext {
@@ -772,6 +778,7 @@ fn witnessed_verdict_does_not_degrade_as_the_directory_grows() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         };
         // Threshold scaled to the directory: 3 of N by count. The point
         // is the OPERATOR-INDEPENDENCE gate, which must not care about N.

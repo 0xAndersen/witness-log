@@ -32,6 +32,8 @@ export {
   revocationMessage,
   revocationCutOff,
   verifyEquivocationProof,
+  verifyFleetAnchor,
+  validFleetOrigin,
   parseKnownHead,
   EXIT_SPLIT_VIEW_UNSAFE,
   evaluateQuorum,
@@ -63,4 +65,8 @@ export {
   type DossierVerification,
   type KnownHead,
   type EquivocationProof,
+  type FleetAnchor,
+  type FleetAnchorReport,
+  type PathCount,
+  type WitnessPaths,
 } from "./verify.js";

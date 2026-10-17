@@ -49,6 +49,23 @@ def test_schema_accepts_real_dossiers_and_rejects_bad_ones(tmp_path):
     assert list(v.iter_errors(bad))
 
 
+def test_schema_accepts_fleet_anchored_dossiers():
+    """RFC-0001 (experimental): fleet_anchor is an optional dossier field;
+    every well-formed anchored dossier in corpus 14 validates, and the
+    deliberately malformed one does not."""
+    v = _validator()
+    corpus = json.loads((REPO / "corpus" / "14_fleet_anchor.json").read_text())
+    for name, d in corpus["dossiers"].items():
+        errors = list(v.iter_errors(d))
+        if name.endswith("malformed_anchor"):
+            assert errors, name
+        else:
+            assert not errors, (name, errors[0].message if errors else None)
+    bad = json.loads(json.dumps(corpus["dossiers"]["fleet_only"]))
+    bad["fleet_anchor"]["origin"] = "witness-log/" + "ab" * 32
+    assert list(v.iter_errors(bad)), "an agent origin is not a fleet origin"
+
+
 def test_schema_accepts_every_corpus_leaf():
     v = jsonschema.Draft202012Validator(
         {"$schema": SCHEMA["$schema"], "$defs": SCHEMA["$defs"], "$ref": "#/$defs/leaf"}

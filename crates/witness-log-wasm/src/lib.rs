@@ -81,6 +81,11 @@ pub struct VerifyOptions {
     /// `operator_org` never count as independent operators.
     #[serde(default)]
     pub subject_org: Option<String>,
+    /// RFC-0001, EXPERIMENTAL: count the cosigners of a fleet checkpoint
+    /// that includes this dossier's checkpoint (`verify
+    /// --accept-fleet-anchor`; needs `subject_org`). Default false.
+    #[serde(default)]
+    pub accept_fleet_anchor: bool,
 }
 
 /// Exit code `witness-log verify` (strict, the default) returns for this
@@ -282,6 +287,7 @@ pub fn verify_dossier_value(
         known_heads: &known_heads,
         evidence: &evidence,
         subject_org: options.subject_org.as_deref(),
+        accept_fleet_anchor: options.accept_fleet_anchor,
     };
     let threshold = options.threshold.unwrap_or(DEFAULT_QUORUM_THRESHOLD);
     let report: DossierReport = dossier.verify(threshold, &ctx);

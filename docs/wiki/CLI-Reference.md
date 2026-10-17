@@ -53,7 +53,7 @@ of a sub-majority WITNESSED (exit 0) for one release; it does not turn
 witness-log verify <dossier.json> [--identity <hex>] [--directory <trusted.json>]
                    [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
                    [--revocations <path>] [--known-head <size>:<root hex>] [--evidence <file>]
-                   [--subject-org <org>] [--json] [--explain]
+                   [--subject-org <org>] [--accept-fleet-anchor] [--json] [--explain]
 ```
 
 Offline. Checks the checkpoint signature, identity binding, leaf
@@ -76,7 +76,8 @@ INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 | `--revocations <path>` | revocations you know of (one statement or an array); applied whether or not the dossier carries them |
 | `--known-head <size>:<root hex>` | a head you already trust for this identity (a checkpoint you kept, a cosignature you saw). If the dossier's first `<size>` leaves give a different root: DIVERGED. A head larger than the dossier cannot be checked and is listed in `report.known_heads_unchecked`, not an error. Repeatable |
 | `--evidence <file>` | a witness equivocation proof, as `witness serve` writes it under `evidence/` (`{"kind":"equivocation","proof":{...}}`) or a bare proof. If it verifies under the key named by the canonical origin `witness-log/<identity hex>` (the proof's own `log_vkey` must be that key), the identity signed two roots for one size: DIVERGED. A proof for another identity or signed by another key is ignored. Repeatable |
-| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `subject_org`, `report`, the inputs used; schema and stability rules in [`spec/verify-output.schema.json`](https://github.com/0xAndersen/witness-log/blob/main/spec/verify-output.schema.json) |
+| `--accept-fleet-anchor` | **EXPERIMENTAL** ([Fleet log](Fleet-Log), RFC-0001). Also count witnesses from your directory that cosigned a fleet log checkpoint containing this checkpoint, when the dossier's `fleet_anchor` fully verifies. Requires `--subject-org` (the organisation that runs the fleet log and its agents); its own witnesses never count. One witness key counts once across direct receipts and the fleet. Fleet cosigners never count toward split-view resistance, so a WITNESSED reached through the fleet alone exits 11 unless `--allow-sub-majority`. A fleet anchor that fails a check is reported and adds nothing; it never lowers a verdict. Without this flag the field is ignored. Since 0.6.0 |
+| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `subject_org`, `report`, the inputs used (`accept_fleet_anchor: true` when given); schema and stability rules in [`spec/verify-output.schema.json`](https://github.com/0xAndersen/witness-log/blob/main/spec/verify-output.schema.json) |
 | `--explain` | one line under each check: what it proves and does not |
 
 The `--json` `report` carries every check, `quorum`, `internally_consistent`,
@@ -85,6 +86,16 @@ The `--json` `report` carries every check, `quorum`, `internally_consistent`,
 empty otherwise), `contradictions` (why DIVERGED; empty otherwise) and
 `known_heads_unchecked`. The wording of `failures` and `contradictions`
 is not part of the contract; their being empty or not is.
+
+Experimental report fields (RFC-0001), absent unless they apply: when the
+dossier carries a `fleet_anchor`, `report.fleet_anchor` is `{status, origin,
+entry_index, fleet_tree_size, failures}` with `status` one of `"ignored"`
+(no `--accept-fleet-anchor`), `"verified"` or `"failed"`. With
+`--accept-fleet-anchor`, `report.witnessed_via` is `"direct"`, `"fleet"` or
+`"both"` for a WITNESSED verdict and `null` otherwise, and
+`report.witness_paths` is `{direct: {witnesses, independent_operators},
+fleet: {witnesses, independent_operators}, on_both}`. A run without the
+flag on a dossier without the field prints exactly the 0.5.0 JSON.
 
 Exit: 0 / 10 / 11 / 20 / 30 / 40; 2 usage or unreadable input (including
 an unreadable `--evidence` file or a malformed `--known-head`).
@@ -289,6 +300,73 @@ Fail-closed:
 
 The verdict against the directory is printed on stderr either way.
 
+### submit --fleet (EXPERIMENTAL)
+
+```
+witness-log submit <journal> --fleet <url> [--fleet-wait SECS] [--out dossier.json]
+                   [--directory <trusted.json> [--min N] [--state <file>]]
+```
+
+[Fleet log](Fleet-Log), RFC-0001. Appends the journal's head (its C2SP
+checkpoint note) to the organisation's fleet log at `<url>` and adds a
+`fleet_anchor` to the dossier: the entry, its inclusion proof, and the
+largest cosigned fleet checkpoint that contains it. The anchor is checked
+against the journal's own checkpoint before it is written. Re-running it
+for a head the fleet log already holds appends nothing and returns a fresh
+anchor, which is how an agent picks up a fleet checkpoint cosigned since
+its last run; `--fleet-wait SECS` polls for one instead.
+
+- With `--directory`, the direct submission runs exactly as without
+  `--fleet` and its exit rules apply; the anchor is added on top.
+- Without `--directory`, exit 0 when a cosigned fleet checkpoint covers the
+  entry, 20 when none does yet (the dossier is still written, anchored to
+  the fleet log's current head) or when the fleet log refused the
+  checkpoint (422: it does not extend the one the fleet log holds for this
+  agent).
+- `--allow-partial` is not supported with `--fleet`.
+
+## fleet (EXPERIMENTAL)
+
+```
+witness-log fleet init <dir> --origin <org-domain>/witness-log/fleet --org <org> [--url <public-url>] [--json]
+witness-log fleet serve <dir> [--listen 127.0.0.1:7480] [--allow-remote] [--max-origins N]
+                              [--directory <trusted.json> --witness-every SECS [--min N]]
+witness-log fleet witness <dir> --directory <trusted.json> [--min N]
+```
+
+A prototype of RFC-0001; see [Fleet log](Fleet-Log). Not part of the
+specification.
+
+`init` creates the fleet log's key (0600), `fleet.json` and an empty
+`entries` file, and prints the C2SP vkey (with `--json`, one object:
+`origin`, `vkey`, `org`, `pubkey_hex`, `data_dir`). `--origin` must not
+start with `witness-log/` (that prefix names one agent's log). Witnesses
+enroll it with `witness add-log <their dir> <origin> <vkey>`.
+
+`serve` runs the fleet log over HTTP/1.1, loopback only unless
+`--allow-remote` (it has no authentication):
+
+| endpoint | what it does |
+|---|---|
+| `POST /add-entry` | body: a `c2sp.org/tlog-witness` add-checkpoint request for an agent's checkpoint (old size, consistency proof, the note). 200: JSON `{origin, entry_index, entry_bytes_b64, inclusion_proof, fleet_checkpoint_note, fleet_tree_size, cosigned, cosignature_lines, appended}`. 409: the size the fleet log holds for that agent (`text/x.tlog.size`). 422: the checkpoint does not extend the one held; same-size conflicts are kept under `evidence/` as an equivocation proof (`witness verify-evidence` checks it). 400: not an agent checkpoint (origin must be `witness-log/<key>`, no extension lines). 403: not signed by the key its origin names. 503: `--max-origins` reached |
+| `GET /proof/<index>` | the same JSON for an existing entry, against the largest cosigned fleet checkpoint that contains it, or the current head when none does |
+| `GET /latest/<agent origin>` | the latest entry for one agent: `{origin, entry_index, tree_size, root_hash}` |
+| `GET /` | origin, vkey, operator org, entry and agent counts, cosigned size, current checkpoint |
+| `GET /health` | `ok` |
+
+An entry is appended and fsynced before the response. With `--directory`
+and `--witness-every SECS`, the fleet checkpoint is submitted to the
+directory's witnesses every SECS seconds when it has grown.
+
+`witness` submits the fleet checkpoint at its current size to every witness
+in the directory once (consistency proofs from each witness's last size,
+kept in `witnesses.json`) and keeps the cosignatures in `cosigned.note`.
+Exit 0 when at least `--min` cosigned (default `max(2, N/2 + 1)`), 20 when
+fewer did or any witness refused (422), 1 when the state cannot be read.
+
+Not implemented: `c2sp.org/tlog-tiles` serving, batching or rate limits per
+agent, retention.
+
 ## journal serve
 
 ```
@@ -394,7 +472,9 @@ Compares another implementation's vectors against the reference corpus:
 the encoding vectors `01` to `12`. The verification vector
 `13_verdicts.json` (whole dossiers and the verdict, exit code and report
 fields each case must produce) is not compared here; a verifier runs it in
-its own tests. Exit 0 conformant, 1 not, 2 unreadable reference.
+its own tests. `14_fleet_anchor.json` pins the experimental fleet anchor
+(RFC-0001) the same way and is not part of conformance. Exit 0
+conformant, 1 not, 2 unreadable reference.
 
 ## demo
 
@@ -418,3 +498,6 @@ The worked example; writes nothing, needs no network. Exit 0, or 40
 | `dossier.json`, `trusted.json`, `note.txt` | 0644 | `submit`, `log export`, `directory`, `testnet up`, `c2sp export` |
 | `<witness dir>/witness.key` | 0600 | `witness init` |
 | `<witness dir>/witness.json`, `logs/`, `evidence/` | 0600 | `witness init`, `witness serve` |
+| `<fleet dir>/fleet.key`, `fleet.json`, `entries`, `witnesses.json`, `evidence/` | 0600 | `fleet init`, `fleet serve`, `fleet witness` (experimental) |
+| `<fleet dir>/cosigned.note` | 0644 | `fleet witness`, `fleet serve --witness-every` (experimental) |
+| `<fleet dir>/fleet.lock` | | while `fleet serve` runs |

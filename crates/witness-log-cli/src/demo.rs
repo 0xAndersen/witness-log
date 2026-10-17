@@ -155,6 +155,7 @@ pub fn run_demo() -> ExitCode {
         witness_directory: directory.clone(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     // 6. The point: same bytes, two different questions.
@@ -180,6 +181,7 @@ pub fn run_demo() -> ExitCode {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let anchored = dossier.verify(0.66, &ctx);
     println!("  B. With an identity you expected and a witness directory YOU trust,");
@@ -301,6 +303,7 @@ pub fn run_demo_tamper() -> ExitCode {
         witness_directory: fake_directory,
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     rule();

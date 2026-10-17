@@ -452,6 +452,7 @@ fn submit(state: &Arc<Mutex<State>>, req: &Request) -> Response {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let verdict = report
         .dossier

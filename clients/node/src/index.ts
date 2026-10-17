@@ -500,6 +500,7 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
         }),
         evidenceJson: opts.evidence === undefined ? undefined : JSON.stringify(opts.evidence),
         subjectOrg: opts.subjectOrg,
+        acceptFleetAnchor: opts.acceptFleetAnchor,
       }),
     ),
   ) as DossierReport;

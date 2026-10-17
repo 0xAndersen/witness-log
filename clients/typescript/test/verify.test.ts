@@ -196,6 +196,65 @@ describe("corpus 13: verdicts (RFC-0002)", () => {
   });
 });
 
+describe("corpus 14: fleet anchors (RFC-0001, experimental)", () => {
+  it("the fleet log's own values recompute", () => {
+    const f = corpus("14_fleet_anchor.json").fleet_log;
+    const hashes = f.entries_b64.map((e: string) => leafHash(new Uint8Array(Buffer.from(e, "base64"))));
+    assert.deepEqual(hashes.map(bytesToHex), f.leaf_hashes_hex);
+    assert.equal(bytesToHex(merkleRoot(hashes)), f.root_hex);
+    assert.equal(
+      verifyInclusion(hashes[2], 2, f.tree_size, f.entry_2_inclusion_proof_hex.map(hexToBytes), hexToBytes(f.root_hex)),
+      true,
+    );
+  });
+
+  it("every case: verdict, exit code, quorum, fleet status and path fields", () => {
+    const v = corpus("14_fleet_anchor.json");
+    const exits = new Set<number>();
+    for (const c of v.cases) {
+      const r = verifyDossier(v.dossiers[c.dossier], {
+        directory: c.trusted_directory ? v.trusted_directory : undefined,
+        threshold: c.threshold,
+        minWitnesses: c.min_witnesses ?? undefined,
+        allowSubMajority: c.allow_sub_majority,
+        subjectOrg: c.subject_org ?? undefined,
+        acceptFleetAnchor: c.accept_fleet_anchor,
+      });
+      const e = c.expect;
+      assert.equal(r.report.verdict, e.verdict, c.name);
+      assert.equal(r.exitCode, e.exit_code, c.name);
+      assert.equal(r.report.split_view_unsafe, e.split_view_unsafe, c.name);
+      assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, c.name);
+      assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
+      assert.equal(r.report.fleet_anchor?.status ?? null, e.fleet_anchor_status, c.name);
+      assert.equal(r.report.fleet_anchor?.fleet_tree_size ?? null, e.fleet_tree_size, c.name);
+      if (c.accept_fleet_anchor) {
+        assert.deepEqual(r.report.witnessed_via, e.witnessed_via, c.name);
+        assert.deepEqual(r.report.witness_paths, e.witness_paths, c.name);
+      } else {
+        assert.equal("witnessed_via" in r.report, false, c.name);
+        assert.equal("witness_paths" in r.report, false, c.name);
+      }
+      exits.add(e.exit_code);
+    }
+    assert.deepEqual([...exits].sort((a, b) => a - b), [0, 10, 11, 20]);
+  });
+
+  it("without the opt-in an anchor changes nothing else in any corpus 13 report", () => {
+    const v13 = corpus("13_verdicts.json");
+    const anchor = corpus("14_fleet_anchor.json").dossiers.fleet_only.fleet_anchor;
+    for (const [name, d] of Object.entries(v13.dossiers)) {
+      for (const opts of [{}, { directory: v13.trusted_directory, minWitnesses: 2, subjectOrg: "corpus-operator-1" }]) {
+        const plain = verifyDossier(d as Dossier, opts).report;
+        const anchored = verifyDossier({ ...(d as Dossier), fleet_anchor: anchor }, opts).report;
+        assert.equal(anchored.fleet_anchor?.status, "ignored", name);
+        delete anchored.fleet_anchor;
+        assert.deepEqual(anchored, plain, name);
+      }
+    }
+  });
+});
+
 describe("verifyDossier on examples/sample-dossier.json", () => {
   const dossierPath = join(repo, "examples", "sample-dossier.json");
   const dirPath = join(repo, "examples", "trusted-directory.json");

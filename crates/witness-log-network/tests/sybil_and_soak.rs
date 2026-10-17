@@ -190,6 +190,7 @@ fn hundred_witness_sybil_fleet_collapses_to_one_operator() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
     let subject_hex = id.public_hex();
     let ctx = VerifyContext {
@@ -200,6 +201,7 @@ fn hundred_witness_sybil_fleet_collapses_to_one_operator() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let report = dossier.verify(0.0, &ctx);
     assert_eq!(

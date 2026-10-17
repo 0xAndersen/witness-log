@@ -1,0 +1,1307 @@
+{
+  "cases": [
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_only",
+      "expect": {
+        "exit_code": 11,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 2,
+        "split_view_unsafe": true,
+        "valid_receipts": 2,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 2,
+            "witnesses": 2
+          },
+          "on_both": 0
+        },
+        "witnessed_via": "fleet"
+      },
+      "min_witnesses": 2,
+      "name": "positive: two independent operators cosigned the fleet checkpoint",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": true,
+      "dossier": "fleet_only",
+      "expect": {
+        "exit_code": 0,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 2,
+        "split_view_unsafe": true,
+        "valid_receipts": 2,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 2,
+            "witnesses": 2
+          },
+          "on_both": 0
+        },
+        "witnessed_via": "fleet"
+      },
+      "min_witnesses": 2,
+      "name": "positive, sub-majority accepted",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_only_three",
+      "expect": {
+        "exit_code": 11,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 3,
+        "split_view_unsafe": true,
+        "valid_receipts": 3,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 3,
+            "witnesses": 3
+          },
+          "on_both": 0
+        },
+        "witnessed_via": "fleet"
+      },
+      "min_witnesses": null,
+      "name": "three fleet cosigners are still not split-view resistant",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": false,
+      "allow_sub_majority": false,
+      "dossier": "fleet_only",
+      "expect": {
+        "exit_code": 10,
+        "fleet_anchor_status": "ignored",
+        "fleet_tree_size": null,
+        "independent_operators": null,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "consistent_unwitnessed",
+        "witness_paths": null,
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "without the opt-in the anchor is ignored",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_wrong_root",
+      "expect": {
+        "exit_code": 10,
+        "fleet_anchor_status": "failed",
+        "fleet_tree_size": null,
+        "independent_operators": null,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "consistent_unwitnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "on_both": 0
+        },
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "an entry for a different root fails step 2",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_operator_cosigner",
+      "expect": {
+        "exit_code": 10,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 1,
+        "split_view_unsafe": false,
+        "valid_receipts": 2,
+        "verdict": "consistent_unwitnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 1,
+            "witnesses": 2
+          },
+          "on_both": 0
+        },
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "a cosigner from the fleet operator's organisation counts as none",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "both_paths",
+      "expect": {
+        "exit_code": 11,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 3,
+        "split_view_unsafe": true,
+        "valid_receipts": 3,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 2,
+            "witnesses": 2
+          },
+          "fleet": {
+            "independent_operators": 2,
+            "witnesses": 2
+          },
+          "on_both": 1
+        },
+        "witnessed_via": "both"
+      },
+      "min_witnesses": null,
+      "name": "one witness on both paths is counted once",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": false,
+      "allow_sub_majority": false,
+      "dossier": "both_paths",
+      "expect": {
+        "exit_code": 11,
+        "fleet_anchor_status": "ignored",
+        "fleet_tree_size": null,
+        "independent_operators": 2,
+        "split_view_unsafe": true,
+        "valid_receipts": 2,
+        "verdict": "witnessed",
+        "witness_paths": null,
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "both paths, without the opt-in: direct receipts only",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "direct_majority_plus_fleet",
+      "expect": {
+        "exit_code": 0,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": 3,
+        "split_view_unsafe": false,
+        "valid_receipts": 3,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 3,
+            "witnesses": 3
+          },
+          "fleet": {
+            "independent_operators": 1,
+            "witnesses": 1
+          },
+          "on_both": 1
+        },
+        "witnessed_via": "direct"
+      },
+      "min_witnesses": null,
+      "name": "a direct majority plus a fleet cosigner already counted",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_only",
+      "expect": {
+        "exit_code": 10,
+        "fleet_anchor_status": "failed",
+        "fleet_tree_size": null,
+        "independent_operators": null,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "consistent_unwitnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "on_both": 0
+        },
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "opted in without subject_org: the anchor is not used",
+      "subject_org": null,
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_tampered_proof",
+      "expect": {
+        "exit_code": 10,
+        "fleet_anchor_status": "failed",
+        "fleet_tree_size": null,
+        "independent_operators": null,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "consistent_unwitnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "on_both": 0
+        },
+        "witnessed_via": null
+      },
+      "min_witnesses": 2,
+      "name": "a tampered inclusion proof fails step 3",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": false,
+      "allow_sub_majority": false,
+      "dossier": "direct_majority_malformed_anchor",
+      "expect": {
+        "exit_code": 0,
+        "fleet_anchor_status": "ignored",
+        "fleet_tree_size": null,
+        "independent_operators": 3,
+        "split_view_unsafe": false,
+        "valid_receipts": 3,
+        "verdict": "witnessed",
+        "witness_paths": null,
+        "witnessed_via": null
+      },
+      "min_witnesses": null,
+      "name": "a malformed fleet_anchor is ignored without the opt-in",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "direct_majority_malformed_anchor",
+      "expect": {
+        "exit_code": 0,
+        "fleet_anchor_status": "failed",
+        "fleet_tree_size": null,
+        "independent_operators": 3,
+        "split_view_unsafe": false,
+        "valid_receipts": 3,
+        "verdict": "witnessed",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 3,
+            "witnesses": 3
+          },
+          "fleet": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "on_both": 0
+        },
+        "witnessed_via": "direct"
+      },
+      "min_witnesses": null,
+      "name": "a malformed fleet_anchor fails with the opt-in and lowers nothing",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": true
+    },
+    {
+      "accept_fleet_anchor": true,
+      "allow_sub_majority": false,
+      "dossier": "fleet_only",
+      "expect": {
+        "exit_code": 20,
+        "fleet_anchor_status": "verified",
+        "fleet_tree_size": 4,
+        "independent_operators": null,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored",
+        "witness_paths": {
+          "direct": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "fleet": {
+            "independent_operators": 0,
+            "witnesses": 0
+          },
+          "on_both": 0
+        },
+        "witnessed_via": null
+      },
+      "min_witnesses": null,
+      "name": "no trusted directory: unanchored, the anchor still checked",
+      "subject_org": "corpus-fleet-org",
+      "threshold": 0.66,
+      "trusted_directory": false
+    }
+  ],
+  "description": "RFC-0001 fleet checkpoint log, EXPERIMENTAL (0.6.0 prototype; not part of the specification's conformance set). fleet_log: four agent checkpoint notes as a fleet log appends them (entries_b64), their RFC 6962 leaf hashes SHA256(0x00 || entry bytes), the fleet root, the inclusion proof for entry 2 (hex, innermost first) and the fleet checkpoint note signed by the fleet key (fleet_vkey). Cases: run each named dossier through your verifier with the trusted directory when trusted_directory is true, subject_org, threshold, min_witnesses (when not null it replaces the threshold gate) and the fleet-anchor opt-in when accept_fleet_anchor is true. The verdict, exit code (11 when split_view_unsafe and allow_sub_majority is false), quorum valid_receipts and distinct_independent_operators (null when there is no quorum), fleet_anchor.status and fleet_anchor.fleet_tree_size (null when the report has no fleet_anchor) must equal expect. With the opt-in the report must carry witnessed_via (\"direct\" | \"fleet\" | \"both\", null unless the verdict is witnessed) and witness_paths equal to expect; without it the report must carry neither key. The fleet operator's organisation is subject_org; witnesses of it never count as independent, and with the opt-in but no subject_org the anchor fails. Each witness key counts once across both paths; only keys with a direct receipt count toward split-view resistance. Every key here is public and for testing only.",
+  "dossiers": {
+    "both_paths": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-1 KG1YMQAAAABlU/FlyAx9OL31X8D4FLBRHAuMDSBMUDPcIqkHGwyNYyqHtC3FCpuRbftL9imIW0sekq+nAhNjkpVeEnwvVx6H1a5ACA==\n— corpus-witness-2 7HVXDAAAAABlU/FmWIS2/AnIf01VTH2b88bVJcxGfUtxf/d9Vb2aM0zRovh3dXaRSsDbfC4qMGZuJGZmbJgrBEgWJZR06oUNhSvADw==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "7f4786c930eadf561a481ee970b2dca484d182b5cb4af8c5762a0111f2ec04b9954e054970b5966be8bc4f87044973efc4ecf4bbc27033c01ce80beb9c74c40c",
+          "tree_size": 4,
+          "witness_pubkey": "3ef08959033028c8fc6fc6d491a12548e78df6aefb2d7c2c190c3f78cef3f50b",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "a64f521f6c85ea902935461167dab326c77d53510b7e3b4a70e2d1743d91b7ec40fd3a82c7b6a6dba18d910a4ca7b71b35e5afa66c14f3f30e7db80b15714f03",
+          "tree_size": 4,
+          "witness_pubkey": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+          "witnessed_at_ms": 1700000011001
+        }
+      ]
+    },
+    "direct_majority_malformed_anchor": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_index": "two",
+        "origin": 5
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "7f4786c930eadf561a481ee970b2dca484d182b5cb4af8c5762a0111f2ec04b9954e054970b5966be8bc4f87044973efc4ecf4bbc27033c01ce80beb9c74c40c",
+          "tree_size": 4,
+          "witness_pubkey": "3ef08959033028c8fc6fc6d491a12548e78df6aefb2d7c2c190c3f78cef3f50b",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "a64f521f6c85ea902935461167dab326c77d53510b7e3b4a70e2d1743d91b7ec40fd3a82c7b6a6dba18d910a4ca7b71b35e5afa66c14f3f30e7db80b15714f03",
+          "tree_size": 4,
+          "witness_pubkey": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+          "witnessed_at_ms": 1700000011001
+        },
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "da650e311712332cecd6740c30c9f5c8553513de2bd77bc5c95526a361f3accce439e6fd984b57b4ab6c7ef831df9f594ad5281e13eb21de2a8cd11cacc9eb0a",
+          "tree_size": 4,
+          "witness_pubkey": "2012cb90ca60e8e5d8daf66e2272d2233e0486d557e8c66141ed8920177d7eb7",
+          "witnessed_at_ms": 1700000011002
+        }
+      ]
+    },
+    "direct_majority_plus_fleet": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-2 7HVXDAAAAABlU/FmWIS2/AnIf01VTH2b88bVJcxGfUtxf/d9Vb2aM0zRovh3dXaRSsDbfC4qMGZuJGZmbJgrBEgWJZR06oUNhSvADw==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "7f4786c930eadf561a481ee970b2dca484d182b5cb4af8c5762a0111f2ec04b9954e054970b5966be8bc4f87044973efc4ecf4bbc27033c01ce80beb9c74c40c",
+          "tree_size": 4,
+          "witness_pubkey": "3ef08959033028c8fc6fc6d491a12548e78df6aefb2d7c2c190c3f78cef3f50b",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "a64f521f6c85ea902935461167dab326c77d53510b7e3b4a70e2d1743d91b7ec40fd3a82c7b6a6dba18d910a4ca7b71b35e5afa66c14f3f30e7db80b15714f03",
+          "tree_size": 4,
+          "witness_pubkey": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+          "witnessed_at_ms": 1700000011001
+        },
+        {
+          "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+          "signature": "da650e311712332cecd6740c30c9f5c8553513de2bd77bc5c95526a361f3accce439e6fd984b57b4ab6c7ef831df9f594ad5281e13eb21de2a8cd11cacc9eb0a",
+          "tree_size": 4,
+          "witness_pubkey": "2012cb90ca60e8e5d8daf66e2272d2233e0486d557e8c66141ed8920177d7eb7",
+          "witnessed_at_ms": 1700000011002
+        }
+      ]
+    },
+    "fleet_only": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-0 /MgVlQAAAABlU/FkJLq791zMTNglJy+AQ0GvA4dmqtnwC3xaJcDX80RhXprlo2KRy42k6ZK0d0bdw9Oqpxj+3Nc3JB4Z1Bcn/0ITDg==\n— corpus-witness-1 KG1YMQAAAABlU/FlyAx9OL31X8D4FLBRHAuMDSBMUDPcIqkHGwyNYyqHtC3FCpuRbftL9imIW0sekq+nAhNjkpVeEnwvVx6H1a5ACA==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "fleet_only_three": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-0 /MgVlQAAAABlU/FkJLq791zMTNglJy+AQ0GvA4dmqtnwC3xaJcDX80RhXprlo2KRy42k6ZK0d0bdw9Oqpxj+3Nc3JB4Z1Bcn/0ITDg==\n— corpus-witness-1 KG1YMQAAAABlU/FlyAx9OL31X8D4FLBRHAuMDSBMUDPcIqkHGwyNYyqHtC3FCpuRbftL9imIW0sekq+nAhNjkpVeEnwvVx6H1a5ACA==\n— corpus-witness-2 7HVXDAAAAABlU/FmWIS2/AnIf01VTH2b88bVJcxGfUtxf/d9Vb2aM0zRovh3dXaRSsDbfC4qMGZuJGZmbJgrBEgWJZR06oUNhSvADw==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "fleet_operator_cosigner": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-0 /MgVlQAAAABlU/FkJLq791zMTNglJy+AQ0GvA4dmqtnwC3xaJcDX80RhXprlo2KRy42k6ZK0d0bdw9Oqpxj+3Nc3JB4Z1Bcn/0ITDg==\n— corpus-witness-3 jt9EyQAAAABlU/FnfmeGM0YTJ1WCmIns1D0tCeSury6F1pW3hm4fWAZk6ZFBEorj5j7aZjcHcD3UeHaW/WZhiCXg9ADJMwZ17HGnDA==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "fleet_tampered_proof": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n— corpus-witness-0 /MgVlQAAAABlU/FkJLq791zMTNglJy+AQ0GvA4dmqtnwC3xaJcDX80RhXprlo2KRy42k6ZK0d0bdw9Oqpxj+3Nc3JB4Z1Bcn/0ITDg==\n— corpus-witness-1 KG1YMQAAAABlU/FlyAx9OL31X8D4FLBRHAuMDSBMUDPcIqkHGwyNYyqHtC3FCpuRbftL9imIW0sekq+nAhNjkpVeEnwvVx6H1a5ACA==\n",
+        "inclusion_proof": [
+          "0000000000000000000000000000000000000000000000000000000000000000",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "fleet_wrong_root": {
+      "checkpoint": {
+        "root_hash": "02ee93439f587c4f9d28eac989a902efb87586767b26cd1479203c73efb9d433",
+        "sig_alg": "ed25519",
+        "signature": "bc6ef76dc145dc921fdffd9bf0d5ad78afce8b33f69b6645eaac84938aa4a8bef4282de58fd992b533df3e9b6b12e7f6e2364aa15e8ee71af02dec337fb9ba01",
+        "signer_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 4
+      },
+      "fleet_anchor": {
+        "entry_bytes_b64": "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0Cjd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTQ9CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTE9HM2wyRmJhVWtpbHhvZlVuZVlMSjlXN0Iwc1hjUEJoTDZsejQ3TzZDZUVDWEtjbU5rOFJiRmFyTU5wQVZ2MmxxWmlqRmZlMEh4VXZsQnF4d0xEelFvPQo=",
+        "entry_index": 2,
+        "fleet_checkpoint_note": "fleet.example/witness-log/fleet\n4\nmdCZ/+rXJxzik5LpUJhGnJcLfFkA5+lwGTKbsBbmxLw=\n\n— fleet.example/witness-log/fleet AbKZFMYWxkO+DfA9ShT0FPkolg7GqAuvruzx0GfkGdZdkLCGjXep1ik07IbxWaviOq+TrNueDvP4v/FTfThPWRrU/AE=\n— corpus-witness-0 /MgVlQAAAABlU/Fk8cPajiMjyyPMr1cEue9EDnhkf5zbvmdsWs6BJ2GNifROkDZwMUi2lEB7DzReTyWZ0WdZBi7iKNpTcYmNsDAdAw==\n— corpus-witness-1 KG1YMQAAAABlU/FlHGx8cRUJEjN6SVVL5kBRUGt5i1zjBGbIoTW5AUj4591f3fPg0RMlTWYvYnOdCyYttVnfxhfFEwwVmPaPcWu9CA==\n",
+        "inclusion_proof": [
+          "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+          "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+        ],
+        "origin": "fleet.example/witness-log/fleet"
+      },
+      "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 2,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000001000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 2,
+          "leaf_type": 1,
+          "payload_hash": "6262626262626262626262626262626262626262626262626262626262626262",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000002000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 3,
+          "leaf_type": 2,
+          "payload_hash": "6363636363636363636363636363636363636363636363636363636363636363",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+          "timestamp_ms": 1700000003000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    }
+  },
+  "fleet_log": {
+    "checkpoint_note": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n\n— fleet.example/witness-log/fleet AbKZFOHkQdJjJmyXjxBNn1wcykQN/tPn0OQLWm6UTm8gRXvRbQejt7zje6ijr8qozrcDdDOTVmv7BB03gJwE1Rylngw=\n",
+    "checkpoint_note_text": "fleet.example/witness-log/fleet\n4\nOZwfS/wiR2osC8artP8ZpaxfAMJpVHVI2vZQYQgEWd4=\n",
+    "entries_b64": [
+      "d2l0bmVzcy1sb2cvZDc1OTc5M2JiYzEzYTI4MTlhODI3Yzc2YWRiNmZiYThhNDlhZWUwMDdmNDlmMmQwOTkyZDk5YjgyNWFkMmM0OAoxCmNIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEE9CgrigJQgd2l0bmVzcy1sb2cvZDc1OTc5M2JiYzEzYTI4MTlhODI3Yzc2YWRiNmZiYThhNDlhZWUwMDdmNDlmMmQwOTkyZDk5YjgyNWFkMmM0OCBDVTlBM2JVcGRTbVlaaGtGb1k5V0tnR3VqaVcvdTFEMnh0bEZxWnlHb2ZYZ3AvT2syNzRzSU1LVXdLQzZocXNEZzRrVWs5dDBqUzhHOXl1ZUEvMTRvQzlqZ3dnPQo=",
+      "d2l0bmVzcy1sb2cvNjM1NTY5MWMxNzhhOGZmOTEwMDdhNzQ3OGFmYjk1NWVmNzM1MmM2M2U3YjI1NzAzOTg0Y2Y3OGIyNmUyMWE1NgoyCmNYRnhjWEZ4Y1hGeGNYRnhjWEZ4Y1hGeGNYRnhjWEZ4Y1hGeGNYRnhjWEU9CgrigJQgd2l0bmVzcy1sb2cvNjM1NTY5MWMxNzhhOGZmOTEwMDdhNzQ3OGFmYjk1NWVmNzM1MmM2M2U3YjI1NzAzOTg0Y2Y3OGIyNmUyMWE1NiBweFdwaXZjNlVSdnRqOEJIcWFvai9JOUQ5QlJnbUpDNG8xWWhpM2hVaVNrcXlLU2FCQ1ZuSGZhQS9YemJwYUpNMDlpcWRMOFlHbWJoMjUyUUZSK1RWU1BuK1FjPQo=",
+      "d2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZAo0CkF1NlRRNTlZZkUrZEtPckppYWtDNzdoMWhuWjdKczBVZVNBOGMrKzUxRE09CgrigJQgd2l0bmVzcy1sb2cvZGI5OTVmZTI1MTY5ZDE0MWNhYjliYmJhOTJiYWEwMWY5ZjJlMWVjZTdkZjRjYjJhYzA1MTkwZjM3ZmNjMWY5ZCBBeDJVTEQrV2NQd0d3Uk81d1BRMEtwQlJMRU1ES0hRYWZiUHREeUttbGsrWlVzMUl2OHpnWjRYQWhLeTEyeDE4RS9qdkNBQTljZGx6YlY3bWZjYnB6YVh5cEFjPQo=",
+      "d2l0bmVzcy1sb2cvZWU5M2E0ZjY2ZjhkMTZiODE5YmI5YmViOWZmY2NkZmNkYzE0MTJlODdmZWU2YTMyNGMyYTk5YTFlMGU2NzE0OAozCmNuSnljbkp5Y25KeWNuSnljbkp5Y25KeWNuSnljbkp5Y25KeWNuSnljbkk9CgrigJQgd2l0bmVzcy1sb2cvZWU5M2E0ZjY2ZjhkMTZiODE5YmI5YmViOWZmY2NkZmNkYzE0MTJlODdmZWU2YTMyNGMyYTk5YTFlMGU2NzE0OCB1OHFZREFaTXA2Qm5XaWo5RXcvSkwwSktzcU9ya042STMveUxWYUp3Ujh2WXZhSXlEK1Z5U1ovSmpudzlWQmZlM0ZkWXUxRGN4bEJNUVhSRlNLdTlzWENDVGdJPQo="
+    ],
+    "entry_2_inclusion_proof_hex": [
+      "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91",
+      "2786ed945ce8e83d04e52243b829b8a85f27f27e3f40656f2f649dc492616a2e"
+    ],
+    "fleet_vkey": "fleet.example/witness-log/fleet+01b29914+AQDjxWuRqwoBcXS5ZkXq+Sg2bNuuHof9Ib+GZh2G8+fv",
+    "leaf_hashes_hex": [
+      "8b7ac8d8d94f77916b69ff7ba72da61dca2e54f1edea0d457f3ba2d7f4acb1c6",
+      "f1f8a904b67dd39fd2ae2a471b661dff5c21357b74b8eab0fcaf8a8bb31df25c",
+      "131def1b1b69ab4b06bda4da1a63bde7ca631dbdd679233b2ae95f1acdcb018a",
+      "8c0c124147ed33da575cb09d6f4e992820ba2a192ff28b9cf916f5ec9172ae91"
+    ],
+    "origin": "fleet.example/witness-log/fleet",
+    "root_hex": "399c1f4bfc22476a2c0bc6abb4ff19a5ac5f00c269547548daf65061080459de",
+    "tree_size": 4
+  },
+  "fleet_operator_org": "corpus-fleet-org",
+  "fleet_origin": "fleet.example/witness-log/fleet",
+  "identity_pubkey": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+  "trusted_directory": {
+    "witnesses": [
+      {
+        "compute_provider": "corpus-provider-0",
+        "is_project_operated": false,
+        "name": "corpus-witness-0",
+        "operator_org": "corpus-operator-a",
+        "pubkey": "3ef08959033028c8fc6fc6d491a12548e78df6aefb2d7c2c190c3f78cef3f50b",
+        "runtime": "human",
+        "url": "https://witness-0.example"
+      },
+      {
+        "compute_provider": "corpus-provider-1",
+        "is_project_operated": false,
+        "name": "corpus-witness-1",
+        "operator_org": "corpus-operator-b",
+        "pubkey": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+        "runtime": "human",
+        "url": "https://witness-1.example"
+      },
+      {
+        "compute_provider": "corpus-provider-2",
+        "is_project_operated": false,
+        "name": "corpus-witness-2",
+        "operator_org": "corpus-operator-c",
+        "pubkey": "2012cb90ca60e8e5d8daf66e2272d2233e0486d557e8c66141ed8920177d7eb7",
+        "runtime": "human",
+        "url": "https://witness-2.example"
+      },
+      {
+        "compute_provider": "corpus-provider-3",
+        "is_project_operated": false,
+        "name": "corpus-witness-3",
+        "operator_org": " Corpus-Fleet-Org",
+        "pubkey": "f80cccdce4ae1c07ae208a2adf99a310ae4207e0306fa0236110b06827bbb8d0",
+        "runtime": "human",
+        "url": "https://witness-3.example"
+      }
+    ]
+  }
+}
