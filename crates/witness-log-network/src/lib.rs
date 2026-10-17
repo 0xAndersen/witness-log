@@ -22,6 +22,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
+pub mod fleet;
 pub mod tlog_witness;
 
 use witness_log_core::identity::{KeyBindingStatement, RevocationStatement};
@@ -519,6 +520,11 @@ pub struct QuorumResult {
     /// default `--threshold 0.66` has this property; a low fraction or
     /// a small `--min-witnesses` against a larger directory does not,
     /// and this flag says so. Found by an outside evaluation of 0.3.3.
+    ///
+    /// Only direct receipts count here. With an accepted fleet anchor
+    /// (RFC-0001, experimental) `valid_receipts` includes the fleet
+    /// cosigners, but a witness that cosigned the fleet log's head would
+    /// not refuse a conflicting checkpoint of this log, so they do not.
     #[serde(default)]
     pub split_view_resistant: bool,
     /// The newest `witnessed_at_ms` among counted (deduplicated,
@@ -569,6 +575,59 @@ pub fn evaluate_quorum_for_subject(
     threshold_fraction: f64,
     subject_org: Option<&str>,
 ) -> QuorumResult {
+    score_attestations(
+        sth,
+        direct_attestations(sth, receipts),
+        directory,
+        threshold_fraction,
+        subject_org,
+    )
+    .0
+}
+
+/// Which path a verified attestation came by: a direct receipt on this
+/// log's checkpoint, or a cosignature on a fleet checkpoint that includes
+/// it (RFC-0001, experimental).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttestationPath {
+    Direct,
+    Fleet,
+}
+
+/// One witness key's verified statement: (lowercase key hex, witnessed_at_ms, path).
+type Attestation = (String, u64, AttestationPath);
+
+/// The receipts that verify against `sth`, in order.
+fn direct_attestations<'a>(
+    sth: &'a SignedTreeHead,
+    receipts: &'a [WitnessReceipt],
+) -> impl Iterator<Item = Attestation> + 'a {
+    receipts.iter().filter(|r| r.verify(sth).is_ok()).map(|r| {
+        (
+            normalize_hex(&r.witness_pubkey),
+            r.witnessed_at_ms,
+            AttestationPath::Direct,
+        )
+    })
+}
+
+/// The quorum over already-verified attestations, plus the per-path
+/// counts (`fleet::WitnessPaths`). With direct attestations only this is
+/// exactly what `evaluate_quorum_for_subject` has always computed.
+///
+/// Each witness key counts once whichever paths it is on; the first
+/// attestation for a key (direct ones come first) sets its time for
+/// `newest_trusted_witness_ms`. `split_view_resistant` counts only keys
+/// with a direct receipt: a fleet cosignature commits the witness to the
+/// fleet log's head, so it would not refuse a conflicting checkpoint of
+/// this log, and the majority argument behind the flag does not hold for it.
+fn score_attestations(
+    sth: &SignedTreeHead,
+    attestations: impl IntoIterator<Item = Attestation>,
+    directory: &WitnessDirectory,
+    threshold_fraction: f64,
+    subject_org: Option<&str>,
+) -> (QuorumResult, fleet::WitnessPaths) {
     let declared_subject = subject_org.map(normalize_label).filter(|s| !s.is_empty());
     // A witness run by the same operator as the log being witnessed
     // provides zero independence: that operator is attesting to its own
@@ -601,12 +660,14 @@ pub fn evaluate_quorum_for_subject(
     // decisions use -- see QuorumResult::distinct_independent_operators.
     let mut independent_operators: HashSet<String> = HashSet::new();
     let mut newest_trusted_witness_ms: Option<u64> = None;
+    // Per path: trusted keys seen on it, and the independent operators
+    // among them (the same rule as `independent_operators`).
+    let mut direct_keys: HashSet<String> = HashSet::new();
+    let mut fleet_keys: HashSet<String> = HashSet::new();
+    let mut direct_independent: HashSet<String> = HashSet::new();
+    let mut fleet_independent: HashSet<String> = HashSet::new();
 
-    for r in receipts {
-        if r.verify(sth).is_err() {
-            continue;
-        }
-        let key = normalize_hex(&r.witness_pubkey);
+    for (key, witnessed_at_ms, path) in attestations {
         // Only a receipt from a key actually present in the TRUSTED
         // directory counts. Previously a receipt from a key absent from
         // the directory still incremented the valid count, which is how
@@ -619,20 +680,29 @@ pub fn evaluate_quorum_for_subject(
         else {
             continue;
         };
+        // Normalized, because this is the set that gates the verdict.
+        // Excludes the subject's own operator -- self-attestation is not
+        // independence, however many keys it holds.
+        let independent_op = (!entry.is_project_operated)
+            .then(|| normalize_label(&entry.operator_org))
+            .filter(|op| {
+                subject_operator.as_deref() != Some(op.as_str())
+                    && declared_subject.as_deref() != Some(op.as_str())
+            });
+        let (path_keys, path_independent) = match path {
+            AttestationPath::Direct => (&mut direct_keys, &mut direct_independent),
+            AttestationPath::Fleet => (&mut fleet_keys, &mut fleet_independent),
+        };
+        path_keys.insert(key.clone());
+        if let Some(op) = &independent_op {
+            path_independent.insert(op.clone());
+        }
         if !counted_keys.insert(key) {
             continue; // already counted this witness key once
         }
         operators.insert(operator_key(entry));
-        if !entry.is_project_operated {
-            // Normalized, because this is the set that gates the verdict.
-            let op = normalize_label(&entry.operator_org);
-            // Exclude the subject's own operator -- self-attestation is
-            // not independence, however many keys it holds.
-            if subject_operator.as_deref() != Some(op.as_str())
-                && declared_subject.as_deref() != Some(op.as_str())
-            {
-                independent_operators.insert(op);
-            }
+        if let Some(op) = independent_op {
+            independent_operators.insert(op);
         }
         compute_providers
             .insert(compute_provider_key(entry).unwrap_or_else(|| "undisclosed".to_string()));
@@ -640,8 +710,8 @@ pub fn evaluate_quorum_for_subject(
             project_operated_receipts += 1;
         }
         newest_trusted_witness_ms = Some(match newest_trusted_witness_ms {
-            Some(existing) => existing.max(r.witnessed_at_ms),
-            None => r.witnessed_at_ms,
+            Some(existing) => existing.max(witnessed_at_ms),
+            None => witnessed_at_ms,
         });
     }
 
@@ -650,8 +720,19 @@ pub fn evaluate_quorum_for_subject(
     let quorum_fraction = valid as f64 / total as f64;
     let distinct_operators_in_directory = directory.distinct_operator_count().max(1);
     let distinct_providers_in_directory = directory.distinct_compute_provider_count().max(1);
+    let paths = fleet::WitnessPaths {
+        direct: fleet::PathCount {
+            witnesses: direct_keys.len(),
+            independent_operators: direct_independent.len(),
+        },
+        fleet: fleet::PathCount {
+            witnesses: fleet_keys.len(),
+            independent_operators: fleet_independent.len(),
+        },
+        on_both: direct_keys.intersection(&fleet_keys).count(),
+    };
 
-    QuorumResult {
+    let quorum = QuorumResult {
         tree_size: sth.tree_size,
         valid_receipts: valid,
         total_directory_witnesses: directory.witnesses.len(),
@@ -672,9 +753,11 @@ pub fn evaluate_quorum_for_subject(
         },
         meets_count_threshold: quorum_fraction >= threshold_fraction,
         count_gate: format!("fraction >= {threshold_fraction}"),
-        split_view_resistant: 2 * valid > directory.witnesses.len(),
+        // Direct keys only; with no fleet attestations this is `valid`.
+        split_view_resistant: 2 * direct_keys.len() > directory.witnesses.len(),
         newest_trusted_witness_ms,
-    }
+    };
+    (quorum, paths)
 }
 
 /// The canonical offline-verifiable bundle (SPEC.md §9): leaves, a signed
@@ -713,6 +796,16 @@ pub struct Dossier {
     /// Every revocation the identity has issued for itself.
     #[serde(default)]
     pub revocations: Vec<RevocationStatement>,
+    /// RFC-0001, **experimental**: this checkpoint's entry in an
+    /// organisation's fleet checkpoint log, with that log's cosigned
+    /// checkpoint. Read only when the verifier opts in
+    /// (`VerifyContext::accept_fleet_anchor`); see [`fleet`]. Absent and
+    /// not serialized unless set, so dossiers without it are byte-identical
+    /// to before. A field that does not have the expected shape still
+    /// parses (as [`fleet::FleetAnchorField::Malformed`]), so it cannot
+    /// make a dossier unreadable to a verifier that ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet_anchor: Option<fleet::FleetAnchorField>,
 }
 
 /// Five-valued verification verdict (the four of the 1F916 Agent Record
@@ -856,6 +949,25 @@ pub struct VerifyContext<'a> {
     /// keeps the older rule, which can only exclude the subject's operator
     /// when the log's own key is listed in the directory.
     pub subject_org: Option<&'a str>,
+    /// RFC-0001, **experimental**: score the dossier's `fleet_anchor`.
+    /// `false` (the default) ignores the field entirely: the verdict and
+    /// every report field are what they are without it, apart from
+    /// `DossierReport::fleet_anchor` saying it was ignored.
+    ///
+    /// With `true`, after every other check, a fleet anchor that fully
+    /// verifies ([`fleet::verify_fleet_anchor`]) adds its cosigners from
+    /// `trusted_directory` to the quorum, each witness key counted once
+    /// across both paths and under the same operator rules. A fleet log is
+    /// run by the organisation whose agents it records, so the fleet
+    /// operator's organisation is taken to be `subject_org`, and the anchor
+    /// is not used without one (its own witnesses could otherwise count as
+    /// independent). An anchor that fails a check is reported and adds
+    /// nothing; it never lowers a verdict. Fleet cosigners never count
+    /// toward `split_view_resistant`. The report then also carries
+    /// `witnessed_via` and `witness_paths`.
+    ///
+    /// Leaving this `false` is how a verifier requires direct witnessing.
+    pub accept_fleet_anchor: bool,
 }
 
 /// A head a verifier already trusts for an identity: `--known-head
@@ -941,6 +1053,22 @@ pub struct DossierReport {
     /// doesn't mean. Callers MUST use this field, not try to reconstruct
     /// a verdict from the individual boolean fields.
     pub verdict: Verdict,
+    /// RFC-0001, experimental. Present only when the dossier carries a
+    /// `fleet_anchor`: whether it was ignored (no opt-in), verified, or
+    /// failed, and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet_anchor: Option<fleet::FleetAnchorReport>,
+    /// RFC-0001, experimental. Present only when the caller opted in
+    /// (`VerifyContext::accept_fleet_anchor`): `"direct"`, `"fleet"` or
+    /// `"both"` for a `Witnessed` verdict (see [`fleet::WitnessedVia`]),
+    /// `null` for any other verdict. Absent otherwise, so reports of
+    /// callers who did not opt in are unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witnessed_via: Option<Option<fleet::WitnessedVia>>,
+    /// RFC-0001, experimental. Present only when the caller opted in:
+    /// trusted witness keys and independent operators per path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness_paths: Option<fleet::WitnessPaths>,
 }
 
 impl DossierReport {
@@ -1169,15 +1297,31 @@ impl Dossier {
         // (showing a human the names/URLs the dossier claims for its
         // receipts); it must never reach a trust decision. See finding 02.
         let externally_anchored = ctx.trusted_directory.is_some();
+        // RFC-0001 (experimental): read only with the opt-in. Without it
+        // the attestations below are the direct receipts alone, exactly as
+        // before the field existed.
+        let (fleet_report, fleet_verified) = self.evaluate_fleet_anchor(ctx);
+        let fleet_cosigners: &[(String, u64)] = fleet_verified
+            .as_ref()
+            .map(|v| v.cosigners.as_slice())
+            .unwrap_or(&[]);
+        let mut paths = fleet::WitnessPaths::default();
         let quorum = match ctx.trusted_directory {
-            Some(trusted) if !self.witness_receipts.is_empty() => {
-                let mut q = evaluate_quorum_for_subject(
+            Some(trusted) if !self.witness_receipts.is_empty() || fleet_verified.is_some() => {
+                let attestations = direct_attestations(&self.checkpoint, &self.witness_receipts)
+                    .chain(
+                        fleet_cosigners
+                            .iter()
+                            .map(|(k, ms)| (k.clone(), *ms, AttestationPath::Fleet)),
+                    );
+                let (mut q, p) = score_attestations(
                     &self.checkpoint,
-                    &self.witness_receipts,
+                    attestations,
                     trusted,
                     threshold_fraction,
                     ctx.subject_org,
                 );
+                paths = p;
                 if let Some(n) = ctx.min_receipts {
                     q.meets_count_threshold = q.valid_receipts >= n;
                     q.count_gate = format!("count >= {n}");
@@ -1325,6 +1469,20 @@ impl Dossier {
             && merkle_continuity_valid;
         let split_view_unsafe = verdict == Verdict::Witnessed
             && !quorum.as_ref().is_some_and(|q| q.split_view_resistant);
+        // Which path the counted keys came by (opt-in only). A key on both
+        // paths counts as direct.
+        let witnessed_via = ctx.accept_fleet_anchor.then(|| {
+            (verdict == Verdict::Witnessed).then(|| {
+                let fleet_only = paths.fleet.witnesses - paths.on_both;
+                if fleet_only == 0 {
+                    fleet::WitnessedVia::Direct
+                } else if paths.direct.witnesses == 0 {
+                    fleet::WitnessedVia::Fleet
+                } else {
+                    fleet::WitnessedVia::Both
+                }
+            })
+        });
         DossierReport {
             checkpoint_signature_valid,
             identity_bound,
@@ -1343,6 +1501,73 @@ impl Dossier {
             contradictions,
             known_heads_unchecked,
             verdict,
+            fleet_anchor: fleet_report,
+            witnessed_via,
+            witness_paths: ctx.accept_fleet_anchor.then_some(paths),
+        }
+    }
+
+    /// RFC-0001: the report on `self.fleet_anchor`, and what it contributes
+    /// when it fully verifies. `(None, None)` when the dossier has none.
+    fn evaluate_fleet_anchor(
+        &self,
+        ctx: &VerifyContext,
+    ) -> (
+        Option<fleet::FleetAnchorReport>,
+        Option<fleet::VerifiedFleetAnchor>,
+    ) {
+        use fleet::{FleetAnchorField, FleetAnchorReport, FleetAnchorStatus};
+        let Some(field) = &self.fleet_anchor else {
+            return (None, None);
+        };
+        let parsed = field.parsed();
+        let mut report = FleetAnchorReport {
+            status: FleetAnchorStatus::Ignored,
+            origin: parsed.map(|a| a.origin.clone()),
+            entry_index: parsed.map(|a| a.entry_index),
+            fleet_tree_size: None,
+            failures: Vec::new(),
+        };
+        if !ctx.accept_fleet_anchor {
+            return (Some(report), None);
+        }
+        report.status = FleetAnchorStatus::Failed;
+        let anchor = match field {
+            FleetAnchorField::Parsed(a) => a,
+            FleetAnchorField::Malformed(v) => {
+                let why = serde_json::from_value::<fleet::FleetAnchor>(v.clone())
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default();
+                report
+                    .failures
+                    .push(format!("fleet_anchor is not well-formed: {why}"));
+                return (Some(report), None);
+            }
+        };
+        if ctx
+            .subject_org
+            .map(normalize_label)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            report.failures.push(
+                "no subject_org: a fleet log is run by its agents' own organisation, and \
+                 without knowing which one its own witnesses could count as independent"
+                    .to_string(),
+            );
+            return (Some(report), None);
+        }
+        match fleet::verify_fleet_anchor(anchor, &self.checkpoint, ctx.trusted_directory) {
+            Ok(v) => {
+                report.status = FleetAnchorStatus::Verified;
+                report.fleet_tree_size = Some(v.fleet_tree_size);
+                (Some(report), Some(v))
+            }
+            Err(failures) => {
+                report.failures = failures;
+                (Some(report), None)
+            }
         }
     }
 }
@@ -1842,6 +2067,9 @@ mod policy_tests {
             contradictions: Vec::new(),
             known_heads_unchecked: Vec::new(),
             verdict,
+            fleet_anchor: None,
+            witnessed_via: None,
+            witness_paths: None,
         }
     }
 
@@ -2403,12 +2631,19 @@ impl Dossier {
             // tampering for an agent that merely rebooted.
             key_bindings: log.all_bindings(),
             revocations: Vec::new(),
+            fleet_anchor: None,
         }
     }
 
     /// Attach witness receipts to a dossier.
     pub fn with_receipts(mut self, receipts: Vec<WitnessReceipt>) -> Self {
         self.witness_receipts = receipts;
+        self
+    }
+
+    /// Attach a fleet anchor (RFC-0001, experimental).
+    pub fn with_fleet_anchor(mut self, anchor: fleet::FleetAnchor) -> Self {
+        self.fleet_anchor = Some(anchor.into());
         self
     }
 }
@@ -2622,6 +2857,7 @@ mod registry_scale_tests {
                 known_heads: &[],
                 evidence: &[],
                 subject_org: None,
+                accept_fleet_anchor: false,
             },
         );
         assert_eq!(
@@ -2643,6 +2879,7 @@ mod registry_scale_tests {
                 known_heads: &[],
                 evidence: &[],
                 subject_org: None,
+                accept_fleet_anchor: false,
             },
         );
         assert_eq!(absolute.verdict, Verdict::Witnessed);
@@ -2657,6 +2894,7 @@ mod registry_scale_tests {
                 known_heads: &[],
                 evidence: &[],
                 subject_org: None,
+                accept_fleet_anchor: false,
             },
         );
         assert_eq!(

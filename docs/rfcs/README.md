@@ -9,7 +9,7 @@ steps below have been taken, and the spec is the only normative text.
 
 | RFC | title | status | what it would change |
 |---|---|---|---|
-| [RFC-0001](RFC-0001-fleet-checkpoint-log.md) | Fleet checkpoint log: one C2SP log per organisation | Draft | dossier gains an optional field; no leaf, STH or receipt change |
+| [RFC-0001](RFC-0001-fleet-checkpoint-log.md) | Fleet checkpoint log: one C2SP log per organisation | Draft; experimental prototype (0.6.0) behind `verify --accept-fleet-anchor` | dossier gains an optional field; no leaf, STH or receipt change; vector 14 pins the prototype and is outside conformance (`conform` compares 01–12 only) |
 | [RFC-0002](RFC-0002-verdict-strictness-and-INVALID.md) | Verdict strictness and an INVALID verdict | Implemented (0.5.0) | verdict set and exit codes (strict by default, exit 11; INVALID, exit 40; DIVERGED narrowed); corpus vector 13; no wire change |
 | [RFC-0003](RFC-0003-dns-txt-self-registration.md) | DNS TXT self-registration of witnesses | Draft | registry process; no wire change |
 | [RFC-0004](RFC-0004-scitt-receipts.md) | SCITT (RFC 9942) receipts for leaves | Draft | a second signing context for the identity key; new optional artefact |

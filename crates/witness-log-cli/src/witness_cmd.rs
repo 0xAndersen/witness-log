@@ -69,6 +69,10 @@ const USAGE: &str = "usage:
       exit status 20. --allow-partial instead verifies the dossier it wrote against the
       directory and exits by verdict (0 WITNESSED, 10 CONSISTENT-UNWITNESSED, ...).
       A sealed journal needs its seed: --identity-seed-env NAME or --identity-seed-file F.
+  witness-log witness submit <journal> --fleet <url> [--fleet-wait SECS] [--directory ...] [--out ...]
+      EXPERIMENTAL (RFC-0001): append the checkpoint to an organisation's fleet log
+      and add a fleet_anchor to the dossier; --directory is then optional. See
+      `witness-log fleet --help`.
   witness-log witness verify-evidence <evidence.json> [--vkey <log vkey>]
       Check an equivocation proof a witness recorded under evidence/:
       exit 0 if it proves two signed roots for one size, 40 if not, 2 unreadable.";
@@ -430,13 +434,13 @@ fn cmd_add_log(args: &[String]) -> ExitCode {
 
 // ----------------------------------------------------------------- serve
 
-struct Lock(PathBuf);
+pub(crate) struct Lock(PathBuf);
 impl Lock {
     /// True while the lock file still names this process. Checked before
     /// every cosignature: if a racing process removed and replaced our
     /// lock (two restarts after a crash), we find out before signing
     /// anything, not after two witnesses diverged.
-    fn still_ours(&self) -> bool {
+    pub(crate) fn still_ours(&self) -> bool {
         fs::read_to_string(&self.0)
             .map(|s| s.trim() == std::process::id().to_string())
             .unwrap_or(false)
@@ -444,7 +448,7 @@ impl Lock {
 }
 impl Lock {
     /// Remove the lock file if it is still ours. Idempotent.
-    fn release(&self) {
+    pub(crate) fn release(&self) {
         if self.still_ours() {
             let _ = fs::remove_file(&self.0);
         }
@@ -464,6 +468,21 @@ impl Drop for Lock {
 /// waiter thread receives them.
 #[cfg(unix)]
 fn stop_cleanly_on_signal(server: Arc<Mutex<Server>>) {
+    on_stop_signal(move |sig| {
+        let s = server.lock().unwrap_or_else(|e| e.into_inner());
+        eprintln!(
+            "witness stopping on signal {sig}: {} cosigned since start",
+            s.cosigned
+        );
+        s.lock.release();
+    });
+}
+
+/// Run `stop` on the first SIGTERM/SIGINT, then exit 0. Call before
+/// spawning any thread that should not receive the signals (see
+/// `stop_cleanly_on_signal`).
+#[cfg(unix)]
+pub(crate) fn on_stop_signal(stop: impl FnOnce(i32) + Send + 'static) {
     // SAFETY: plain libc signal-mask calls on a zeroed, then initialised,
     // sigset; the spawned thread only ever calls sigwait on that set.
     unsafe {
@@ -475,12 +494,7 @@ fn stop_cleanly_on_signal(server: Arc<Mutex<Server>>) {
         std::thread::spawn(move || {
             let mut sig: libc::c_int = 0;
             if libc::sigwait(&set, &mut sig) == 0 {
-                let s = server.lock().unwrap_or_else(|e| e.into_inner());
-                eprintln!(
-                    "witness stopping on signal {sig}: {} cosigned since start",
-                    s.cosigned
-                );
-                s.lock.release();
+                stop(sig);
                 std::process::exit(0);
             }
         });
@@ -522,13 +536,27 @@ fn process_alive(pid: &str) -> Option<bool> {
 }
 
 fn acquire_lock(dir: &Path) -> Result<Lock, String> {
-    let p = dir.join("witness.lock");
+    acquire_lock_at(
+        &dir.join("witness.lock"),
+        "witness",
+        "Two witnesses on one state directory could cosign two forks.",
+    )
+}
+
+/// Take the lock file `p` for this process. `what` names the process kind
+/// ("witness") and `why` says what two holders could do, for the messages.
+pub(crate) fn acquire_lock_at(p: &Path, what: &str, why: &str) -> Result<Lock, String> {
+    let p = p.to_path_buf();
+    let file_name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for _ in 0..2 {
         match fs::OpenOptions::new().write(true).create_new(true).open(&p) {
             Ok(mut f) => {
                 let _ = writeln!(f, "{}", std::process::id());
                 let _ = f.sync_all();
-                let lock = Lock(p);
+                let lock = Lock(p.clone());
                 // Two processes restarting over the same stale lock can
                 // both "take it over" within microseconds. Settle, then
                 // confirm we still hold it, BEFORE loading state or serving:
@@ -537,8 +565,8 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
                 if !lock.still_ours() {
                     std::mem::forget(lock);
                     return Err(format!(
-                        "{}: lost a race for the lock to another witness process",
-                        dir.join("witness.lock").display()
+                        "{}: lost a race for the lock to another {what} process",
+                        p.display()
                     ));
                 }
                 return Ok(lock);
@@ -563,12 +591,12 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
                     if again.trim() == pid {
                         if own {
                             eprintln!(
-                                "removing stale witness.lock naming pid {pid}, this process's own pid \
+                                "removing stale {file_name} naming pid {pid}, this process's own pid \
                                  (left by an earlier run with the same pid, e.g. pid 1 in a container)"
                             );
                         } else {
                             eprintln!(
-                                "removing stale witness.lock left by pid {pid}, which is no longer running"
+                                "removing stale {file_name} left by pid {pid}, which is no longer running"
                             );
                         }
                         let _ = fs::remove_file(&p);
@@ -576,8 +604,7 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
                     continue;
                 }
                 return Err(format!(
-                    "{} is held by pid {pid}. Two witnesses on one state directory could \
-                     cosign two forks. If that process is gone, delete the lock file.",
+                    "{} is held by pid {pid}. {why} If that process is gone, delete the lock file.",
                     p.display()
                 ));
             }
@@ -908,7 +935,10 @@ fn add_checkpoint(server: &Arc<Mutex<Server>>, req: &Request) -> Response {
 /// bodies are capped), and no log's evidence can crowd out another's. The
 /// file's existence is the record that a log's proof is already kept, so
 /// nothing about it is held in memory.
-fn record_evidence(dir: &Path, proof: &witness_log_network::tlog_witness::EquivocationProof) {
+pub(crate) fn record_evidence(
+    dir: &Path,
+    proof: &witness_log_network::tlog_witness::EquivocationProof,
+) {
     let ev_dir = dir.join("evidence");
     let path = ev_dir.join(format!(
         "{}.json",
@@ -1186,16 +1216,29 @@ fn cmd_submit(args: &[String]) -> ExitCode {
             | "--state"
             | "--min"
             | "--identity-seed-env"
-            | "--identity-seed-file" => i += 2,
+            | "--identity-seed-file"
+            | "--fleet"
+            | "--fleet-wait" => i += 2,
             "--allow-partial" => i += 1,
             other => {
                 return usage_err(&format!(
                     "witness submit: unexpected argument {other:?} \
                      (flags: --directory, --out, --state, --min, --allow-partial, \
-                     --identity-seed-env, --identity-seed-file)"
+                     --identity-seed-env, --identity-seed-file, --fleet, --fleet-wait)"
                 ))
             }
         }
+    }
+    // RFC-0001 (experimental): append to a fleet log, with or without the
+    // direct path. Without --fleet nothing below changes.
+    if args.iter().any(|a| a == "--fleet") {
+        if args.iter().any(|a| a == "--allow-partial") {
+            return usage_err("witness submit: --allow-partial is not supported with --fleet");
+        }
+        return crate::fleet_cmd::cmd_submit_fleet(journal, args);
+    }
+    if args.iter().any(|a| a == "--fleet-wait") {
+        return usage_err("witness submit: --fleet-wait needs --fleet <url>");
     }
     let Some(dir_path) = flag(args, "--directory") else {
         return usage_err("witness submit: --directory <witnesses.json> is required");
@@ -1286,6 +1329,7 @@ fn cmd_submit(args: &[String]) -> ExitCode {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let verdict = result
         .dossier
@@ -1324,14 +1368,81 @@ fn submit_one(
     native: &witness_log_core::sth::SignedTreeHead,
     known: u64,
 ) -> Result<(WitnessReceipt, u64), SubmitError> {
+    let (cos, vkey) = cosign_one(w, tree, checkpoint, note, known, "journal")?;
+    match cosignature_to_receipt(&cos, &vkey, checkpoint, native) {
+        Some(c) => Ok((c.receipt, checkpoint.tree_size)),
+        None => Err("HTTP 200 but no valid cosignature from the expected key"
+            .to_string()
+            .into()),
+    }
+}
+
+/// Ask one witness to cosign `checkpoint` (signed as `note`) and return its
+/// cosignature with the verifier key it verified under: only a cosignature
+/// from THIS directory entry's key, over THIS checkpoint, is accepted. A
+/// green status code proves nothing. Used for an agent's own checkpoint
+/// (`submit`) and a fleet log's (`fleet witness`); `history` names what
+/// `tree` is in error messages ("journal", "fleet log").
+pub(crate) fn cosign_one(
+    w: &WitnessEntry,
+    tree: &witness_log_core::merkle::MerkleTree,
+    checkpoint: &Checkpoint,
+    note: &witness_log_core::c2sp::SignedNote,
+    known: u64,
+    history: &str,
+) -> Result<(Cosignature, VerifierKey), SubmitError> {
     let url = http::parse_url(&w.url)?;
-    let size = checkpoint.tree_size;
     let wpk: [u8; 32] = hex::decode(w.pubkey.trim())
         .ok()
         .and_then(|b| b.try_into().ok())
         .ok_or_else(|| "directory entry has a malformed pubkey".to_string())?;
     let wvk = ed25519_dalek::VerifyingKey::from_bytes(&wpk)
         .map_err(|_| "directory entry pubkey is not a valid key".to_string())?;
+    let text = post_add_checkpoint(
+        &url,
+        "/add-checkpoint",
+        tree,
+        note,
+        checkpoint.tree_size,
+        known,
+        "witness already cosigned",
+        history,
+    )?;
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        let Ok(sig) = NoteSignature::parse(line) else {
+            continue;
+        };
+        let Ok(cos) = Cosignature::from_note_signature(&sig) else {
+            continue;
+        };
+        let vkey = VerifierKey::for_cosignature(&sig.key_name, &wvk);
+        if witness_log_network::tlog_witness::verify_cosignature_response(&cos, &vkey, checkpoint) {
+            return Ok((cos, vkey));
+        }
+    }
+    Err("HTTP 200 but no valid cosignature from the expected key"
+        .to_string()
+        .into())
+}
+
+/// The `c2sp.org/tlog-witness` exchange: POST an add-checkpoint body for
+/// `note` (a checkpoint of `tree` at `size`) to `path`, starting from
+/// `known` as the old size and following the server's 409 corrections and
+/// Retry-After, at most five attempts. Returns the 200 body. A 422 is
+/// [`SubmitError::Refused`]. `held` and `history` word the error when the
+/// server holds more than `tree` has ("witness already cosigned",
+/// "journal").
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn post_add_checkpoint(
+    url: &http::Url,
+    path: &str,
+    tree: &witness_log_core::merkle::MerkleTree,
+    note: &witness_log_core::c2sp::SignedNote,
+    size: u64,
+    known: u64,
+    held: &str,
+    history: &str,
+) -> Result<String, SubmitError> {
     let mut old = if known > size { 0 } else { known };
     for _ in 0..5 {
         let proof = if old == 0 || old == size {
@@ -1347,34 +1458,11 @@ fn submit_one(
         }
         .to_http_body()
         .map_err(|e| e.to_string())?;
-        let (status, resp, retry_after) = http::request(
-            &url,
-            "POST",
-            "/add-checkpoint",
-            body.as_bytes(),
-            Duration::from_secs(10),
-        )?;
+        let (status, resp, retry_after) =
+            http::request(url, "POST", path, body.as_bytes(), Duration::from_secs(10))?;
         let text = String::from_utf8_lossy(&resp).to_string();
         match status {
-            200 => {
-                // Accept only a cosignature from THIS directory entry's key,
-                // over THIS checkpoint. A green status code proves nothing.
-                for line in text.lines().filter(|l| !l.is_empty()) {
-                    let Ok(sig) = NoteSignature::parse(line) else {
-                        continue;
-                    };
-                    let Ok(cos) = Cosignature::from_note_signature(&sig) else {
-                        continue;
-                    };
-                    let vkey = VerifierKey::for_cosignature(&sig.key_name, &wvk);
-                    if let Some(c) = cosignature_to_receipt(&cos, &vkey, checkpoint, native) {
-                        return Ok((c.receipt, size));
-                    }
-                }
-                return Err("HTTP 200 but no valid cosignature from the expected key"
-                    .to_string()
-                    .into());
-            }
+            200 => return Ok(text),
             409 => {
                 let theirs: u64 = text
                     .trim()
@@ -1382,8 +1470,8 @@ fn submit_one(
                     .map_err(|_| format!("HTTP 409 with unparseable size {:?}", text.trim()))?;
                 if theirs > size {
                     return Err(format!(
-                        "witness already cosigned size {theirs} but this journal has only {size} \
-                         leaves -- truncated journal, or this log was forked"
+                        "{held} size {theirs} but this {history} has only {size} \
+                         leaves -- truncated {history}, or this log was forked"
                     )
                     .into());
                 }

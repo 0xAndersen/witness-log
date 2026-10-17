@@ -130,6 +130,7 @@ fn main() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let full = dossier(4);
     let two_of_four = dossier(2);
@@ -455,6 +456,7 @@ fn main() {
             known_heads: &known_heads,
             evidence: &proofs,
             subject_org,
+            accept_fleet_anchor: false,
         };
         let r = by_name(d).verify(0.66, &ctx);
         let exit_code = if r.split_view_unsafe && !allow {

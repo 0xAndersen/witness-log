@@ -40,6 +40,7 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     // Even with NO out-of-band pin at all, self-consistency alone catches
@@ -67,6 +68,7 @@ fn finding01_mismatched_identity_claim_is_caught_even_unpinned() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let pinned_report = dossier.verify(0.66, &ctx);
     assert_eq!(pinned_report.verdict, Verdict::Invalid);
@@ -116,6 +118,7 @@ fn finding02_fabricated_dossier_capped_at_unanchored_not_witnessed() {
         witness_directory: directory, // still shipped -- but display-only now
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     // No trusted_directory supplied -> the dossier's own directory is
@@ -341,6 +344,7 @@ fn finding14_structurally_invalid_leaves_no_longer_verify() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let report = dossier.verify(0.66, &VerifyContext::default());
     assert!(
@@ -406,6 +410,7 @@ mod finding06_key_bindings_and_revocations {
             witness_directory: WitnessDirectory::default(),
             key_bindings,
             revocations,
+            fleet_anchor: None,
         }
     }
 

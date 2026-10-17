@@ -39,6 +39,7 @@ fn dossier_with(leaves: Vec<Leaf>, id_hex: &str, cp: SignedTreeHead, log: &Witne
         witness_directory: WitnessDirectory::default(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     }
 }
 
@@ -662,6 +663,7 @@ mod regulator {
                 known_heads: &[],
                 evidence: &[],
                 subject_org: None,
+                accept_fleet_anchor: false,
             },
         );
         assert!(r.is_internally_consistent() && r.identity_bound);

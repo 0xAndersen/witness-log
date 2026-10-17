@@ -53,6 +53,7 @@ fn ctx<'a>(
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     }
 }
 
@@ -77,6 +78,7 @@ fn backdated_history_past_the_cut_off_is_rejected() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![binding.clone()],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let ident = id.public_hex();
     // The verifier knows the revocation out of band; the dossier omits it.
@@ -111,6 +113,7 @@ fn history_up_to_the_cut_off_still_verifies() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![binding],
         revocations: vec![revocation.clone()],
+        fleet_anchor: None,
     };
     let ident = id.public_hex();
     let r = dossier.verify(0.66, &ctx(&ident, &[]));
@@ -143,6 +146,7 @@ fn smallest_cut_off_wins_and_the_index_is_signed() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![binding],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let ident = id.public_hex();
     let both = vec![

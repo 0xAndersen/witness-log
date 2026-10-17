@@ -748,6 +748,10 @@ pub struct VerifyOptions {
     /// The organisation that operates this log; witnesses with that
     /// `operator_org` never count as independent operators.
     pub subject_org: Option<String>,
+    /// RFC-0001, EXPERIMENTAL: count the cosigners of a fleet checkpoint
+    /// that includes this dossier's checkpoint (needs `subject_org`).
+    /// Default false.
+    pub accept_fleet_anchor: Option<bool>,
 }
 
 fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
@@ -828,6 +832,7 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
         known_heads: &known_heads,
         evidence: &evidence,
         subject_org: o.subject_org.as_deref(),
+        accept_fleet_anchor: o.accept_fleet_anchor.unwrap_or(false),
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string(&report).map_err(fail)

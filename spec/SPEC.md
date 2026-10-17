@@ -776,6 +776,12 @@ every leaf in `/corpus/`, against it, so the schema cannot drift from
 the code. A document that validates is well-formed, not verified:
 signatures, Merkle continuity, bindings and quorum are §9.1–§9.2.
 
+The schema also lists `fleet_anchor`, an optional field of the
+experimental RFC-0001 prototype (0.6.0). It is not part of this
+specification: a verifier MUST NOT let it change a verdict unless the
+caller explicitly opts in, and a verifier that does not implement RFC-0001
+ignores it like any unknown field.
+
 ### 9.1 The trust boundary: what a verifier must supply itself
 
 A dossier's `identity_pubkey`, `witness_directory`, `key_bindings`, and
@@ -954,7 +960,9 @@ vkey, the expected checkpoint rate and a contact. Logs are configured by
 origin, one at a time. A witness-log identity is one origin, so a fleet
 of agents is a fleet of applications; the realistic path onto existing
 operators is one aggregate log per organisation, which is RFC-0001 under
-`docs/rfcs/` (a proposal, not part of this specification). Until then,
+`docs/rfcs/` (a proposal, not part of this specification; 0.6.0 ships an
+experimental prototype, `witness-log fleet` and `verify
+--accept-fleet-anchor`, described in the RFC). Until then,
 the witnesses that cosign witness-log checkpoints are the ones operators
 run with `witness-log witness serve` (open enrollment) or configure by
 hand.
@@ -1147,4 +1155,5 @@ the encoding vectors `/corpus/01_*.json` to `/corpus/12_*.json` exactly, byte fo
 and, if it verifies dossiers, returns the expected verdict, exit code and report fields for every case in the
 verification vector `/corpus/13_verdicts.json`. The encoding vectors are enforced in CI via `witness-log conform`
 (see CONTRIBUTING.md); vector 13 is run by each verifier's own test suite. Together they are the actual gate for
-claiming compatibility — not this document by itself.
+claiming compatibility — not this document by itself. `/corpus/14_fleet_anchor.json` pins the experimental RFC-0001
+prototype for the verifiers that implement its opt-in and is not part of conformance.

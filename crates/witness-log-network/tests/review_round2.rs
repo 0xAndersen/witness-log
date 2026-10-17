@@ -167,6 +167,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![binding.clone()],
         revocations: vec![revocation.clone()],
+        fleet_anchor: None,
     };
     let ident = id.public_hex();
     let ctx = VerifyContext {
@@ -177,6 +178,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let report = dossier.verify(0.66, &ctx);
     assert!(report.bindings_asserted);
@@ -198,6 +200,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     assert_eq!(
         d3.verify(0.66, &ctx).verdict,
@@ -224,6 +227,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     assert_eq!(d4.verify(0.66, &ctx_other).verdict, Verdict::Unanchored);
 }
@@ -306,6 +310,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
         witness_directory: shipped,
         key_bindings: vec![id.bind_session(&session.verifying_key(), 1, 1, None)],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let ident = id.public_hex();
     let r = dossier.verify(
@@ -318,6 +323,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         },
     );
     let q = r.quorum.as_ref().unwrap();
@@ -343,6 +349,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
                     known_heads: &[],
                     evidence: &[],
                     subject_org: None,
+                    accept_fleet_anchor: false,
                 }
             )
             .verdict,
@@ -394,6 +401,7 @@ fn sound_operator_normalisation_and_project_bucket() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let r = d.verify(
         0.5,
@@ -405,6 +413,7 @@ fn sound_operator_normalisation_and_project_bucket() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         },
     );
     assert_eq!(
@@ -687,6 +696,7 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let mut v = serde_json::to_value(&base).unwrap();
     let dir = WitnessDirectory::default();
@@ -731,6 +741,7 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                     known_heads: &[],
                     evidence: &[],
                     subject_org: None,
+                    accept_fleet_anchor: false,
                 },
             );
             assert_eq!(r.verdict, Verdict::Invalid, "{path:?}");
@@ -749,6 +760,7 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                 known_heads: &[],
                 evidence: &[],
                 subject_org: None,
+                accept_fleet_anchor: false,
             }
         )
         .verdict,

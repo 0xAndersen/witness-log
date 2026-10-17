@@ -23,6 +23,10 @@ type Dossier struct {
 	WitnessDirectory Directory        `json:"witness_directory"`
 	KeyBindings      []KeyBinding     `json:"key_bindings"`
 	Revocations      []Revocation     `json:"revocations"`
+	// FleetAnchor is RFC-0001's optional fleet_anchor (EXPERIMENTAL), kept
+	// raw: it is read only with Options.AcceptFleetAnchor, and a malformed
+	// one must not make the dossier unreadable to a caller who ignores it.
+	FleetAnchor json.RawMessage `json:"fleet_anchor,omitempty"`
 }
 
 // SignedTreeHead is a checkpoint (SPEC.md §6): the log identity's signed
@@ -177,6 +181,7 @@ func ParseDossier(dossierJSON []byte) (*Dossier, error) {
 		WitnessDirectory json.RawMessage   `json:"witness_directory"`
 		KeyBindings      []json.RawMessage `json:"key_bindings"`
 		Revocations      []json.RawMessage `json:"revocations"`
+		FleetAnchor      json.RawMessage   `json:"fleet_anchor"`
 	}
 	if err := json.Unmarshal(dossierJSON, &top); err != nil {
 		return nil, fmt.Errorf("dossier: %w", err)
@@ -260,6 +265,9 @@ func ParseDossier(dossierJSON []byte) (*Dossier, error) {
 	}
 	if d.Revocations == nil {
 		d.Revocations = []Revocation{}
+	}
+	if t := bytes.TrimSpace(top.FleetAnchor); len(t) > 0 && !bytes.Equal(t, []byte("null")) {
+		d.FleetAnchor = append(json.RawMessage(nil), t...)
 	}
 	return d, nil
 }

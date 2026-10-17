@@ -38,6 +38,7 @@
 - [Verification and verdicts](Verification-and-Verdicts)
 - [Getting witnessed](Getting-Witnessed)
 - [Pilot: three organisations](Pilot-Three-Organisations)
+- [Fleet log (experimental)](Fleet-Log)
 - [Operator onboarding](Operator-Onboarding)
 - [Witness status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md)
 - [Running a witness](Running-a-Witness)

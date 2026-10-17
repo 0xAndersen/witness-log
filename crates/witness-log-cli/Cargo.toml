@@ -21,6 +21,8 @@ witness-log-network = { version = "0.5.0", path = "../witness-log-network" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
+# `fleet` (RFC-0001, experimental): entries are stored and served as base64.
+base64ct = { workspace = true }
 # Used only by `witness-log demo` / `demo --tamper`, which generate
 # throwaway in-memory keypairs to build a self-contained worked example.
 # No key material generated here is ever written to disk.

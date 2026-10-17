@@ -30,6 +30,7 @@ type verifyOptions struct {
 	KnownHeads             []string          `json:"known_heads"`
 	Evidence               []json.RawMessage `json:"evidence"`
 	SubjectOrg             string            `json:"subject_org"`
+	AcceptFleetAnchor      bool              `json:"accept_fleet_anchor"`
 }
 
 func fail(msg string) string {
@@ -186,6 +187,7 @@ func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string
 		o.Evidence = append(o.Evidence, p)
 	}
 	o.SubjectOrg = opts.SubjectOrg
+	o.AcceptFleetAnchor = opts.AcceptFleetAnchor
 	report := d.Verify(dir, o)
 	var origin any
 	if pk, err := hex.DecodeString(d.Checkpoint.SignerPubkey); err == nil && len(pk) == 32 {

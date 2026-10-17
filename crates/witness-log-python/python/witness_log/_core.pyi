@@ -200,13 +200,18 @@ def verify_dossier_json(
     known_heads: Optional[list[str]] = None,
     evidence_json: Optional[str] = None,
     subject_org: Optional[str] = None,
+    accept_fleet_anchor: bool = False,
 ) -> str:
     """The reference verifier's report as JSON (``witness-log verify --json``'s
     ``report``). ``verdict`` is one of witnessed, consistent_unwitnessed,
     unanchored, diverged (contradicts a ``known_heads`` entry or verified
     ``evidence_json``), invalid (a check failed). ``split_view_unsafe`` is
     true for a witnessed verdict whose cosigners are not a strict majority
-    of the directory: the CLI exits 11 for it by default."""
+    of the directory: the CLI exits 11 for it by default.
+    ``accept_fleet_anchor`` (RFC-0001, EXPERIMENTAL) also counts the
+    cosigners of a fleet checkpoint that includes this checkpoint; it needs
+    ``subject_org``, and the report then carries ``witnessed_via`` and
+    ``witness_paths``."""
     ...
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str

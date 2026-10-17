@@ -47,6 +47,12 @@ from `verify` only with `--known-head` or `--evidence`
   directory does not contain changes nothing. Since 0.6.0; the libraries
   take it as `subject_org` (Python, wasm), `subjectOrg` (TypeScript,
   Node) and `SubjectOrg` (Go).
+- `--accept-fleet-anchor` (EXPERIMENTAL, RFC-0001, since 0.6.0) also
+  counts witnesses that cosigned the organisation's fleet log checkpoint
+  containing this checkpoint, when the dossier carries a `fleet_anchor`
+  that fully verifies. It needs `--subject-org`, adds cosigners but never
+  lowers a verdict, and never makes a dossier split-view resistant. Without
+  it the field is ignored. See [Fleet log](Fleet-Log).
 
 Two more inputs bring evidence you already hold about the same identity.
 Neither can raise a verdict; each can only make a valid dossier DIVERGED:

@@ -26,6 +26,10 @@ label, rust_exit, go_exit = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 r = json.load(open(sys.argv[4])); g = json.load(open(sys.argv[5]))
 # Failure wording is per-implementation; whether a check failed is not.
 rf = r["report"].pop("failures", None); gf = g["report"].pop("failures", None)
+for x in (r, g):
+    fa = x["report"].get("fleet_anchor")
+    if fa:
+        fa["failures"] = bool(fa["failures"])
 ok = (rust_exit == go_exit and r["verdict"] == g["verdict"] and r["report"] == g["report"]
       and bool(rf) == bool(gf)
       and all(r.get(k) == g.get(k) for k in ("strict", "allow_sub_majority", "exit_code", "subject_org")))
@@ -63,4 +67,15 @@ compare "2 of 4 receipts, default threshold" "$two_of_four" --directory native/t
 compare "native, --subject-org of a cosigner" native/dossier.json --directory native/trusted.json --subject-org "Example-University" || fail=1
 compare "native, --subject-org not in the directory" native/dossier.json --directory native/trusted.json --subject-org "nobody" || fail=1
 compare "2 of 4 receipts, --subject-org of a cosigner" "$two_of_four" --directory native/trusted.json --min-witnesses 2 --subject-org " example-infra-co " || fail=1
+# RFC-0001 (experimental): corpus 14's fleet-anchored dossiers, with and
+# without --accept-fleet-anchor.
+fleet="${TMPDIR:-/tmp}/wl-fleet-corpus"
+mkdir -p "$fleet"
+python3 -I -c 'import json,sys,os; v=json.load(open(sys.argv[1])); json.dump(v["trusted_directory"],open(os.path.join(sys.argv[2],"trusted.json"),"w")); [json.dump(d,open(os.path.join(sys.argv[2],n+".dossier.json"),"w")) for n,d in v["dossiers"].items()]' "$repo/corpus/14_fleet_anchor.json" "$fleet"
+for d in "$fleet"/*.dossier.json; do
+  n="$(basename "$d" .dossier.json)"
+  compare "fleet $n" "$d" --directory "$fleet/trusted.json" --min-witnesses 2 --subject-org corpus-fleet-org || fail=1
+  compare "fleet $n, --accept-fleet-anchor" "$d" --directory "$fleet/trusted.json" --min-witnesses 2 --subject-org corpus-fleet-org --accept-fleet-anchor || fail=1
+  compare "fleet $n, --accept-fleet-anchor, no directory" "$d" --subject-org corpus-fleet-org --accept-fleet-anchor || fail=1
+done
 exit $fail

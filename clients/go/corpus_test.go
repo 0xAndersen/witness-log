@@ -693,7 +693,7 @@ func TestCorpusComplete(t *testing.T) {
 		"04_signed_tree_head.json": true, "05_redaction_continuity.json": true, "06_consistency_proof.json": true,
 		"07_handoff_attestation.json": true, "08_authorization_event.json": true, "09_external_anchor.json": true,
 		"10_c2sp_checkpoint.json": true, "11_payload_hash.json": true, "12_revocation.json": true,
-		"13_verdicts.json": true,
+		"13_verdicts.json": true, "14_fleet_anchor.json": true, // 14: fleet_test.go
 	}
 	n := 0
 	for _, e := range entries {

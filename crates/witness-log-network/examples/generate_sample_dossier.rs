@@ -111,6 +111,7 @@ fn main() {
         witness_directory: directory.clone(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     let out_path = "examples/sample-dossier.json";

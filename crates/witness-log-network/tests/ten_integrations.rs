@@ -95,6 +95,7 @@ fn integration_3_export_evidence_for_a_reviewer() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
     let json = serde_json::to_string_pretty(&dossier).expect("serialize");
     let reparsed: Dossier = serde_json::from_str(&json).expect("roundtrip");
@@ -150,6 +151,7 @@ fn integration_5_verify_a_counterpartys_dossier() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: their_log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
 
     // I know their identity out-of-band. I have no witness directory.
@@ -161,6 +163,7 @@ fn integration_5_verify_a_counterpartys_dossier() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let r = dossier.verify(0.66, &ctx);
     assert!(r.identity_bound, "pinned identity must bind");
@@ -214,6 +217,7 @@ fn integration_6_reach_witnessed_with_real_witnesses() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: log.all_bindings(),
         revocations: vec![],
+        fleet_anchor: None,
     };
     let ctx = VerifyContext {
         expected_identity_pubkey: Some(&subject_hex),
@@ -223,6 +227,7 @@ fn integration_6_reach_witnessed_with_real_witnesses() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let r = dossier.verify(0.5, &ctx);
     assert_eq!(r.verdict, Verdict::Witnessed, "report: {r:?}");

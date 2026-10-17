@@ -13,7 +13,8 @@
     "witness_receipts": { "type": "array", "items": { "$ref": "#/$defs/witness_receipt" }, "default": [] },
     "witness_directory": { "$ref": "#/$defs/witness_directory" },
     "key_bindings": { "type": "array", "items": { "$ref": "#/$defs/key_binding" }, "default": [] },
-    "revocations": { "type": "array", "items": { "$ref": "#/$defs/revocation" }, "default": [] }
+    "revocations": { "type": "array", "items": { "$ref": "#/$defs/revocation" }, "default": [] },
+    "fleet_anchor": { "$ref": "#/$defs/fleet_anchor" }
   },
   "$defs": {
     "hex32": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$", "description": "32 bytes, hex" },
@@ -139,6 +140,40 @@
         "as_of_ms": { "$ref": "#/$defs/u64" },
         "reason": { "type": "string" },
         "signature": { "$ref": "#/$defs/hex64" }
+      }
+    },
+    "fleet_anchor": {
+      "type": "object",
+      "description": "EXPERIMENTAL (RFC-0001, 0.6.0 prototype; not part of SPEC.md): this checkpoint's entry in an organisation's fleet checkpoint log. Optional; absent from dossiers that do not use it. A verifier reads it only when the caller opts in (`witness-log verify --accept-fleet-anchor`); without the opt-in it is ignored, and a verifier that predates it ignores it as an unknown field.",
+      "required": ["origin", "entry_index", "entry_bytes_b64", "inclusion_proof", "fleet_checkpoint_note"],
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^ +\\u0000-\\u001f\\u007f]+$",
+          "not": { "pattern": "^witness-log/" },
+          "description": "The fleet log's C2SP origin, e.g. example.com/witness-log/fleet. Never an agent's canonical witness-log/<key> origin."
+        },
+        "entry_index": { "$ref": "#/$defs/u64", "description": "Index of this checkpoint's entry in the fleet log." },
+        "entry_bytes_b64": {
+          "type": "string",
+          "maxLength": 5464,
+          "pattern": "^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "description": "The agent's c2sp.org/tlog-checkpoint note for this identity at checkpoint.tree_size and checkpoint.root_hash, exactly as appended, standard base64."
+        },
+        "inclusion_proof": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/hex32" },
+          "description": "RFC 6962 inclusion proof of SHA256(0x00 || entry bytes) at entry_index under the fleet checkpoint's root, innermost hash first."
+        },
+        "fleet_checkpoint_note": {
+          "type": "string",
+          "maxLength": 65536,
+          "description": "The fleet log's signed checkpoint note with the witnesses' cosignature/v1 lines."
+        }
       }
     }
   }

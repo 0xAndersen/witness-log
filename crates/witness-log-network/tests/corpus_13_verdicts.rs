@@ -56,6 +56,7 @@ fn corpus_vector_13_verdicts() {
             known_heads: &known_heads,
             evidence: &evidence,
             subject_org: c["subject_org"].as_str(),
+            accept_fleet_anchor: false,
         };
         let r = dossier.verify(c["threshold"].as_f64().unwrap(), &ctx);
         let e = &c["expect"];

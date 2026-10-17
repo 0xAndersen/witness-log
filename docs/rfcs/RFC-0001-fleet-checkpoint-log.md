@@ -1,8 +1,8 @@
 # RFC-0001: Fleet checkpoint log (one C2SP log per organisation)
 
-Status: Draft
-Target: 0.5.0 behind `witness-log fleet serve` and a `VerifyContext` opt-in; spec text in a later minor
-Related: SPEC §9.3 (C2SP), §9 (dossier), THREAT_MODEL "Witness independence"
+Status: Draft — experimental prototype in 0.6.0 (`witness-log fleet`, `verify --accept-fleet-anchor`); not part of the spec until the open questions are answered
+Target: spec text in a later minor, once the open questions below are answered
+Related: SPEC §9.3 (C2SP), §9 (dossier), THREAT_MODEL "Witness independence"; prototype: `docs/wiki/Fleet-Log.md`, `corpus/14_fleet_anchor.json`
 
 ## Motivation
 
@@ -152,6 +152,13 @@ operator-controlled check, with the independent cosigners on top.
 
 ## Corpus vectors needed
 
+The 0.6.0 prototype implements these as one verification vector,
+`corpus/14_fleet_anchor.json` (`12` is the revocation vector): a four-entry
+fleet log with its leaf hashes, root, the inclusion proof for entry 2 and
+the fleet checkpoint note, and fourteen cases run by every verifier,
+including the three negative cases below. It is not part of the
+conformance set.
+
 - `12_fleet_entry.json`: an agent checkpoint note as a fleet entry; its
   leaf hash; a 4-entry fleet tree with roots; an inclusion proof for
   entry 2; the fleet checkpoint note; one cosignature line; expected
@@ -171,8 +178,94 @@ operator-controlled check, with the independent cosigners on top.
   `deny_unknown_fields`, the schema bump needs to precede the field), so
   a dossier with `fleet_anchor` verifies on 0.3.x as if the field were
   absent: the same or a lower verdict, never a higher one.
+  *Confirmed for the prototype:* `Dossier` has never had
+  `deny_unknown_fields` (the Go and TypeScript verifiers ignore unknown
+  keys too); a test deserialises every anchored corpus dossier into the
+  0.5.0 struct. `spec/dossier.schema.json`, which does set
+  `additionalProperties: false`, gains `fleet_anchor` as an optional
+  property in the same release.
 - New verifiers without the opt-in behave as old ones.
 - No existing artefact changes meaning.
+
+## Decisions in the 0.6.0 prototype
+
+These are the prototype's answers where the text above left a choice.
+They are what the code and `corpus/14_fleet_anchor.json` do, not settled
+specification.
+
+1. **The opt-in** is `VerifyContext::accept_fleet_anchor: bool` (default
+   false), and `--accept-fleet-anchor` in the CLI; every other verifier
+   takes the same boolean. Without it the field is not read beyond its
+   origin and index: verdict and report are what they are without the
+   field, plus `report.fleet_anchor.status: "ignored"`. A malformed
+   field still parses (it is kept as raw JSON), so it cannot make a
+   dossier unreadable to a verifier that ignores it.
+2. **A failed anchor is reported and ignored, never INVALID.** With the
+   opt-in, an anchor that fails any of steps 2–4 sets
+   `report.fleet_anchor.status: "failed"` with `failures`, and adds no
+   cosigner. INVALID would gain nothing: anyone holding the dossier can
+   strip the field and get the verdict without it, so a broken anchor can
+   at most be made to disappear, and a rule that lowered the verdict for it
+   would let a third party who corrupts the optional part of a file
+   suppress valid direct evidence. It also matches how a direct receipt
+   that does not verify is treated: not counted, never INVALID. An anchor
+   can therefore only add independent operators, and only when it fully
+   verifies. One case is reported in plain words: an entry validly signed
+   by the identity for the same size with a different root means the
+   identity signed two roots for one size. The prototype reports that as
+   the step-2 failure and does not make the verdict DIVERGED, because
+   RFC-0002 keeps DIVERGED for evidence the verifier brings, and the
+   native checkpoint and the C2SP note are different signed formats with
+   no existing evidence object for the pair.
+3. **The fleet log's key is not a trust input.** The verifier does not
+   check the fleet log's own signature on `fleet_checkpoint_note`, and no
+   fleet vkey is supplied. A `cosignature/v1` line signs the exact
+   checkpoint body (origin, size, root), and a conforming witness cosigns
+   a body only after verifying it under the key it was configured with for
+   that origin and only if it extends what it cosigned before; a vkey
+   taken from the dossier would verify nothing, and a verifier-supplied
+   one would identify the operator, which the verdict does not depend on.
+   What a holder of the fleet key can do: sign any fleet head (witnesses
+   still cosign only consistent ones); not forge an agent's entry (step 2
+   checks the agent's own signature); append both of an agent's
+   conflicting checkpoints, leave an agent out, or run several fleet
+   origins and put conflicting checkpoints of one agent in different ones,
+   each of which then needs its own enrollment with each witness. The last
+   is the residual risk against direct witnessing, where one identity has
+   one origin. A verifier-side list of accepted fleet origins per subject
+   would narrow it; the prototype does not have one.
+4. **The fleet operator's organisation is `subject_org`.** A fleet log is
+   run by the organisation whose agents it records, so the caller's
+   `subject_org` names it, and step 5's extra rule is the existing
+   `subject_org` rule applied to fleet cosigners. Without `subject_org`
+   the anchor is not used (`failed`, "no subject_org"), and the CLI
+   refuses `--accept-fleet-anchor` without `--subject-org`: otherwise the
+   organisation's own witnesses would count as independent of it.
+5. **Fleet cosigners never count toward split-view resistance.**
+   `split_view_resistant` is computed from keys with a direct receipt
+   only. The majority argument behind it (any two passing sets overlap in
+   a witness that refuses the second history) does not hold for a witness
+   that committed to the fleet log's head: it would not refuse a
+   conflicting checkpoint of the agent. A WITNESSED verdict reached through
+   the fleet alone is therefore always `split_view_unsafe`, exit 11, and
+   `--allow-sub-majority` accepts it.
+6. **Dedup and `witnessed_via`.** Direct receipts and fleet cosigners are
+   scored together, each witness key once (its direct receipt, when it has
+   one, sets its time). `witnessed_via` is `null` unless the verdict is
+   WITNESSED; then `"direct"` when no counted key is fleet-only, `"fleet"`
+   when no counted key has a direct receipt, and `"both"` otherwise.
+   `witness_paths` gives the witness keys and independent operators per
+   path and the keys on both. Both fields appear only with the opt-in, so
+   a report without it is unchanged.
+7. **Entries.** A fleet entry is the agent's note with no extension lines
+   and only its own signature, exactly as the fleet log stored it; the
+   fleet origin must not start with `witness-log/` (that names one agent's
+   log, whose cosignatures are direct receipts). Bounds: entry 4 KiB,
+   checkpoint bodies 1 KiB (as a witness), fleet note 64 KiB and 64
+   signature lines, inclusion proofs 64 hashes.
+8. **Not implemented:** `c2sp.org/tlog-tiles` (entries are read with
+   `GET /proof/<index>`), batching and retention, a per-subject list of
+   accepted fleet origins, the vkey in DNS.
 
 ## Open questions
 
@@ -180,23 +273,52 @@ operator-controlled check, with the independent cosigners on top.
    fleet log a witness for its own agents, which is good, and makes it
    stateful per agent, which is what we wanted to avoid for the public
    witnesses but is fine for the organisation's own service.
+   *Prototype: MUST.* `fleet serve` keeps the last checkpoint it appended
+   per agent origin and runs the `tlog-witness` state machine against it
+   (`KnownLog`, the code `witness serve` runs): `POST /add-entry` takes an
+   add-checkpoint body (old size, consistency proof, note), answers 409
+   with the held size, and refuses a checkpoint that does not extend the
+   held one with 422; two signed roots for one size are written under
+   `evidence/` as the `EquivocationProof` a witness writes. The memory is
+   rebuilt from the entries file at start. The verifier does not rely on
+   it (decision 5): it is a check by the agent's own organisation.
 2. Entry rate limits and retention: tiles are forever; an agent that
    checkpoints every second writes 86,400 entries a day. Batching
    (one entry per agent per minute, latest wins) is probably right and
    needs words.
+   *Prototype: not decided.* Each checkpoint that advances an agent is one
+   entry; re-sending the held checkpoint appends nothing; `--max-origins`
+   caps the number of agents; the server listens on loopback unless
+   `--allow-remote`. There is no batching, rate limit per agent, or
+   retention.
 3. Does an existing operator community accept a log whose entries are
    other logs' checkpoints? It is structurally what Rekor and sumdb are
    (entries that are someone else's signed statements), but the question
    should be asked before the code is written. The draft application text
    is in the discussion thread.
+   *Prototype: still open; code cannot answer it.* What the prototype
+   shows is that an unmodified `witness-log witness serve`, with the fleet
+   origin enrolled by `witness add-log`, cosigns the fleet log through the
+   ordinary `add-checkpoint` call (the CLI's end-to-end test does this with
+   two witnesses of two organisations). Whether other operators will admit
+   such a log has not been asked of them.
 4. Dedup across paths: a witness that cosigned the agent directly and the
    fleet checkpoint is one key and counts once; a witness that cosigned
    only the fleet is counted with `witnessed_via: fleet`. Should a verdict
    be able to *require* direct witnessing (`--require-direct`)? Probably
    yes, for high-stakes gates; this RFC proposes it as a flag.
+   *Prototype:* dedup as described (decision 6). No `--require-direct`:
+   the opt-in is the switch. Without `--accept-fleet-anchor` the anchor is
+   ignored entirely, which is requiring direct witnessing; and with it,
+   fleet cosigners never make a dossier split-view resistant, so a gate on
+   exit 0 without `--allow-sub-majority` still needs a direct majority.
 5. Origin naming: `<org-domain>/witness-log/fleet` puts the organisation's
    DNS name in the origin, which is what CT does. RFC-0003 (DNS TXT
    self-registration) could carry the fleet vkey in the same record.
+   *Prototype:* any C2SP origin that does not start with `witness-log/`;
+   the documentation uses `<org-domain>/witness-log/fleet`. Nothing checks
+   that the domain belongs to the organisation, and the vkey is not
+   published in DNS.
 
 ## How to comment
 

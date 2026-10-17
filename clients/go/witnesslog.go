@@ -164,6 +164,11 @@ type Options struct {
 	// verifier knows it. Witnesses with that operator_org never count as
 	// independent operators for this dossier.
 	SubjectOrg string
+	// AcceptFleetAnchor (RFC-0001, EXPERIMENTAL) counts the cosigners of a
+	// fleet checkpoint that includes this dossier's checkpoint, when the
+	// dossier's fleet_anchor fully verifies. It needs SubjectOrg (the
+	// organisation that runs the fleet log). False ignores the field.
+	AcceptFleetAnchor bool
 }
 
 // KnownHead is a (tree size, root) the verifier already trusts.
@@ -281,6 +286,14 @@ type Report struct {
 	// KnownHeadsUnchecked lists known heads larger than the dossier.
 	KnownHeadsUnchecked []string `json:"known_heads_unchecked"`
 	Verdict             Verdict  `json:"verdict"`
+	// FleetAnchor is set only when the dossier carries a fleet_anchor
+	// (RFC-0001, EXPERIMENTAL).
+	FleetAnchor *FleetAnchorReport `json:"fleet_anchor,omitempty"`
+	// WitnessedVia and WitnessPaths are set only with
+	// Options.AcceptFleetAnchor; WitnessedVia is then "direct", "fleet" or
+	// "both" for a Witnessed verdict and null otherwise.
+	WitnessedVia *WitnessedVia `json:"witnessed_via,omitempty"`
+	WitnessPaths *WitnessPaths `json:"witness_paths,omitempty"`
 }
 
 // VerifyDossier parses dossierJSON and verifies it offline. directory is
@@ -368,8 +381,15 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 	}
 
 	r.ExternallyAnchored = directory != nil
-	if directory != nil && len(d.WitnessReceipts) > 0 {
-		q := EvaluateQuorumForSubject(&d.Checkpoint, d.WitnessReceipts, directory, threshold, opts.SubjectOrg)
+	// RFC-0001 (experimental): read only with the opt-in.
+	fleetReport, fleetCosigners, fleetVerified := d.evaluateFleetAnchor(directory, opts)
+	r.FleetAnchor = fleetReport
+	var paths WitnessPaths
+	if directory != nil && (len(d.WitnessReceipts) > 0 || fleetVerified) {
+		atts := directAttestations(&d.Checkpoint, d.WitnessReceipts)
+		atts = append(atts, fleetCosigners...)
+		q, p := scoreAttestations(&d.Checkpoint, atts, directory, threshold, opts.SubjectOrg)
+		paths = p
 		if opts.MinReceipts != nil {
 			q.MeetsCountThreshold = q.ValidReceipts >= *opts.MinReceipts
 			q.CountGate = "count >= " + strconv.Itoa(*opts.MinReceipts)
@@ -413,6 +433,21 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 		r.Verdict = ConsistentUnwitnessed
 	}
 	r.SplitViewUnsafe = r.Verdict == Witnessed && (r.Quorum == nil || !r.Quorum.SplitViewResistant)
+	if opts.AcceptFleetAnchor {
+		via := WitnessedVia("")
+		if r.Verdict == Witnessed {
+			switch {
+			case paths.Fleet.Witnesses-paths.OnBoth == 0:
+				via = "direct"
+			case paths.Direct.Witnesses == 0:
+				via = "fleet"
+			default:
+				via = "both"
+			}
+		}
+		r.WitnessedVia = &via
+		r.WitnessPaths = &paths
+	}
 	return r
 }
 
@@ -568,6 +603,28 @@ func EvaluateQuorum(sth *SignedTreeHead, receipts []WitnessReceipt, directory *D
 // organisation operates the log: witnesses with that operator_org count
 // toward the receipt total but never as independent operators.
 func EvaluateQuorumForSubject(sth *SignedTreeHead, receipts []WitnessReceipt, directory *Directory, threshold float64, subjectOrg string) *Quorum {
+	q, _ := scoreAttestations(sth, directAttestations(sth, receipts), directory, threshold, subjectOrg)
+	return q
+}
+
+// directAttestations are the receipts that verify against sth, in order.
+func directAttestations(sth *SignedTreeHead, receipts []WitnessReceipt) []attestation {
+	var out []attestation
+	for i := range receipts {
+		r := &receipts[i]
+		if r.Verify(sth) != nil {
+			continue
+		}
+		out = append(out, attestation{key: normalizeHex(r.WitnessPubkey), atMs: r.WitnessedAtMs})
+	}
+	return out
+}
+
+// scoreAttestations is the quorum over verified attestations plus the
+// per-path counts, as the reference's score_attestations: each witness key
+// counts once (direct attestations come first and set its time), and only
+// keys with a direct receipt count toward SplitViewResistant.
+func scoreAttestations(sth *SignedTreeHead, atts []attestation, directory *Directory, threshold float64, subjectOrg string) (*Quorum, WitnessPaths) {
 	declaredSubject := normalizeLabel(subjectOrg)
 	var subjectOperator *string
 	for i := range directory.Witnesses {
@@ -583,13 +640,11 @@ func EvaluateQuorumForSubject(sth *SignedTreeHead, receipts []WitnessReceipt, di
 	independent := map[string]struct{}{}
 	projectOperated := 0
 	var newest *uint64
+	directKeys, fleetKeys := map[string]struct{}{}, map[string]struct{}{}
+	directIndep, fleetIndep := map[string]struct{}{}, map[string]struct{}{}
 
-	for i := range receipts {
-		r := &receipts[i]
-		if r.Verify(sth) != nil {
-			continue
-		}
-		key := normalizeHex(r.WitnessPubkey)
+	for _, at := range atts {
+		key := at.key
 		var entry *WitnessEntry
 		for j := range directory.Witnesses {
 			if normalizeHex(directory.Witnesses[j].Pubkey) == key {
@@ -600,25 +655,48 @@ func EvaluateQuorumForSubject(sth *SignedTreeHead, receipts []WitnessReceipt, di
 		if entry == nil {
 			continue
 		}
+		indepOp, isIndep := "", false
+		if !entry.IsProjectOperated {
+			op := normalizeLabel(entry.OperatorOrg)
+			if (subjectOperator == nil || *subjectOperator != op) && (declaredSubject == "" || declaredSubject != op) {
+				indepOp, isIndep = op, true
+			}
+		}
+		pathKeys, pathIndep := directKeys, directIndep
+		if at.fleet {
+			pathKeys, pathIndep = fleetKeys, fleetIndep
+		}
+		pathKeys[key] = struct{}{}
+		if isIndep {
+			pathIndep[indepOp] = struct{}{}
+		}
 		if _, dup := counted[key]; dup {
 			continue
 		}
 		counted[key] = struct{}{}
 		operators[operatorKey(entry)] = struct{}{}
-		if !entry.IsProjectOperated {
-			op := normalizeLabel(entry.OperatorOrg)
-			if (subjectOperator == nil || *subjectOperator != op) && (declaredSubject == "" || declaredSubject != op) {
-				independent[op] = struct{}{}
-			}
+		if isIndep {
+			independent[indepOp] = struct{}{}
 		}
 		providers[computeProviderKey(entry)] = struct{}{}
 		if entry.IsProjectOperated {
 			projectOperated++
 		}
-		if newest == nil || r.WitnessedAtMs > *newest {
-			v := r.WitnessedAtMs
+		if newest == nil || at.atMs > *newest {
+			v := at.atMs
 			newest = &v
 		}
+	}
+	onBoth := 0
+	for k := range directKeys {
+		if _, ok := fleetKeys[k]; ok {
+			onBoth++
+		}
+	}
+	paths := WitnessPaths{
+		Direct: PathCount{Witnesses: len(directKeys), IndependentOperators: len(directIndep)},
+		Fleet:  PathCount{Witnesses: len(fleetKeys), IndependentOperators: len(fleetIndep)},
+		OnBoth: onBoth,
 	}
 
 	valid := len(counted)
@@ -656,7 +734,7 @@ func EvaluateQuorumForSubject(sth *SignedTreeHead, receipts []WitnessReceipt, di
 		IndependentOperatorsRepresented:     indepList,
 		MeetsCountThreshold:                 fraction >= threshold,
 		CountGate:                           "fraction >= " + formatFloat(threshold),
-		SplitViewResistant:                  2*valid > len(directory.Witnesses),
+		SplitViewResistant:                  2*len(directKeys) > len(directory.Witnesses),
 		NewestTrustedWitnessMs:              newest,
-	}
+	}, paths
 }

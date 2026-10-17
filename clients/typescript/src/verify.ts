@@ -109,6 +109,46 @@ export interface Dossier {
   witness_directory?: WitnessDirectory;
   key_bindings?: KeyBindingStatement[];
   revocations?: RevocationStatement[];
+  /**
+   * RFC-0001, EXPERIMENTAL: this checkpoint's entry in an organisation's
+   * fleet checkpoint log (a {@link FleetAnchor} when well-formed). Read
+   * only with `acceptFleetAnchor`.
+   */
+  fleet_anchor?: unknown;
+}
+
+/** RFC-0001 (EXPERIMENTAL): the dossier's `fleet_anchor`. */
+export interface FleetAnchor {
+  origin: string;
+  entry_index: number;
+  entry_bytes_b64: string;
+  /** Hex hashes, innermost first. */
+  inclusion_proof: string[];
+  fleet_checkpoint_note: string;
+}
+
+/** What the verifier did with a dossier's fleet anchor. */
+export interface FleetAnchorReport {
+  status: "ignored" | "verified" | "failed";
+  origin: string | null;
+  entry_index: number | null;
+  /** Only for a verified anchor. */
+  fleet_tree_size: number | null;
+  /** Why it failed; wording not normative. */
+  failures: string[];
+}
+
+/** Distinct trusted witness keys on one path, and the independent operators among them. */
+export interface PathCount {
+  witnesses: number;
+  independent_operators: number;
+}
+
+/** Per-path counts (only with `acceptFleetAnchor`). */
+export interface WitnessPaths {
+  direct: PathCount;
+  fleet: PathCount;
+  on_both: number;
 }
 
 export interface QuorumResult {
@@ -158,6 +198,15 @@ export interface DossierReport {
   /** Known heads larger than this dossier, which it cannot be checked against (`"<size>:<root>"`). */
   known_heads_unchecked: string[];
   verdict: "witnessed" | "consistent_unwitnessed" | "unanchored" | "diverged" | "invalid";
+  /** RFC-0001 (EXPERIMENTAL): present only when the dossier carries a `fleet_anchor`. */
+  fleet_anchor?: FleetAnchorReport;
+  /**
+   * Present only with `acceptFleetAnchor`: which path the counted witness
+   * keys of a WITNESSED verdict came by; null for any other verdict.
+   */
+  witnessed_via?: "direct" | "fleet" | "both" | null;
+  /** Present only with `acceptFleetAnchor`. */
+  witness_paths?: WitnessPaths;
 }
 
 /** A (tree size, root) the verifier already trusts for this identity. */
@@ -204,6 +253,14 @@ export interface VerifyDossierOptions {
    * with that `operator_org` never count as independent operators.
    */
   subjectOrg?: string;
+  /**
+   * RFC-0001, EXPERIMENTAL: count the cosigners of a fleet checkpoint that
+   * includes this dossier's checkpoint, when its `fleet_anchor` fully
+   * verifies. Needs `subjectOrg` (the organisation that runs the fleet
+   * log). Fleet cosigners never count toward split-view resistance.
+   * Default false: the field is ignored.
+   */
+  acceptFleetAnchor?: boolean;
 }
 
 export interface DossierVerification {
@@ -830,6 +887,35 @@ export function evaluateQuorum(
   threshold: number,
   subjectOrg?: string,
 ): QuorumResult {
+  return scoreAttestations(sth, directAttestations(sth, receipts), directory, threshold, subjectOrg).quorum;
+}
+
+/** One witness key's verified statement on one path. */
+interface Attestation {
+  key: string;
+  atMs: number;
+  fleet: boolean;
+}
+
+function directAttestations(sth: SignedTreeHead, receipts: WitnessReceipt[]): Attestation[] {
+  return receipts
+    .filter((r) => verifyReceipt(r, sth))
+    .map((r) => ({ key: r.witness_pubkey.toLowerCase(), atMs: r.witnessed_at_ms, fleet: false }));
+}
+
+/**
+ * The quorum over verified attestations plus per-path counts, as the
+ * reference's score_attestations: each witness key counts once (direct
+ * attestations come first and set its time), and only keys with a direct
+ * receipt count toward split_view_resistant.
+ */
+function scoreAttestations(
+  sth: SignedTreeHead,
+  atts: Attestation[],
+  directory: WitnessDirectory,
+  threshold: number,
+  subjectOrg?: string,
+): { quorum: QuorumResult; paths: WitnessPaths } {
   const signer = sth.signer_pubkey.toLowerCase();
   const subjectEntry = directory.witnesses.find((w) => w.pubkey.toLowerCase() === signer);
   const subjectOperator = subjectEntry ? operatorKey(subjectEntry) : undefined;
@@ -838,30 +924,42 @@ export function evaluateQuorum(
   const providers = new Set<string>();
   const counted = new Set<string>();
   const independent = new Set<string>();
+  const directKeys = new Set<string>();
+  const fleetKeys = new Set<string>();
+  const directIndep = new Set<string>();
+  const fleetIndep = new Set<string>();
   let projectOperated = 0;
   let newest: number | null = null;
-  for (const r of receipts) {
-    if (!verifyReceipt(r, sth)) continue;
-    const key = r.witness_pubkey.toLowerCase();
+  for (const a of atts) {
+    const key = a.key;
     const entry = directory.witnesses.find((w) => w.pubkey.toLowerCase() === key);
     if (!entry) continue;
+    let indepOp: string | null = null;
+    if (!entry.is_project_operated) {
+      const op = normalizeLabel(entry.operator_org ?? "");
+      if (subjectOperator !== op && declaredSubject !== op) indepOp = op;
+    }
+    (a.fleet ? fleetKeys : directKeys).add(key);
+    if (indepOp !== null) (a.fleet ? fleetIndep : directIndep).add(indepOp);
     if (counted.has(key)) continue;
     counted.add(key);
     operators.add(operatorKey(entry));
-    if (!entry.is_project_operated) {
-      const op = normalizeLabel(entry.operator_org ?? "");
-      if (subjectOperator !== op && declaredSubject !== op) independent.add(op);
-    }
+    if (indepOp !== null) independent.add(indepOp);
     providers.add(computeProviderKey(entry));
     if (entry.is_project_operated) projectOperated += 1;
-    newest = newest === null ? r.witnessed_at_ms : Math.max(newest, r.witnessed_at_ms);
+    newest = newest === null ? a.atMs : Math.max(newest, a.atMs);
   }
   const valid = counted.size;
   const total = Math.max(directory.witnesses.length, 1);
   const opsInDir = Math.max(new Set(directory.witnesses.map(operatorKey)).size, 1);
   const provsInDir = Math.max(new Set(directory.witnesses.map(computeProviderKey)).size, 1);
   const fraction = valid / total;
-  return {
+  const paths: WitnessPaths = {
+    direct: { witnesses: directKeys.size, independent_operators: directIndep.size },
+    fleet: { witnesses: fleetKeys.size, independent_operators: fleetIndep.size },
+    on_both: [...directKeys].filter((k) => fleetKeys.has(k)).length,
+  };
+  const quorum: QuorumResult = {
     tree_size: sth.tree_size,
     valid_receipts: valid,
     total_directory_witnesses: directory.witnesses.length,
@@ -877,9 +975,196 @@ export function evaluateQuorum(
     independent_operators_represented: [...independent].sort(),
     meets_count_threshold: fraction >= threshold,
     count_gate: `fraction >= ${threshold}`,
-    split_view_resistant: 2 * valid > directory.witnesses.length,
+    split_view_resistant: 2 * directKeys.size > directory.witnesses.length,
     newest_trusted_witness_ms: newest,
   };
+  return { quorum, paths };
+}
+
+// ------------------------------------- fleet anchors (RFC-0001, EXPERIMENTAL)
+
+const MAX_FLEET_ENTRY_BYTES = 4096;
+const MAX_FLEET_NOTE_TEXT_BYTES = 1024;
+const MAX_FLEET_NOTE_BYTES = 64 * 1024;
+const MAX_FLEET_NOTE_SIGNATURES = 64;
+const MAX_INCLUSION_PROOF_HASHES = 64;
+const SIG_TYPE_COSIGNATURE_V1 = 0x04;
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
+
+/** The field as the reference's serde reads it: all five fields with the right types; anything else is malformed. */
+function parseFleetAnchor(raw: unknown): FleetAnchor | string {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return "fleet_anchor: expected an object";
+  const a = raw as Record<string, unknown>;
+  if (typeof a.origin !== "string") return "fleet_anchor: origin must be a string";
+  if (typeof a.entry_index !== "number" || !Number.isInteger(a.entry_index) || a.entry_index < 0) {
+    return "fleet_anchor: entry_index must be a non-negative integer";
+  }
+  if (typeof a.entry_bytes_b64 !== "string") return "fleet_anchor: entry_bytes_b64 must be a string";
+  if (!Array.isArray(a.inclusion_proof) || a.inclusion_proof.some((h) => typeof h !== "string")) {
+    return "fleet_anchor: inclusion_proof must be an array of strings";
+  }
+  if (typeof a.fleet_checkpoint_note !== "string") return "fleet_anchor: fleet_checkpoint_note must be a string";
+  return a as unknown as FleetAnchor;
+}
+
+/** A C2SP origin (no space, '+' or control character, at most 255 bytes) that is not a witness-log agent origin. */
+export function validFleetOrigin(origin: string): boolean {
+  return (
+    origin !== "" &&
+    Buffer.byteLength(origin, "utf8") <= 255 &&
+    !origin.startsWith(CANONICAL_ORIGIN_PREFIX) &&
+    !/[ +\u0000-\u001f\u007f-\u009f]/.test(origin)
+  );
+}
+
+/** origin, size, root and extension lines of a checkpoint note's text; null if malformed. */
+function parseCheckpointText(text: string): { origin: string; size: bigint; root: Uint8Array; extensions: string[] } | null {
+  const lines = text.replace(/\n+$/, "").split("\n");
+  if (lines.length < 3 || lines.slice(3).some((l) => l === "")) return null;
+  const [origin, size, rootB64] = lines;
+  if (origin === "" || /[ +\n]/.test(origin)) return null;
+  if (!/^(0|[1-9][0-9]*)$/.test(size) || BigInt(size) > U64_MAX) return null;
+  const root = strictBase64(rootB64);
+  if (root === null || root.length !== 32) return null;
+  return { origin, size: BigInt(size), root, extensions: lines.slice(3) };
+}
+
+/** RFC-0001 step 2's shape check: a checkpoint note for `identityHex`, no extension lines, signed by it. */
+function agentCheckpointFromEntry(entry: Uint8Array, identityHex: string): { size: bigint; root: Uint8Array } | string {
+  if (entry.length > MAX_FLEET_ENTRY_BYTES) return `entry is larger than ${MAX_FLEET_ENTRY_BYTES} bytes`;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(entry);
+  } catch {
+    return "entry is not UTF-8";
+  }
+  const note = parseSignedNote(text);
+  if (note === null) return "entry is not a signed note";
+  if (Buffer.byteLength(note.text, "utf8") > MAX_FLEET_NOTE_TEXT_BYTES) return "entry checkpoint body is too large";
+  const cp = parseCheckpointText(note.text);
+  if (cp === null) return "entry is not a checkpoint note";
+  if (cp.extensions.length > 0) return "entry checkpoint has extension lines";
+  const origin = canonicalOrigin(identityHex);
+  if (cp.origin !== origin) return `entry is a checkpoint of ${cp.origin}, not of this identity (${origin})`;
+  if (verifiedCheckpoint(text, origin, identityHex.toLowerCase()) === null) return "entry is not signed by this identity";
+  return { size: cp.size, root: cp.root };
+}
+
+/**
+ * RFC-0001 steps 2-4 against the dossier's own checkpoint: the entry is
+ * this checkpoint signed by its identity, it is included in the fleet
+ * checkpoint, and every cosignature line that verifies under a key in
+ * `directory` is a cosigner. The fleet log's own signature is not a trust
+ * input and is not checked. Returns the failure reason as a string.
+ */
+export function verifyFleetAnchor(
+  anchor: FleetAnchor,
+  sth: SignedTreeHead,
+  directory: WitnessDirectory | undefined,
+): { fleetTreeSize: number; cosigners: Array<{ witness_pubkey: string; witnessed_at_ms: number }> } | string {
+  const r = verifyFleetAnchorInternal(anchor, sth, directory);
+  if (typeof r === "string") return r;
+  return {
+    fleetTreeSize: r.size,
+    cosigners: r.atts.map((a) => ({ witness_pubkey: a.key, witnessed_at_ms: a.atMs })),
+  };
+}
+
+function verifyFleetAnchorInternal(
+  anchor: FleetAnchor,
+  sth: SignedTreeHead,
+  directory: WitnessDirectory | undefined,
+): { size: number; atts: Attestation[] } | string {
+  if (!validFleetOrigin(anchor.origin)) {
+    return `fleet origin ${JSON.stringify(anchor.origin)} is not a fleet log origin (a C2SP origin that is not witness-log/...)`;
+  }
+  const identity = String(sth.signer_pubkey ?? "");
+  if (ed25519Key(identity) === null) return "the checkpoint's signer_pubkey is not an Ed25519 key";
+  const entry = strictBase64(anchor.entry_bytes_b64);
+  if (entry === null) return "entry_bytes_b64 is not canonical standard base64";
+  const cp = agentCheckpointFromEntry(entry, identity);
+  if (typeof cp === "string") return cp;
+  if (cp.size !== BigInt(sth.tree_size) || bytesToHex(cp.root) !== String(sth.root_hash ?? "").toLowerCase()) {
+    return `the entry commits to size ${cp.size}, not this checkpoint (size ${sth.tree_size})`;
+  }
+
+  if (Buffer.byteLength(anchor.fleet_checkpoint_note, "utf8") > MAX_FLEET_NOTE_BYTES) {
+    return "fleet_checkpoint_note is too large";
+  }
+  const note = parseSignedNote(anchor.fleet_checkpoint_note);
+  if (note === null) return "fleet_checkpoint_note is not a signed note";
+  if (Buffer.byteLength(note.text, "utf8") > MAX_FLEET_NOTE_TEXT_BYTES || note.signatures.length > MAX_FLEET_NOTE_SIGNATURES) {
+    return "fleet_checkpoint_note is larger than a witness accepts";
+  }
+  const fleet = parseCheckpointText(note.text);
+  if (fleet === null) return "fleet_checkpoint_note is not a checkpoint";
+  if (fleet.origin !== anchor.origin) return `the fleet checkpoint is for origin ${fleet.origin}, not ${anchor.origin}`;
+  if (anchor.inclusion_proof.length > MAX_INCLUSION_PROOF_HASHES) return "inclusion_proof is longer than any tree needs";
+  if (anchor.inclusion_proof.some((h) => !/^[0-9a-fA-F]{64}$/.test(h))) {
+    return "inclusion_proof holds a value that is not 32 bytes of hex";
+  }
+  if (BigInt(anchor.entry_index) >= fleet.size) {
+    return `entry_index ${anchor.entry_index} is not inside the fleet checkpoint (size ${fleet.size})`;
+  }
+  if (fleet.size > BigInt(Number.MAX_SAFE_INTEGER)) return "fleet checkpoint size is beyond this verifier's range";
+  const size = Number(fleet.size);
+  if (!verifyInclusion(leafHash(entry), anchor.entry_index, size, anchor.inclusion_proof.map(hexToBytes), fleet.root)) {
+    return `the inclusion proof for entry ${anchor.entry_index} does not verify under the fleet checkpoint's root`;
+  }
+
+  const atts: Attestation[] = [];
+  for (const sig of directory === undefined ? [] : note.signatures) {
+    for (const w of directory!.witnesses) {
+      if (!/^[0-9a-fA-F]{64}$/.test(w.pubkey ?? "") || ed25519Key(w.pubkey) === null) continue;
+      if (!sameBytes(noteKeyId(sig.name, SIG_TYPE_COSIGNATURE_V1, hexToBytes(w.pubkey)), sig.keyId)) continue;
+      if (sig.signature.length !== 72) continue;
+      const ts = new DataView(sig.signature.buffer, sig.signature.byteOffset, 8).getBigUint64(0);
+      const msg = `cosignature/v1\ntime ${ts}\n${note.text}`;
+      if (ed25519Verify(w.pubkey, utf8.encode(msg), bytesToHex(sig.signature.slice(8)))) {
+        const ms = ts * 1000n > U64_MAX ? U64_MAX : ts * 1000n;
+        atts.push({ key: w.pubkey.toLowerCase(), atMs: Number(ms), fleet: true });
+      }
+    }
+  }
+  return { size, atts };
+}
+
+/** The report on `d.fleet_anchor`, and its cosigners when it fully verifies (null otherwise). */
+function evaluateFleetAnchor(
+  d: Dossier,
+  checkpoint: SignedTreeHead,
+  trusted: WitnessDirectory | undefined,
+  opts: VerifyDossierOptions,
+): { report: FleetAnchorReport | undefined; atts: Attestation[] | null } {
+  if (d.fleet_anchor === undefined || d.fleet_anchor === null) return { report: undefined, atts: null };
+  const parsed = parseFleetAnchor(d.fleet_anchor);
+  const report: FleetAnchorReport = {
+    status: "ignored",
+    origin: typeof parsed === "string" ? null : parsed.origin,
+    entry_index: typeof parsed === "string" ? null : parsed.entry_index,
+    fleet_tree_size: null,
+    failures: [],
+  };
+  if (!opts.acceptFleetAnchor) return { report, atts: null };
+  report.status = "failed";
+  if (typeof parsed === "string") {
+    report.failures.push(`fleet_anchor is not well-formed: ${parsed}`);
+    return { report, atts: null };
+  }
+  if (normalizeLabel(opts.subjectOrg ?? "") === "") {
+    report.failures.push(
+      "no subject_org: a fleet log is run by its agents' own organisation, and without knowing which one its own witnesses could count as independent",
+    );
+    return { report, atts: null };
+  }
+  const r = verifyFleetAnchorInternal(parsed, checkpoint, trusted);
+  if (typeof r === "string") {
+    report.failures.push(r);
+    return { report, atts: null };
+  }
+  report.status = "verified";
+  report.fleet_tree_size = r.size;
+  return { report, atts: r.atts };
 }
 
 // --------------------------------------------------------------- verify
@@ -1025,8 +1310,23 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   const externallyAnchored = trusted !== undefined;
   let quorum: QuorumResult | null = null;
   const receipts = Array.isArray(d.witness_receipts) ? d.witness_receipts : [];
-  if (trusted !== undefined && receipts.length > 0) {
-    quorum = evaluateQuorum(checkpoint, receipts, trusted, threshold, opts.subjectOrg);
+  // RFC-0001 (experimental): read only with the opt-in.
+  const fleet = evaluateFleetAnchor(d, checkpoint, trusted, opts);
+  let paths: WitnessPaths = {
+    direct: { witnesses: 0, independent_operators: 0 },
+    fleet: { witnesses: 0, independent_operators: 0 },
+    on_both: 0,
+  };
+  if (trusted !== undefined && (receipts.length > 0 || fleet.atts !== null)) {
+    const scored = scoreAttestations(
+      checkpoint,
+      directAttestations(checkpoint, receipts).concat(fleet.atts ?? []),
+      trusted,
+      threshold,
+      opts.subjectOrg,
+    );
+    quorum = scored.quorum;
+    paths = scored.paths;
     if (opts.minWitnesses !== undefined) {
       quorum.meets_count_threshold = quorum.valid_receipts >= opts.minWitnesses;
       quorum.count_gate = `count >= ${opts.minWitnesses}`;
@@ -1062,6 +1362,13 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     known_heads_unchecked: knownHeadsUnchecked,
     verdict,
   };
+  if (fleet.report !== undefined) report.fleet_anchor = fleet.report;
+  if (opts.acceptFleetAnchor) {
+    const fleetOnly = paths.fleet.witnesses - paths.on_both;
+    report.witnessed_via =
+      verdict !== "witnessed" ? null : fleetOnly === 0 ? "direct" : paths.direct.witnesses === 0 ? "fleet" : "both";
+    report.witness_paths = paths;
+  }
   const name = VERDICT_NAME[verdict];
   const exitCode = report.split_view_unsafe && !opts.allowSubMajority ? EXIT_SPLIT_VIEW_UNSAFE : EXIT_CODES[name];
   return {

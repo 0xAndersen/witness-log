@@ -99,6 +99,7 @@ fn cosigned_dossier_reaches_witnessed() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     let r = d.verify(0.66, &ctx);
     assert_eq!(r.verdict, Verdict::Witnessed, "{r:#?}");
@@ -121,6 +122,7 @@ fn tampered_cosigned_receipts_do_not_count() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     // Each mutation must knock the verdict below Witnessed.
     type Mutation = Box<dyn Fn(&mut WitnessReceipt)>;
@@ -172,6 +174,7 @@ fn cosignature_for_a_non_canonical_origin_does_not_count() {
         known_heads: &[],
         evidence: &[],
         subject_org: None,
+        accept_fleet_anchor: false,
     };
     assert_ne!(d.verify(0.66, &ctx).verdict, Verdict::Witnessed);
 }

@@ -424,6 +424,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             witness_directory: WitnessDirectory::default(),
             key_bindings: a.binding.clone(),
             revocations: vec![],
+            fleet_anchor: None,
         };
         let ctx = VerifyContext {
             expected_identity_pubkey: Some(&a.identity_hex),
@@ -433,6 +434,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         };
         let r = dossier.verify(0.0, &ctx);
         *verdicts.entry(r.verdict.to_string()).or_default() += 1;
@@ -498,6 +500,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             witness_directory: WitnessDirectory::default(),
             key_bindings: a.binding.clone(),
             revocations: vec![],
+            fleet_anchor: None,
         };
         let r = dossier.verify(0.0, &VerifyContext::default());
         f4.check(
@@ -551,6 +554,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             witness_directory: WitnessDirectory::default(),
             key_bindings: victim.binding.clone(),
             revocations: vec![],
+            fleet_anchor: None,
         };
         let ctx = VerifyContext {
             expected_identity_pubkey: Some(&victim.identity_hex),
@@ -560,6 +564,7 @@ fn cohort_of_1000_under_realistic_conditions() {
             known_heads: &[],
             evidence: &[],
             subject_org: None,
+            accept_fleet_anchor: false,
         };
         let r = dossier.verify(0.0, &ctx);
         f5.check(

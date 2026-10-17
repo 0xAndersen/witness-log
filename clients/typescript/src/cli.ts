@@ -57,6 +57,8 @@ export interface VerifyOptions {
   revocations?: string | Record<string, unknown> | unknown[];
   /** The organisation that operates this log; its own witnesses never count as independent. */
   subjectOrg?: string;
+  /** EXPERIMENTAL (RFC-0001): `--accept-fleet-anchor`; needs `subjectOrg`. */
+  acceptFleetAnchor?: boolean;
 }
 
 export interface VerifyResult {
@@ -169,6 +171,7 @@ export class WitnessLogCLI {
       if (opts.minWitnesses !== undefined) args.push("--min-witnesses", String(opts.minWitnesses));
       if (opts.allowSubMajority) args.push("--allow-sub-majority");
       if (opts.subjectOrg !== undefined) args.push("--subject-org", opts.subjectOrg);
+      if (opts.acceptFleetAnchor) args.push("--accept-fleet-anchor");
       for (const h of opts.knownHeads ?? []) args.push("--known-head", h);
       let n = 0;
       for (const e of opts.evidence ?? []) args.push("--evidence", await asFile(tmp, `evidence-${n++}.json`, e));

@@ -351,8 +351,13 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// of witness equivocation proofs (bare, or as `witness serve` writes
 /// them); a dossier that contradicts either is "diverged" (RFC-0002).
 /// A dossier that fails a check is "invalid".
+///
+/// `accept_fleet_anchor` (RFC-0001, EXPERIMENTAL) counts the cosigners of
+/// a fleet checkpoint that includes the dossier's checkpoint, when its
+/// `fleet_anchor` fully verifies; it needs `subject_org` (the organisation
+/// that runs the fleet log). Default False: the field is ignored.
 #[pyfunction]
-#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None, subject_org=None))]
+#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None, subject_org=None, accept_fleet_anchor=false))]
 #[allow(clippy::too_many_arguments)]
 fn verify_dossier_json(
     py: Python<'_>,
@@ -365,6 +370,7 @@ fn verify_dossier_json(
     known_heads: Option<Vec<String>>,
     evidence_json: Option<String>,
     subject_org: Option<String>,
+    accept_fleet_anchor: bool,
 ) -> PyResult<String> {
     // Parsing and verifying a long dossier is real CPU work: release the
     // GIL so other Python threads (an agent's event loop, its witnesser)
@@ -380,6 +386,7 @@ fn verify_dossier_json(
             known_heads,
             evidence_json,
             subject_org,
+            accept_fleet_anchor,
         )
     })
 }
@@ -395,6 +402,7 @@ fn verify_dossier_json_detached(
     known_heads: Option<Vec<String>>,
     evidence_json: Option<String>,
     subject_org: Option<String>,
+    accept_fleet_anchor: bool,
 ) -> PyResult<String> {
     if min_witnesses == Some(0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -476,6 +484,7 @@ fn verify_dossier_json_detached(
         known_heads: &known_heads,
         evidence: &evidence,
         subject_org: subject_org.as_deref(),
+        accept_fleet_anchor,
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)
