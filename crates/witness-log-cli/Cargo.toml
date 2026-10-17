@@ -29,9 +29,25 @@ rand = { workspace = true }
 # `witness serve`: state file names, and wiping the key buffer at init.
 sha2 = { workspace = true }
 zeroize = { workspace = true }
+# `https://` witnesses and directory URLs for the built-in client (`witness
+# submit`, `directory build --url`, `testnet`). rustls on ring with the
+# Mozilla root set compiled in, so the binary needs no system OpenSSL or CA
+# store. `--no-default-features` builds a plain-http-only binary.
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # Restore SIGPIPE's default so `witness-log explain | head` exits quietly
 # instead of panicking with a backtrace, and stop cleanly on SIGTERM so a
 # witness releases its lock on a normal stop.
 libc = "0.2"
+
+[features]
+default = ["https"]
+https = ["dep:rustls", "dep:webpki-roots"]
+
+[dev-dependencies]
+# tests/https_witness.rs: a throwaway CA and a TLS-terminating proxy in
+# front of real witnesses, to check the client's https path end to end.
+rcgen = "0.14"
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }

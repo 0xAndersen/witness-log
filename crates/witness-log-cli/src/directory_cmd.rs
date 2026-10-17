@@ -17,8 +17,8 @@ const USAGE: &str = "usage:
   witness-log directory build [--registry DIR | --url URL] [--include-project] --out trusted.json
       Collect DIR/*.json (one directory entry per file, as `witness init` prints
       them; default DIR is ./registry/witnesses) or a directory document fetched
-      from URL (http://) into {\"witnesses\": [...]}. Project-operated entries are
-      left out unless --include-project.
+      from URL (http:// or https://) into {\"witnesses\": [...]}. Project-operated
+      entries are left out unless --include-project.
   witness-log directory add <trusted.json> --vkey <c2sp vkey> --org ORG --url URL
                                            [--compute PROVIDER] [--project-operated]
       Add one witness by its C2SP cosignature verifier key (printed by `witness

@@ -42,7 +42,7 @@ instead, which takes several minutes on first boot. The Docker image
 
 ## 0. Where to run it (free, always-on)
 
-The witness is a ~2 MB binary (glibc 2.34+) that needs a few MB of RAM, a few MB of
+The witness is a ~4 MB binary (glibc 2.34+) that needs a few MB of RAM, a few MB of
 disk that must persist, and an inbound HTTPS port. Anything that sleeps
 without disk or wipes its disk on redeploy is unsuitable: a witness that
 forgets what it cosigned will contradict itself. Known-good free options:

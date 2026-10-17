@@ -12,8 +12,9 @@ protocol the transparency-log ecosystem already uses.
 ## What it costs
 
 - **Money:** nothing on the free hosting options below.
-- **Machine:** a ~2 MB binary (the v0.3.5 x86_64 release binary is
-  1,912,072 bytes); about 3–4 MB of resident memory idle (measured RSS of
+- **Machine:** a ~4 MB binary (the 0.6.0 x86_64 build is about 4.4 MB,
+  most of the growth since 0.3.5's 1.9 MB being the TLS client for
+  `https://` witnesses); about 3–4 MB of resident memory idle (measured RSS of
   `witness-log 0.3.5 witness serve` on Linux) and roughly 5 MB per witness
   under load (100 witnesses in ~500 MB in the 1,000-agent swarm run,
   `examples/swarm/README.md`); a state directory that starts at a few KB and
