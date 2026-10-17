@@ -251,6 +251,98 @@ def test_a_retry_right_after_a_crash_reaches_the_restarted_server(tmp_path):
         t.join(15)
 
 
+def test_a_call_sent_during_a_restart_runs_once_with_its_real_result_journaled(tmp_path, monkeypatch):
+    """0.5.0 (security review 3, F4): a call that arrived after the old
+    server's stdout closed, but before the proxy had taken stock of the
+    calls the dead server had, was counted among them. Once the replacement
+    was up the call was sent to it and ran, while the proxy also answered
+    the host with an error, journaled an is_error result, and dropped the
+    real answer; a host retry ran it twice. Invariant: a call is journaled
+    as failed only if no server ran it to an answer, and every answered
+    call's real result is journaled and reaches the host. Deterministic:
+    the old server keeps running, stdout closed, until the test lets it
+    exit."""
+    from witness_log.mcp_proxy import Proxy
+
+    effects = tmp_path / "effects.jsonl"
+    let_it_exit = tmp_path / "let-the-old-server-exit"
+    monkeypatch.setenv("FAKE_MCP_EFFECTS", str(effects))
+    host_r, proxy_in = os.pipe()
+    proxy_out, host_w = os.pipe()
+    to_proxy = os.fdopen(proxy_in, "wb", buffering=0)
+    from_proxy = os.fdopen(proxy_out, "rb", buffering=0)
+    journal = str(tmp_path / "inproc.jsonl")
+    proxy = Proxy(
+        FAKE,
+        journal,
+        "fake",
+        max_restarts=3,
+        stdin=os.fdopen(host_r, "rb", buffering=0),
+        stdout=os.fdopen(host_w, "wb", buffering=0),
+    )
+    t = threading.Thread(target=proxy.run, daemon=True)
+    t.start()
+    responses = {}
+
+    def read():
+        for line in iter(from_proxy.readline, b""):
+            m = json.loads(line)
+            responses[m.get("id")] = m
+
+    threading.Thread(target=read, daemon=True).start()
+
+    def send(m):
+        to_proxy.write((json.dumps(m) + "\n").encode())
+
+    def wait_for(cond, what):
+        end = time.monotonic() + 15
+        while not cond():
+            assert time.monotonic() < end, f"timed out waiting until {what}"
+            time.sleep(0.005)
+
+    pay = {"effect": "pay", "amount": 100}
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}})
+        wait_for(lambda: 1 in responses, "initialize is answered")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "echo", "arguments": {"close_stdout_then_exit_when": str(let_it_exit)}}})
+        wait_for(lambda: not proxy._ready.is_set(), "the proxy sees the server's stdout close")
+        send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "echo", "arguments": pay}})
+        wait_for(lambda: "3" in proxy._pending, "call 3 is pending, waiting for the restart")
+        let_it_exit.write_text("")
+        wait_for(lambda: 2 in responses and 3 in responses, "both calls are answered")
+    finally:
+        to_proxy.close()
+        t.join(15)
+
+    ran = [json.loads(line) for line in effects.read_text().splitlines()]
+    assert [r["id"] for r in ran] == [3], ran  # ran once, on the replacement
+    assert "exited with code 3" in responses[2]["error"]["message"]
+    assert "result" in responses[3], responses[3]  # 0.5.0: an error, though it ran
+    assert json.loads(responses[3]["result"]["content"][0]["text"]) == pay
+
+    log = wl.open(journal)
+    results = [leaf for leaf in json.loads(log.leaves_json()) if leaf["leaf_type"] == 2]
+
+    def journaled(intent_index, hashed, is_error):
+        payload = wl.canonical_json(
+            {
+                "profile": PROFILE,
+                "server": "fake",
+                "tool": "echo",
+                "intent_index": intent_index,
+                "result_sha256": hashlib.sha256(wl.canonical_json(hashed)).hexdigest(),
+                "is_error": is_error,
+            }
+        )
+        return [leaf["index"] for leaf in results if wl.verify_disclosure(leaf, payload, log.disclose(leaf["index"])["salt"])]
+
+    assert len(results) == 2
+    assert len(journaled(0, {"error": responses[2]["error"]}, True)) == 1  # the call the dead server had
+    assert len(journaled(1, responses[3]["result"], False)) == 1  # the real result of the call that ran
+    log.close()
+
+
 def _witness(i, delay=0.0):
     svc = wl.WitnessService.new(f"w{i}.test/px", os.urandom(32), None, True)
 

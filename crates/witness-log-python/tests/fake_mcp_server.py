@@ -3,7 +3,13 @@ over newline-delimited stdin/stdout. One tool, `echo`, which returns its
 arguments; `{"crash": true}` makes the server exit mid-call, `{"sleep":
 s}` delays the answer, `{"fail": true}` returns isError, `{"rpc_error":
 true}` returns a JSON-RPC error. Each start writes its PID to the file
-named by FAKE_MCP_PIDFILE (if set) so a test can see restarts."""
+named by FAKE_MCP_PIDFILE (if set) so a test can see restarts.
+
+`{"close_stdout_then_exit_when": path}` closes stdout and exits (code 3)
+only once `path` exists, like a server still shutting down after its
+output closed. Every call with an `"effect"` argument is appended to the
+file named by FAKE_MCP_EFFECTS (if set) before it is answered, so a test
+can see which calls ran, and where."""
 
 from __future__ import annotations
 
@@ -61,6 +67,16 @@ def main() -> None:
             args = (msg.get("params") or {}).get("arguments") or {}
             if args.get("crash"):
                 os._exit(3)
+            if args.get("close_stdout_then_exit_when"):
+                sys.stdout.close()
+                os.close(1)
+                deadline = time.monotonic() + 30
+                while not os.path.exists(args["close_stdout_then_exit_when"]) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                os._exit(3)
+            if args.get("effect") and os.environ.get("FAKE_MCP_EFFECTS"):
+                with open(os.environ["FAKE_MCP_EFFECTS"], "a") as f:
+                    f.write(json.dumps({"pid": os.getpid(), "id": mid, "effect": args["effect"]}) + "\n")
             if args.get("sleep"):
                 time.sleep(float(args["sleep"]))
             if args.get("rpc_error"):
