@@ -806,6 +806,11 @@ struct PyJournaledLog {
     /// Optional erasable payload sidecar (`witness_log.open(...,
     /// store_payloads=True)`), so `disclose` can hand out the payload
     /// along with its salt. `None` unless enabled.
+    ///
+    /// Lock order: `payloads` before `inner`, always. An append holds
+    /// `payloads` from before its leaf exists until its record is written,
+    /// and `forget` holds it from before the salt is erased until the
+    /// record is gone, so neither can run inside the other.
     payloads: Mutex<Option<PayloadStore>>,
 }
 
@@ -818,17 +823,82 @@ impl PyJournaledLog {
         }
     }
 
-    /// Append `payload` to the payload sidecar if one is enabled. Called
-    /// after the leaf exists, so a sidecar failure never loses a leaf;
-    /// it surfaces as an error on this call instead.
-    fn store_payload(&self, py: Python<'_>, index: u64, payload: &[u8]) -> PyResult<()> {
-        with_lock_py(py, &self.payloads, |s| match s.as_mut() {
-            Some(store) => store
-                .record(index, payload)
-                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}"))),
-            None => Ok(()),
+    /// Run `f` with the payload sidecar and the open journal both locked,
+    /// in the one order every caller uses (`payloads`, then `inner`).
+    /// Like `with_lock_py`: both are taken without waiting when free;
+    /// otherwise the wait, `f` and the release all happen with the GIL
+    /// released.
+    fn with_store_and_j<R: Send>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(
+                &mut Option<PayloadStore>,
+                &mut witness_log_core::journal::JournaledLog,
+            ) -> PyResult<R>
+            + Send,
+    ) -> PyResult<R> {
+        let run = |store: &mut Option<PayloadStore>,
+                   g: &mut Option<witness_log_core::journal::JournaledLog>| {
+            match g.as_mut() {
+                None => Err(PyIOError::new_err(CLOSED_JOURNAL)),
+                Some(j) => f(store, j),
+            }
+        };
+        if let Some(mut store) = try_lock(&self.payloads) {
+            if let Some(mut g) = try_lock(&self.inner) {
+                return run(&mut store, &mut g);
+            }
+        }
+        py.detach(|| {
+            let mut store = lock(&self.payloads);
+            let mut g = lock(&self.inner);
+            let r = run(&mut store, &mut g);
+            drop(g);
+            drop(store);
+            r
         })
     }
+
+    /// Append a payload-carrying leaf and, if a sidecar is enabled, its
+    /// payload record, as one step under both locks: a concurrent
+    /// `forget(i)` runs before leaf `i` exists or after its record does.
+    /// 0.5.0 appended the leaf, then took the sidecar lock separately,
+    /// releasing the GIL in between when it was busy; a `forget(i)` there
+    /// found no record, returned True, and the record was written after
+    /// it (security review 3, F7). A sidecar failure still never loses
+    /// the leaf; it surfaces as an error on this call.
+    fn append_with_payload(
+        &self,
+        py: Python<'_>,
+        payload: &[u8],
+        append: fn(&mut witness_log_core::journal::JournaledLog, &[u8]) -> std::io::Result<u64>,
+    ) -> PyResult<u64> {
+        self.with_store_and_j(py, |store, j| {
+            let idx = append(j, payload).map_err(io_err)?;
+            if let Some(s) = store.as_mut() {
+                s.record(idx, payload)
+                    .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+            }
+            Ok(idx)
+        })
+    }
+}
+
+fn redaction_targets(log: &CoreLog) -> impl Iterator<Item = u64> + '_ {
+    log.leaves()
+        .iter()
+        .filter(|l| l.leaf_type == witness_log_core::leaf::LeafType::Redaction.tag())
+        .filter_map(|l| l.redacted_index)
+}
+
+/// Every index a Redaction leaf in `log` names.
+fn redacted_indices(log: &CoreLog) -> Vec<u64> {
+    redaction_targets(log).collect()
+}
+
+/// Whether a Redaction leaf in `log` names `index`.
+fn is_redacted(log: &CoreLog, index: u64) -> bool {
+    redaction_targets(log).any(|i| i == index)
 }
 
 /// `<journal>.payloads`: one JSON line per leaf, `{"i": index, "p": hex}`,
@@ -839,6 +909,10 @@ impl PyJournaledLog {
 struct PayloadStore {
     path: std::path::PathBuf,
     file: std::fs::File,
+    /// Leaves the journal has redacted (or `forget` was called for).
+    /// `record` refuses them: defence in depth behind the lock order,
+    /// which already keeps a record from following its `forget`.
+    redacted: std::collections::HashSet<u64>,
 }
 
 impl PayloadStore {
@@ -854,11 +928,15 @@ impl PayloadStore {
         Ok(Self {
             path: std::path::PathBuf::from(path),
             file,
+            redacted: std::collections::HashSet::new(),
         })
     }
 
     fn record(&mut self, index: u64, payload: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
+        if self.redacted.contains(&index) {
+            return Ok(());
+        }
         let line = serde_json::json!({"i": index, "p": hex::encode(payload)});
         writeln!(self.file, "{line}")
     }
@@ -888,11 +966,18 @@ impl PayloadStore {
     }
 
     fn get(&self, index: u64) -> std::io::Result<Option<Vec<u8>>> {
+        if self.redacted.contains(&index) {
+            return Ok(None);
+        }
         Ok(self
             .records()?
             .into_iter()
             .rfind(|(i, _)| *i == index)
             .map(|(_, p)| p))
+    }
+
+    fn mark_redacted(&mut self, indices: &[u64]) {
+        self.redacted.extend(indices.iter().copied());
     }
 
     /// Drop every record for an index in `indices`. Returns whether any
@@ -1109,19 +1194,25 @@ impl PyJournaledLog {
     }
 
     fn append_intent(&self, py: Python<'_>, payload: &[u8]) -> PyResult<u64> {
-        let idx = self.with_j(py, |j| j.append_intent(payload).map_err(io_err))?;
-        self.store_payload(py, idx, payload)?;
-        Ok(idx)
+        self.append_with_payload(
+            py,
+            payload,
+            witness_log_core::journal::JournaledLog::append_intent,
+        )
     }
     fn append_result(&self, py: Python<'_>, payload: &[u8]) -> PyResult<u64> {
-        let idx = self.with_j(py, |j| j.append_result(payload).map_err(io_err))?;
-        self.store_payload(py, idx, payload)?;
-        Ok(idx)
+        self.append_with_payload(
+            py,
+            payload,
+            witness_log_core::journal::JournaledLog::append_result,
+        )
     }
     fn append_memory(&self, py: Python<'_>, payload: &[u8]) -> PyResult<u64> {
-        let idx = self.with_j(py, |j| j.append_memory(payload).map_err(io_err))?;
-        self.store_payload(py, idx, payload)?;
-        Ok(idx)
+        self.append_with_payload(
+            py,
+            payload,
+            witness_log_core::journal::JournaledLog::append_memory,
+        )
     }
     fn append_handoff_sent(
         &self,
@@ -1186,19 +1277,27 @@ impl PyJournaledLog {
     /// journal and the forgotten salt is removed from that file.
     fn forget(&self, py: Python<'_>, index: u64) -> PyResult<bool> {
         // Rewrites and fsyncs the salt sidecar: done with the GIL released.
+        // `payloads` is taken first (the lock order) and held until the
+        // payload record is gone, so no append's record for `index` can
+        // land after this looked for it (security review 3, F7).
         py.detach(|| {
-            let erased = {
+            let mut store = lock(&self.payloads);
+            let (erased, exists) = {
                 let mut g = lock(&self.inner);
                 let j = g.as_mut().ok_or_else(|| CLOSED_JOURNAL.to_string())?;
-                j.forget(index).map_err(|e| e.to_string())?
+                let exists = index < j.log().tree_size();
+                (j.forget(index).map_err(|e| e.to_string())?, exists)
             };
             // The payload record goes whether or not a salt was left to
             // forget: a payload with no salt is still a payload.
-            if let Some(store) = lock(&self.payloads).as_mut() {
-                store
-                    .forget(&[index])
+            if let Some(s) = store.as_mut() {
+                if exists {
+                    s.mark_redacted(&[index]);
+                }
+                s.forget(&[index])
                     .map_err(|e| format!("payload sidecar: {e}"))?;
             }
+            drop(store);
             Ok(erased)
         })
         .map_err(PyIOError::new_err::<String>)
@@ -1286,22 +1385,30 @@ impl PyJournaledLog {
         let p = path
             .map(str::to_string)
             .unwrap_or_else(|| format!("{}.payloads", self.path));
-        let mut store = PayloadStore::open(&p).map_err(io_err)?;
-        let forgotten: Vec<u64> = self.with_j(py, |j| {
-            Ok(j.log()
-                .leaves()
-                .iter()
-                .filter(|l| l.leaf_type == witness_log_core::leaf::LeafType::Redaction.tag())
-                .filter_map(|l| l.redacted_index)
-                .collect())
-        })?;
-        if !forgotten.is_empty() {
-            store
-                .forget(&forgotten)
-                .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
-        }
-        with_lock_py(py, &self.payloads, move |s| *s = Some(store));
-        Ok(())
+        // Both locks, in order, from reading the journal's redactions to
+        // installing the store: a `forget` cannot fall between the two
+        // (it would erase from no store and leave its record in this one).
+        // Rewriting the sidecar fsyncs, so the GIL is released throughout.
+        py.detach(|| {
+            let mut slot = lock(&self.payloads);
+            let forgotten = {
+                let g = lock(&self.inner);
+                let j = g
+                    .as_ref()
+                    .ok_or_else(|| PyIOError::new_err(CLOSED_JOURNAL))?;
+                redacted_indices(j.log())
+            };
+            let mut store = PayloadStore::open(&p).map_err(io_err)?;
+            if !forgotten.is_empty() {
+                store
+                    .forget(&forgotten)
+                    .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}")))?;
+            }
+            store.mark_redacted(&forgotten);
+            *slot = Some(store);
+            drop(slot);
+            Ok(())
+        })
     }
 
     /// The payload sidecar's path, or `None` when none is enabled.
@@ -1313,8 +1420,11 @@ impl PyJournaledLog {
 
     /// The payload stored for leaf `index`, or `None` when no sidecar is
     /// enabled, the leaf was appended without one, or it was forgotten.
+    /// A redacted leaf gets `None` even if a record for it is somehow in
+    /// the file (0.5.0 could leave one there: security review 3, F7).
     fn payload<'py>(&self, py: Python<'py>, index: u64) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        let got = with_lock_py(py, &self.payloads, |s| match s.as_ref() {
+        let got = self.with_store_and_j(py, |s, j| match s.as_ref() {
+            Some(_) if is_redacted(j.log(), index) => Ok(None),
             Some(store) => store
                 .get(index)
                 .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}"))),

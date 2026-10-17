@@ -119,6 +119,85 @@ def test_payload_store_survives_resume_and_drops_redacted_records(tmp_path):
     assert b"drop".hex() not in pathlib.Path(p + ".payloads").read_text()
 
 
+def _recorded(sidecar: str) -> set:
+    """Indices with a record in a payload sidecar. Lines that do not parse
+    (a file being zero-overwritten by `forget`) are skipped."""
+    out = set()
+    with open(sidecar, "rb") as f:
+        for line in f:
+            try:
+                out.add(json.loads(line)["i"])
+            except (ValueError, KeyError, TypeError):
+                pass
+    return out
+
+
+def test_a_leaf_is_never_visible_before_its_payload_record(tmp_path):
+    """0.5.0 (security review 3, F7): appending a leaf and recording its
+    payload were two steps, and the GIL could be released between them
+    (when the sidecar was busy). A `forget(i)` in that gap erased the salt,
+    found no record, returned True, and the late record then put the
+    payload back in `.payloads` (2 of 1,229 forgets in a two-minute race).
+    Both steps now happen under the sidecar lock, which `forget` holds from
+    erasing the salt to rewriting the sidecar. Deterministic view of the
+    gap: while one `forget` rewrites a large sidecar, an append's leaf must
+    not be visible before its record is in the file."""
+    import time
+
+    p = str(tmp_path / "a.jsonl")
+    log = wl.open(p, store_payloads=True)
+    big = os.urandom(1 << 20)
+    for _ in range(8):
+        log.append_intent(big)
+    n_before = log.tree_size()
+    holder = threading.Thread(target=log.forget, args=(0,))  # rewrites ~16 MB
+    holder.start()
+    time.sleep(0.05)
+    appender = threading.Thread(target=log.append_intent, args=(b"SECRET",))
+    appender.start()
+    early = []
+    checked = set()
+    while appender.is_alive() or holder.is_alive():
+        for j in range(n_before, log.tree_size()):
+            if j in checked:
+                continue
+            checked.add(j)
+            if json.loads(log.leaf_json(j))["leaf_type"] != 1:
+                continue  # the holder's redaction marker
+            if j not in _recorded(p + ".payloads"):
+                early.append(j)
+        time.sleep(0.001)
+    holder.join()
+    appender.join()
+    assert not early, f"leaf {early} was visible before its payload record: a forget() there leaks the payload"
+    (i,) = [j for j in range(n_before, log.tree_size()) if json.loads(log.leaf_json(j))["leaf_type"] == 1]
+    assert log.payload(i) == b"SECRET"
+    assert log.forget(i) is True
+    assert log.payload(i) is None and i not in _recorded(p + ".payloads")
+
+
+def test_payload_is_none_for_a_forgotten_leaf_even_if_a_record_lands_late(tmp_path):
+    """Defence in depth for F7 (security review 3): once leaf i is
+    redacted, `payload(i)` (and so `disclose`) returns nothing, even if a
+    record for i is in the sidecar, as the 0.5.0 race left one."""
+    p = str(tmp_path / "a.jsonl")
+    log = wl.open(p, store_payloads=True)
+    i = log.append_intent(b"SECRET")
+    keep = log.append_intent(b"public")
+    assert log.forget(i) is True
+    with open(p + ".payloads", "a") as f:  # the record the race wrote after forget
+        f.write(json.dumps({"i": i, "p": b"SECRET".hex()}) + "\n")
+    assert log.payload(i) is None
+    with pytest.raises(ValueError):
+        log.disclose(i)
+    assert log.payload(keep) == b"public"
+    log.close()
+    # And after a restart, enabling the store drops that record from disk.
+    log = wl.open(p, store_payloads=True)
+    assert log.payload(i) is None and i not in _recorded(p + ".payloads")
+    assert log.payload(keep) == b"public"
+
+
 # --- canonical_json (RFC 8785) and sorted_json --------------------------------
 
 
