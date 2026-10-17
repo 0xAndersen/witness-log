@@ -611,3 +611,73 @@ def test_corpus_15_evidence_known_heads_and_labels():
         assert (r["quorum"] or {}).get("valid_receipts") == e["valid_receipts"], c["name"]
         assert (r["quorum"] or {}).get("distinct_independent_operators") == e["independent_operators"], c["name"]
     assert seen == {2, 10, 11, 20, 30, 40}
+
+
+_WITNESS_SERVICE_THREADS = r"""
+import base64, hashlib, os, sys, threading
+from witness_log import _core
+
+tmp = sys.argv[1]
+state = os.path.join(tmp, "state.json")
+_core.WitnessService.create_state(state)
+svc = _core.WitnessService.new("w.example/w1", os.urandom(32), state, True, 1_000_000)
+bodies = []
+for i in range(int(sys.argv[2])):
+    j = _core.JournaledLog.create_ephemeral(os.path.join(tmp, f"log{i}.jsonl"))
+    j.append_intent(b"x")
+    bodies.append(j.add_checkpoint_body(0))
+    j.close()
+stop = False
+
+def handle():
+    for b in bodies:
+        st, _, _ = svc.handle_add_checkpoint_http(b)
+        assert st == 200, st
+
+def count():
+    while not stop:
+        svc.log_count()
+
+def add():
+    i = 0
+    while not stop:
+        name = f"other.example/log{i}"
+        pk = os.urandom(32)
+        kid = hashlib.sha256(name.encode() + b"\n" + bytes([1]) + pk).digest()[:4]
+        assert svc.add_log(name, f"{name}+{kid.hex()}+{base64.b64encode(bytes([1]) + pk).decode()}")
+        i += 1
+
+workers = [threading.Thread(target=f, daemon=True) for f in (count, count, add)]
+h = threading.Thread(target=handle, daemon=True)
+for t in workers + [h]:
+    t.start()
+h.join()
+stop = True
+for t in workers:
+    t.join()
+print("ok", svc.log_count())
+"""
+
+
+def test_witness_service_threads_never_deadlock_between_the_gil_and_its_lock(tmp_path):
+    """0.5.0 (security review 3, F3): `add_log` waited for the service's
+    lock while holding the GIL, and `log_count` waited for the GIL while
+    holding that lock (a lock taken with the GIL released was kept while
+    the GIL was retaken). With `handle_add_checkpoint_http` holding the
+    lock across an fsync, a witness serving `log_count` and POSTs while
+    `add_log` ran froze the whole process within about a second. Run in a
+    child process, since a deadlocked one cannot be interrupted."""
+    import subprocess
+    import sys
+
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", _WITNESS_SERVICE_THREADS, str(tmp_path), "150"],
+            capture_output=True,
+            text=True,
+            timeout=60,  # about 2 s when it works
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("WitnessService deadlocked: handle_add_checkpoint_http + log_count + add_log froze the process")
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert r.stdout.startswith("ok "), r.stdout
