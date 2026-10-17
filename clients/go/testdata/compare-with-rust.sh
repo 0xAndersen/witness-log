@@ -28,7 +28,7 @@ r = json.load(open(sys.argv[4])); g = json.load(open(sys.argv[5]))
 rf = r["report"].pop("failures", None); gf = g["report"].pop("failures", None)
 ok = (rust_exit == go_exit and r["verdict"] == g["verdict"] and r["report"] == g["report"]
       and bool(rf) == bool(gf)
-      and all(r.get(k) == g.get(k) for k in ("strict", "allow_sub_majority", "exit_code")))
+      and all(r.get(k) == g.get(k) for k in ("strict", "allow_sub_majority", "exit_code", "subject_org")))
 print(("ok   " if ok else "DIFF ") + f"{label}: rust {r['verdict']} ({rust_exit}), go {g['verdict']} ({go_exit})")
 if not ok:
     for k in sorted(set(r["report"]) | set(g["report"])):
@@ -59,4 +59,8 @@ compare "2 of 4 receipts, --min-witnesses 2" "$two_of_four" --directory native/t
 compare "2 of 4 receipts, --min-witnesses 2 --allow-sub-majority" "$two_of_four" --directory native/trusted.json --min-witnesses 2 --allow-sub-majority || fail=1
 compare "2 of 4 receipts, --min-witnesses 2 --no-strict" "$two_of_four" --directory native/trusted.json --min-witnesses 2 --no-strict || fail=1
 compare "2 of 4 receipts, default threshold" "$two_of_four" --directory native/trusted.json || fail=1
+# --subject-org: the log's own operator never counts as independent.
+compare "native, --subject-org of a cosigner" native/dossier.json --directory native/trusted.json --subject-org "Example-University" || fail=1
+compare "native, --subject-org not in the directory" native/dossier.json --directory native/trusted.json --subject-org "nobody" || fail=1
+compare "2 of 4 receipts, --subject-org of a cosigner" "$two_of_four" --directory native/trusted.json --min-witnesses 2 --subject-org " example-infra-co " || fail=1
 exit $fail

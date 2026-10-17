@@ -22,6 +22,7 @@ Python bindings, MCP server, CLI.
 | use it from Java / anything else | [Other languages](Other-Languages) |
 | follow a complete worked example | [Tutorial: audit a payments agent](Tutorial-Audit-a-Payments-Agent) · [Tutorial: multi-agent handoff](Tutorial-Multi-Agent-Handoff) · [Tutorial: AP2 mandates](Tutorial-AP2-Mandates) |
 | know what WITNESSED actually proves, and read a verify report | [Verification and verdicts](Verification-and-Verdicts) |
+| gate a GitHub workflow on a verdict | [GitHub Action](GitHub-Action) (`uses: 0xAndersen/witness-log@v0.6.0`) |
 | understand the witness protocol on the wire (200/409/422) | [Witness protocol walkthrough](Witness-Protocol-Walkthrough) |
 | understand erasure, keys and sessions in depth | [Redaction explained](Redaction-Explained) · [Keys and identity](Keys-and-Identity) |
 | run a witness in two minutes (docker one-liner, cloud-init paste, binary) | [Operator onboarding](Operator-Onboarding) · [Running a witness](Running-a-Witness) · [live status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) |
@@ -31,7 +32,7 @@ Python bindings, MCP server, CLI.
 | implement the wire format in another language, or map it to SCITT | [Specification and interoperability](Spec-and-Interop) · [SCITT mapping](SCITT-Mapping) |
 | operate it in production (backups, keys, locks, scale) | [Operations](Operations) |
 | see the numbers (268 tests, 100 scenarios, 3,000 agents) | [Testing and evidence](Testing-and-Evidence) |
-| fix something that is not working | [Troubleshooting](Troubleshooting) |
+| fix something that is not working | `witness-log doctor` first, then [Troubleshooting](Troubleshooting) |
 | look up a term | [Glossary](Glossary) |
 | answers to common questions | [FAQ](FAQ) |
 | contribute, or see where it is going | [Contributing](Contributing) · [Roadmap](Roadmap) |
