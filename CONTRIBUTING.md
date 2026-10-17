@@ -21,7 +21,8 @@ binding, checkpoint signing, witness receipts, or redaction (anything in
 
 1. Regenerate the corpus: `cargo run -p witness-log-core --example generate_corpus`
    (encoding vectors 01–12) and `cargo run -p witness-log-network --example
-   generate_verdict_corpus` (verification vector 13, `13_verdicts.json`)
+   generate_verdict_corpus` (verification vector 13, `13_verdicts.json`);
+   `make corpus` runs both and fails on drift
 2. Confirm the diff against `/corpus/*.json` is either empty (no wire
    format or verdict impact) or is the intended, documented change.
 3. If the wire format changed intentionally, bump the spec version in
@@ -38,10 +39,30 @@ project — not "reads like the spec," but "passes the corpus."
 
 ## Local development
 
+`make check` runs what CI's main jobs run (rustfmt, clippy, rustdoc and
+tests; the corpus drift check; Go vet, tests and the Rust/Go parity
+script; the TypeScript tests; the Python wheel and pytest; and every doc
+block marked runnable), skipping with a message any language you do not
+have installed. `make help` lists the single-language targets. The
+repository opens in a dev container (Codespaces, or VS Code's "Reopen in
+Container") with Rust, Go, Node, Python and a venv already set up.
+
 ```bash
 cargo build --workspace
 cargo test --workspace
+make check            # or: make rust / corpus / go / ts / python / docs
+witness-log doctor    # after `cargo build -p witness-log-cli`: is this setup sound?
 ```
+
+Docs that show commands are tested: a fenced block preceded by
+`<!-- doctest -->` runs in CI exactly as written (`docs/doctest.py`
+explains the options). Mark a new quickstart block the same way, or say in
+the PR why it cannot run.
+
+Good first issues are labelled
+[`good first issue`](https://github.com/0xAndersen/witness-log/labels/good%20first%20issue);
+running a witness is one of them
+([issue #1](https://github.com/0xAndersen/witness-log/issues/1)).
 
 Python bindings (`crates/witness-log-python`) are a standalone Cargo workspace
 (so PyO3's `extension-module` feature doesn't leak into the main

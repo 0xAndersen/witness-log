@@ -1,0 +1,22 @@
+{
+  // Everything `make check` needs: Rust (with clippy and rustfmt), Go,
+  // Node and Python. Open the repository in a Codespace or with VS Code's
+  // "Reopen in Container", then run `make check`.
+  "name": "witness-log",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": { "version": "1.24" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.13" }
+  },
+  "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y -qq jq && python3 -m venv .venv && .venv/bin/pip install -q maturin pytest jsonschema && cargo build -p witness-log-cli",
+  "remoteEnv": {
+    "VIRTUAL_ENV": "${containerWorkspaceFolder}/.venv",
+    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerWorkspaceFolder}/target/debug:${containerEnv:PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "golang.go", "ms-python.python", "tamasfe.even-better-toml"]
+    }
+  }
+}
