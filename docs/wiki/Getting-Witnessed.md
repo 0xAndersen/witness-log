@@ -10,10 +10,11 @@ halves: your side (submit) and the network's side (who runs witnesses).
 The public registry is empty today (see below), so the only way to see a
 WITNESSED verdict right now is to run two witnesses under two organisation
 names yourself. This proves the mechanics, not independence. The script
-below is complete: it was run as written against 0.3.6 and the output under
-it is what it printed (keys and signatures are from that run and will
-differ on yours).
+below is complete and CI runs it as written on every commit
+(`docs/doctest.py`); the output under it is from one such run (keys and
+signatures will differ on yours).
 
+<!-- doctest: group=local -->
 ```sh
 # two witnesses, two organisation labels, two ports. `witness init` prints
 # the directory entry (JSON) on stdout and the prose on stderr.
@@ -23,12 +24,15 @@ witness-log witness init ./w2 --name w2.example.net/witness --org "Example Org B
     --url http://127.0.0.1:7382 --compute oracle-cloud > w2.json
 witness-log witness serve ./w1 --listen 127.0.0.1:7381 --open-enrollment &
 witness-log witness serve ./w2 --listen 127.0.0.1:7382 --open-enrollment &
+sleep 1                                                 # let them start listening
 jq -s '{witnesses: .}' w1.json w2.json > trusted.json   # the directory a verifier trusts
 
-# a journal to witness: any witness-log journal works. Three ways to make one:
-#   Python:  python3 -c 'import witness_log as wl; l=wl.open("agent.jsonl"); l.append_intent(b"hello"); l.append_result(b"ok"); l.sync()'
-#   Rust:    cargo run -p witness-log-core --example quickstart   (prints where it wrote its journal)
-#   CLI:     witness-log log init agent.jsonl && witness-log log append agent.jsonl --intent '{"tool":"hello"}'   (0.4.0)
+# a journal to witness: any witness-log journal works. From the CLI:
+witness-log log init agent.jsonl
+witness-log log append agent.jsonl --intent '{"tool":"hello"}'
+witness-log log append agent.jsonl --result '{"ok":true}'
+# or from Python:  python3 -c 'import witness_log as wl; l=wl.open("agent.jsonl"); l.append_intent(b"hello"); l.append_result(b"ok"); l.sync()'
+# or from Rust:    cargo run -p witness-log-core --example quickstart   (prints where it wrote its journal)
 
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json --min 2
 witness-log verify dossier.json --identity "$(jq -r .identity_pubkey dossier.json)" \

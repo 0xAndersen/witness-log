@@ -39,6 +39,7 @@ only adds conveniences on top (`open`, `step`, `canonical_json`).
 
 ## 1. Open a journal
 
+<!-- doctest: group=py -->
 ```python
 import witness_log
 
@@ -89,6 +90,7 @@ one host, not two.
 
 ## 2. Record what the agent does
 
+<!-- doctest: group=py -->
 ```python
 @witness_log.step(log)
 def transfer_funds(amount_usd: int) -> dict:
@@ -144,6 +146,7 @@ intent nor result (something the agent read or was told).
 
 ## 3. Sign a checkpoint and hand someone the proof
 
+<!-- doctest: group=py -->
 ```python
 dossier = log.to_dossier_json()
 report  = witness_log.verify_dossier_json(dossier, 0.66, log.identity_pubkey_hex())
@@ -184,6 +187,7 @@ The five verdicts and what each one proves are in
 
 ## 4. Erase one entry without breaking anything
 
+<!-- doctest: group=py -->
 ```python
 i = log.append_memory(b"contact: alice@example.com")
 log.sync()
@@ -218,8 +222,9 @@ and you have erased everything.
 **The other direction: disclosing one entry.** The same salt lets you
 prove to an auditor what one entry *was* without revealing anything else:
 
+<!-- doctest: group=py -->
 ```python
-log = witness_log.open("agent.jsonl", store_payloads=True)   # keep payloads in agent.jsonl.payloads
+log.enable_payload_store()   # keep payloads in agent.jsonl.payloads; or open(path, store_payloads=True) from the start
 i = log.append_intent(witness_log.canonical_json({"tool": "pay", "amount_usd": 250}))
 d = log.disclose(i)          # {"index", "leaf", "payload_hash", "salt", "payload"}
 # the auditor, holding your dossier and nothing else:
@@ -241,6 +246,7 @@ verifier in any language can rebuild the bytes from the JSON value.
 
 ## 5. Get witnessed: the step that turns a claim into evidence
 
+<!-- doctest: group=py before="witness-log testnet up --out directory.json" -->
 ```python
 import json
 
@@ -267,6 +273,7 @@ w.aflush(timeout)`.
 
 For a script that just wants the answer, one blocking round:
 
+<!-- doctest: group=py after="witness-log testnet down" -->
 ```python
 out = log.submit("directory.json", want=8, min=2, timeout=10)   # or: await log.asubmit(...)
 print(out["verdict"], out["cosignatures"], "/", out["contacted"])  # witnessed 2 / 2
