@@ -51,7 +51,11 @@ impl Witness {
             ])
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let entry: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         let mut child = Command::new(BIN)
             .args(["witness", "serve"])
@@ -109,9 +113,9 @@ fn pki() -> (String, Arc<rustls::ServerConfig>) {
             .unwrap();
     let leaf = leaf_params.signed_by(&leaf_key, &ca).unwrap();
 
-    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        rustls::pki_types::PrivatePkcs8KeyDer::from(leaf_key.serialize_der()),
-    );
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        leaf_key.serialize_der(),
+    ));
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -183,7 +187,9 @@ fn tls_proxy(backend: String, config: Arc<rustls::ServerConfig>) -> u16 {
 
 fn cli(args: &[&str], cwd: &Path, ca_file: Option<&Path>) -> Output {
     let mut c = Command::new(BIN);
-    c.args(args).current_dir(cwd).env_remove("WITNESS_LOG_CA_FILE");
+    c.args(args)
+        .current_dir(cwd)
+        .env_remove("WITNESS_LOG_CA_FILE");
     if let Some(ca) = ca_file {
         c.env("WITNESS_LOG_CA_FILE", ca);
     }
@@ -192,10 +198,18 @@ fn cli(args: &[&str], cwd: &Path, ca_file: Option<&Path>) -> Output {
 
 fn journal(dir: &Path, name: &str) -> String {
     let out = cli(&["log", "init", name], dir, None);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     for payload in [r#"{"tool":"settle"}"#, r#"{"ok":true}"#] {
         let out = cli(&["log", "append", name, "--intent", payload], dir, None);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     let out = cli(&["log", "info", name], dir, None);
     let info: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -227,7 +241,16 @@ fn submit_and_verify_over_https() {
 
     let identity = journal(&root, "agent.jsonl");
     let out = cli(
-        &["submit", "agent.jsonl", "--directory", "dir.json", "--out", "d.json", "--min", "2"],
+        &[
+            "submit",
+            "agent.jsonl",
+            "--directory",
+            "dir.json",
+            "--out",
+            "d.json",
+            "--min",
+            "2",
+        ],
         &root,
         Some(&ca_file),
     );
@@ -238,7 +261,15 @@ fn submit_and_verify_over_https() {
     );
 
     let out = cli(
-        &["verify", "d.json", "--identity", &identity, "--directory", "dir.json", "--json"],
+        &[
+            "verify",
+            "d.json",
+            "--identity",
+            &identity,
+            "--directory",
+            "dir.json",
+            "--json",
+        ],
         &root,
         None,
     );
@@ -251,12 +282,24 @@ fn submit_and_verify_over_https() {
     // and the failure names the reason instead of hanging or cosigning.
     journal(&root, "other.jsonl");
     let out = cli(
-        &["submit", "other.jsonl", "--directory", "dir.json", "--out", "o.json", "--min", "2"],
+        &[
+            "submit",
+            "other.jsonl",
+            "--directory",
+            "dir.json",
+            "--out",
+            "o.json",
+            "--min",
+            "2",
+        ],
         &root,
         None,
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "an untrusted certificate was accepted: {stderr}");
+    assert!(
+        !out.status.success(),
+        "an untrusted certificate was accepted: {stderr}"
+    );
     assert!(
         stderr.contains("certificate") || stderr.contains("UnknownIssuer"),
         "TLS failure not explained: {stderr}"
@@ -283,7 +326,14 @@ fn unreadable_ca_file_is_reported() {
     .unwrap();
     journal(&root, "agent.jsonl");
     let out = cli(
-        &["submit", "agent.jsonl", "--directory", "dir.json", "--min", "1"],
+        &[
+            "submit",
+            "agent.jsonl",
+            "--directory",
+            "dir.json",
+            "--min",
+            "1",
+        ],
         &root,
         Some(&root.join("missing.pem")),
     );

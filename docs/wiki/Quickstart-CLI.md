@@ -61,10 +61,11 @@ prints at the end; they are the threat model in miniature.
 | `testnet up / status / down` | three local witnesses as child processes, plus the directory file listing them | trying the whole path on one machine |
 | `log init / append / forget / export / disclose / info` | an agent's journal from the shell: create, record, erase, export, disclose one payload | agents without bindings, scripts, CI |
 | `submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory (fail-closed: majority or exit 20) | the step that reaches WITNESSED |
-| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--min-witnesses N] [--allow-sub-majority] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
+| `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--subject-org ORG] [--min-witnesses N] [--allow-sub-majority] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
 | `journal serve <journal> --listen 127.0.0.1:7390` | HTTP front for one journal: append, forget, submit, dossier | agents in any language, over loopback |
 | `directory build / add` | build `trusted.json` from `registry/witnesses/*.json`, or add one witness by its vkey | curating the directory you trust |
 | `explain [verdict]` | what each verdict proves and does not, in words | before you gate anything on a verdict |
+| `doctor [<journal>] [--directory <dir.json>] [--subject-org ORG] [--witness <dir>]` | checks a setup and prints the fix for each problem: unwitnessed leaves, a journal that contradicts its cosigned head, a directory that cannot reach WITNESSED, witnesses down or serving another key | when something does not work, before you ask |
 | `diff <a.json> <b.json>` | compare two dossiers of one log: honest growth, equivocation, or tampering | "these two copies disagree" |
 | `bind <a.json> <b.json> [--json]` | two different agents' dossiers: prove their handoff / authorization leaves commit to the same bytes and scope | multi-agent audits |
 | `witness init / serve / info / add-log / verify-evidence` | run a witness, inspect one, check an equivocation file | operators |

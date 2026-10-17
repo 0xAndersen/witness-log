@@ -4,6 +4,25 @@ Symptoms, what they mean, and what to do. Grouped by where you see them.
 Each entry explains the cause, because most of these are the system doing
 its job rather than failing.
 
+Start with `witness-log doctor` (0.6.0+). Given a journal, your directory
+and, if you run one, a witness state directory, it checks each and prints
+the command that fixes what it finds, without changing anything:
+
+```sh
+witness-log doctor agent.jsonl --directory trusted.json --subject-org "<your organisation>"
+witness-log doctor --witness ./witness          # on a witness host
+```
+
+It catches, before a submit or a verify does: a binary that cannot reach
+`https://` witnesses, a journal that contradicts the head witnesses
+cosigned (do not submit it), leaves not yet witnessed, files readable by
+other users, a stale lock, a directory with which WITNESSED is
+unreachable (fewer than two operators besides the log's own), a witness
+that is down or serves a different key than your directory lists, a
+witness that is not open enrollment, and recorded equivocation proofs.
+Exit 0 when nothing is broken (warnings allowed), 1 when something will
+not work.
+
 ## Verification
 
 **`Verdict: UNANCHORED` (exit 20) when I expected WITNESSED.**
