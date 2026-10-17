@@ -713,8 +713,10 @@ log's own operator. That is the erasure property. A verifier offered a
 "disclosure" for a redacted index MUST treat it as unverifiable, not as
 false. In Python the check is six lines of `hashlib`; the reference
 implementation exposes it as `witness_log_core::redaction::payload_hash_with_salt`,
-and a `verify_disclosure(leaf, payload, salt)` helper plus a CLI
-`disclose` command are planned for 0.4.0.
+`witness_log_core::redaction::verify_disclosure(leaf, payload, salt)`
+does the whole check (Python `witness_log.verify_disclosure`, wasm
+`verify_disclosure`), and `witness-log log disclose <journal> <index>`
+prints the leaf, payload hash and salt a verifier needs (since 0.4.0).
 
 ### 8.2 Payload bytes and canonicalisation (informative)
 
@@ -730,16 +732,15 @@ same JSON value and different SHA-256 inputs.
 For JSON the recommended canonicalisation is RFC 8785 (JSON
 Canonicalization Scheme, JCS): sorted members, no insignificant
 whitespace, fixed number and string serialisation. The Python binding's
-`canonical_json` today produces sorted keys with no whitespace but is
-**not** RFC 8785 (it escapes non-ASCII characters as `\uXXXX` where JCS
-emits UTF-8, and float formatting follows Python rather than the JCS
-number rules); the
-0.4.0 release plans to make it JCS and keep the current behaviour as
-`sorted_json`. Implementations in other languages should use a JCS
-library rather than their default JSON encoder when the bytes will be
-compared with another party's. The commerce profiles planned for 0.4.0
-(`docs/wiki/Commerce-Profile.md`) define `mandate_hash = SHA256(JCS(mandate))`
-on this basis. None of this is normative for the tree: a leaf whose
+`canonical_json` is RFC 8785 since 0.4.0; the encoding it produced before
+(sorted keys and no whitespace, but non-ASCII escaped as `\uXXXX` and
+Python's float formatting) is kept as `sorted_json` so a verifier can
+recompute the payload hash of a leaf written by an older release.
+Implementations in other languages should use a JCS library rather than
+their default JSON encoder when the bytes will be compared with another
+party's. The commerce profiles (`docs/wiki/Commerce-Profile.md`; AP2, x402
+and Verifiable Intent in `witness_log.profiles`) define
+`mandate_hash = SHA256(JCS(mandate))` on this basis. None of this is normative for the tree: a leaf whose
 payload was encoded differently is still a valid leaf; it just will not
 bind to the counterparty's.
 
@@ -906,6 +907,20 @@ exposed to §9.1's mistake. The report also states `identity_pinned`:
 that *a* log was cosigned by independent operators, not *whose*; a gate
 that cares which party it is verifying supplies `expected_identity_pubkey`
 and checks `identity_pinned` is true.
+
+### Machine-readable result
+
+`witness-log verify --json` (and the Go CLI's `--json`) prints one object
+described by `spec/verify-output.schema.json`: the verdict, the exit code,
+the inputs that were pinned (`identity_pinned`, `directory_pinned`,
+`subject_org`, the gates) and `report`, which is also the report object
+every binding returns (Python `verify_dossier_json`, wasm, Node,
+TypeScript). Fields are only ever added; an existing field keeps its name,
+type and meaning, and consumers MUST ignore fields they do not know. The
+wording of `failures` and `contradictions` entries is not part of the
+contract; whether each list is empty is. The process exit status equals
+`exit_code`. A test in the Python suite validates the reference CLI's
+output and the binding's report against the schema on every CI run.
 
 ## 9.3 C2SP interoperability
 

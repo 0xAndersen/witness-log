@@ -76,7 +76,7 @@ INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 | `--revocations <path>` | revocations you know of (one statement or an array); applied whether or not the dossier carries them |
 | `--known-head <size>:<root hex>` | a head you already trust for this identity (a checkpoint you kept, a cosignature you saw). If the dossier's first `<size>` leaves give a different root: DIVERGED. A head larger than the dossier cannot be checked and is listed in `report.known_heads_unchecked`, not an error. Repeatable |
 | `--evidence <file>` | a witness equivocation proof, as `witness serve` writes it under `evidence/` (`{"kind":"equivocation","proof":{...}}`) or a bare proof. If it verifies under the key named by the canonical origin `witness-log/<identity hex>` (the proof's own `log_vkey` must be that key), the identity signed two roots for one size: DIVERGED. A proof for another identity or signed by another key is ignored. Repeatable |
-| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `subject_org`, `report`, the inputs used |
+| `--json` | one JSON object: `verdict`, `exit_code`, `strict`, `allow_sub_majority`, `subject_org`, `report`, the inputs used; schema and stability rules in [`spec/verify-output.schema.json`](https://github.com/0xAndersen/witness-log/blob/main/spec/verify-output.schema.json) |
 | `--explain` | one line under each check: what it proves and does not |
 
 The `--json` `report` carries every check, `quorum`, `internally_consistent`,
