@@ -68,7 +68,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from . import canonical_json
 from . import open as open_journal
@@ -105,12 +105,15 @@ def _sha256(b: bytes) -> str:
 
 
 class _Pending:
-    __slots__ = ("deadline", "intent_index", "tool")
+    __slots__ = ("child", "deadline", "intent_index", "tool")
 
     def __init__(self, tool: str, intent_index: int, deadline: float) -> None:
         self.tool = tool
         self.intent_index = intent_index
         self.deadline = deadline
+        # The server process the call was written to; None until it is. A
+        # crash fails exactly the calls written to the server that died.
+        self.child: Optional[subprocess.Popen] = None
 
 
 class Proxy:
@@ -177,13 +180,32 @@ class Proxy:
             except (BrokenPipeError, ValueError, OSError):
                 pass
 
+    def _write_child_locked(self, raw: bytes) -> None:
+        """Write to the current server; the caller holds ``_child_lock``."""
+        child = self.child
+        if child is None or child.stdin is None:
+            raise BrokenPipeError("server is not running")
+        child.stdin.write(raw if raw.endswith(b"\n") else raw + b"\n")
+        child.stdin.flush()
+
     def _send_child(self, raw: bytes) -> None:
         with self._child_lock:
-            child = self.child
-            if child is None or child.stdin is None:
-                raise BrokenPipeError("server is not running")
-            child.stdin.write(raw if raw.endswith(b"\n") else raw + b"\n")
-            child.stdin.flush()
+            self._write_child_locked(raw)
+
+    def _send_call(self, key: str, raw: bytes) -> None:
+        """Write a pending ``tools/call`` to the server and note which
+        server process it went to, in one step under ``_child_lock``. The
+        supervisor takes the same lock to decide which calls the dead
+        server had, so a call is failed for a crash only if it was written
+        to the server that crashed. A call already answered (timed out
+        while waiting for a restart) is not sent at all."""
+        with self._child_lock:
+            with self._state:
+                p = self._pending.get(key)
+                if p is None:
+                    return
+                p.child = self.child
+            self._write_child_locked(raw)
 
     # -- leaves -----------------------------------------------------------------
 
@@ -385,13 +407,19 @@ class Proxy:
                 self._answer_local(msg_id, tool)
                 return
             idx = self._record_intent(tool, params.get("arguments"))
+            key = _key(msg_id)
             with self._state:
-                self._pending[_key(msg_id)] = _Pending(tool, idx, time.monotonic() + self.timeout)
+                self._pending[key] = _Pending(tool, idx, time.monotonic() + self.timeout)
+            # A call that arrives while a crashed server is being replaced
+            # waits here, unsent. In 0.5.0 it was then failed along with the
+            # calls the dead server had, although it went on to run on the
+            # replacement, whose real answer was dropped (security review 3,
+            # F4); only calls written to the dead server are failed now.
             self._ready.wait(RESTART_WAIT_S)
             try:
-                self._send_child(raw)
+                self._send_call(key, raw)
             except (BrokenPipeError, OSError) as e:
-                self._fail_call(_key(msg_id), msg_id, f"witness-log-mcp-proxy: server unavailable ({e})")
+                self._fail_call(key, msg_id, f"witness-log-mcp-proxy: server unavailable ({e})")
             return
         if method == "tools/list" and msg_id is not None:
             with self._state:
@@ -443,14 +471,23 @@ class Proxy:
             self._out.write(raw if raw.endswith(b"\n") else raw + b"\n")
             self._out.flush()
 
-    def _fail_call(self, key: str, msg_id: Any, message: str, code: int = -32000) -> None:
+    def _fail_call(self, key: str, msg_id: Any, message: str, code: int = -32000, *, may_still_reply: bool = False) -> None:
+        """Answer a pending call with an error and journal that, unless it
+        was answered already (by its reply, a timeout or a crash): each
+        call gets exactly one answer and one result leaf. With
+        ``may_still_reply`` (a timeout of a call written to a live server,
+        which may answer late) its late reply is dropped; otherwise a later
+        call that reuses the id (a host retrying after a crash) keeps its
+        own reply."""
         with self._state:
             pending = self._pending.pop(key, None)
-            if len(self._answered) > 10_000:
-                self._answered.clear()
-            self._answered.add(key)
-        if pending is not None:
-            self._record_result(pending, {"error": {"code": code, "message": message}}, True)
+            if pending is None:
+                return
+            if may_still_reply and pending.child is not None:
+                if len(self._answered) > 10_000:
+                    self._answered.clear()
+                self._answered.add(key)
+        self._record_result(pending, {"error": {"code": code, "message": message}}, True)
         self._send_client({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}})
 
     # -- supervision ----------------------------------------------------------------------
@@ -476,55 +513,84 @@ class Proxy:
             if self._closing:
                 self._ready.set()
                 return
-            with self._state:
-                dead = {k: v for k, v in self._pending.items()}
 
-            def fail_dead() -> None:
-                for key, p in dead.items():
-                    msg_id = _unkey(key)
-                    self._fail_call(key, msg_id, f"witness-log-mcp-proxy: server exited with code {code} during {p.tool}")
+            def fail(calls: Dict[str, _Pending]) -> None:
+                for key, p in calls.items():
+                    why = f"during {p.tool}" if p.child is child else f"and was not replaced; {p.tool} was not sent"
+                    self._fail_call(key, _unkey(key), f"witness-log-mcp-proxy: server exited with code {code} {why}")
 
-            if self.restarts >= self.max_restarts:
+            with self._child_lock:
+                # Under the lock every call is written with: the calls
+                # written to the dead server are exactly the ones failed
+                # below (it may have run them or not; nobody can tell). A
+                # call not yet written stays pending and goes to the
+                # replacement, which gets the host's initialize first.
+                with self._state:
+                    dead = {k: p for k, p in self._pending.items() if p.child is child}
+                self.child = None
+                if self.restarts < self.max_restarts:
+                    self.restarts += 1
+                    sys.stderr.write(
+                        f"witness-log-mcp-proxy: server exited with code {code}; restarting ({self.restarts}/{self.max_restarts})\n"
+                    )
+                    self._spawn()
+                    self._replay_init_locked()
+                    restarted = True
+                else:
+                    restarted = False
+            if not restarted:
                 sys.stderr.write(
                     f"witness-log-mcp-proxy: server exited with code {code}; restart limit ({self.max_restarts}) reached\n"
                 )
-                # Decide the exit status and make the journal durable before
-                # the host hears about the failed calls: once it does it may
-                # close stdin, and the main thread's exit must not report
-                # success for a proxy that gave up on its server.
-                self._closing = True
-                self._exit_code = code if isinstance(code, int) and code > 0 else 1
-                try:
-                    self.log.sync()
-                except OSError:
-                    pass
-                self._ready.set()
-                fail_dead()
-                try:
-                    self._in.close()
-                except (OSError, ValueError):
-                    pass
-                os._exit(self._exit_code)
-            self.restarts += 1
-            sys.stderr.write(f"witness-log-mcp-proxy: server exited with code {code}; restarting ({self.restarts}/{self.max_restarts})\n")
-            with self._child_lock:
-                self._spawn()
-            if self._init_request is not None:
-                try:
-                    init = json.loads(self._init_request)
-                    with self._state:
-                        self._local_ids.add(_key(init.get("id")))
-                    self._send_child(self._init_request)
-                    if self._initialized_note is not None:
-                        self._send_child(self._initialized_note)
-                except (OSError, ValueError) as e:
-                    sys.stderr.write(f"witness-log-mcp-proxy: could not re-initialize the server: {e}\n")
+                self._give_up(code, fail)
             # Only now tell the host its in-flight calls failed: it usually
             # retries at once, and before 0.5.0 that retry could reach the
             # dead server's pipe ("server unavailable") because the error
             # went out before the replacement was running.
             self._ready.set()
-            fail_dead()
+            fail(dead)
+
+    def _replay_init_locked(self) -> None:
+        """Replay the host's ``initialize`` and ``notifications/initialized``
+        to a new server; the caller holds ``_child_lock``, so no call can
+        reach the server before them."""
+        if self._init_request is None:
+            return
+        try:
+            init = json.loads(self._init_request)
+            with self._state:
+                self._local_ids.add(_key(init.get("id")))
+            self._write_child_locked(self._init_request)
+            if self._initialized_note is not None:
+                self._write_child_locked(self._initialized_note)
+        except (OSError, ValueError) as e:
+            sys.stderr.write(f"witness-log-mcp-proxy: could not re-initialize the server: {e}\n")
+
+    def _give_up(self, code: Any, fail: Callable[[Dict[str, _Pending]], None]) -> None:
+        """No server will run again: fail every pending call and exit."""
+        # Decide the exit status and make the journal durable before the
+        # host hears about the failed calls: once it does it may close
+        # stdin, and the main thread's exit must not report success for a
+        # proxy that gave up on its server.
+        self._closing = True
+        self._exit_code = code if isinstance(code, int) and code > 0 else 1
+        try:
+            self.log.sync()
+        except OSError:
+            pass
+        self._ready.set()
+        with self._state:
+            every = dict(self._pending)
+        fail(every)
+        try:
+            self.log.sync()
+        except OSError:
+            pass
+        try:
+            self._in.close()
+        except (OSError, ValueError):
+            pass
+        os._exit(self._exit_code)
 
     def _watch_timeouts(self) -> None:
         while not self._closing:
@@ -533,7 +599,7 @@ class Proxy:
             with self._state:
                 late = [k for k, p in self._pending.items() if p.deadline <= now]
             for key in late:
-                self._fail_call(key, _unkey(key), f"witness-log-mcp-proxy: timed out after {self.timeout:g}s")
+                self._fail_call(key, _unkey(key), f"witness-log-mcp-proxy: timed out after {self.timeout:g}s", may_still_reply=True)
 
     def run(self) -> int:
         with self._child_lock:
