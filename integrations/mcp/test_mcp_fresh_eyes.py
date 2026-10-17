@@ -151,3 +151,62 @@ async def test_witnessed_dossier_is_kept_and_state_is_cli_compatible(tmp_path):
     finally:
         for h, _ in ws:
             h.shutdown()
+
+
+def _rewrite_journal(journal, n: int) -> None:
+    """What an operator holding the identity seed can do (an unsealed
+    journal keeps it in its header): replace the journal with `n` leaves of
+    different history under the same identity."""
+    log = wl.open(str(journal))
+    seed = bytes(log.identity_bytes())
+    log.close()
+    for suffix in ("", ".salts", ".lock"):
+        try:
+            os.remove(f"{journal}{suffix}")
+        except FileNotFoundError:
+            pass
+    forged = wl.open(str(journal), identity_seed=seed)
+    for i in range(n):
+        forged.append_intent(f"rewritten history {i}".encode())
+    forged.close()
+
+
+@pytest.mark.anyio
+async def test_a_journal_rewritten_or_truncated_after_witnessing_is_a_tamper_alert(tmp_path):
+    """0.5.0 (security review 3, F2): verify_chain_integrity passed the
+    witnessed head as a known head only when the journal already
+    reproduced it, so the check could never fire: a journal rewritten after
+    witnessing verified with no alert and `witnessed_size` disappeared. The
+    witnessed head is now read from disk unfiltered."""
+    ws = [_witness(i) for i in range(2)]
+    d = {"witnesses": [e for _, e in ws]}
+    home = tmp_path / "home"
+    journal = home / "a" / "journal.jsonl"
+    try:
+        async with Client(_params(home)) as c:
+            await c.call_tool("initialize_witness_chain", {"session_id": "a"})
+            for i in range(3):
+                await c.call_tool("append_audit_step", {"session_id": "a", "intent": f"step {i}", "tool_name": "t"})
+            sub = _data(await c.call_tool("submit_to_witnesses", {"session_id": "a", "directory": d}))
+            assert sub["verdict"] == "witnessed"
+            size = sub["tree_size"]
+            await c.call_tool("append_audit_step", {"session_id": "a", "intent": "honest growth", "tool_name": "t"})
+            v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "a", "trusted_directory": d}))
+            assert v["verdict"] == "consistent_unwitnessed" and v["tamper_alerts"] == []
+            assert v["witnessed_size"] == size and v["witnessed_verdict"] == "witnessed"
+
+        _rewrite_journal(journal, size + 5)  # rewritten, and longer than the witnessed head
+        async with Client(_params(home)) as c:
+            v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "a", "trusted_directory": d}))
+            assert v["verdict"] == "diverged", v
+            assert any(a.startswith("contradiction: known head") for a in v["tamper_alerts"]), v["tamper_alerts"]
+            assert v["witnessed_size"] == size and v["witnessed_verdict"] == "witnessed"
+
+        _rewrite_journal(journal, size - 2)  # truncated below the witnessed head
+        async with Client(_params(home)) as c:
+            v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "a", "trusted_directory": d}))
+            assert any("truncated after witnessing" in a for a in v["tamper_alerts"]), v["tamper_alerts"]
+            assert v["report"]["known_heads_unchecked"] and v["witnessed_size"] == size
+    finally:
+        for h, _ in ws:
+            h.shutdown()
