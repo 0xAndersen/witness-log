@@ -337,6 +337,169 @@ fn live_witnesses_cosign_refuse_forks_and_survive_a_crash() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// `logs` as the witness's `GET /` reports it.
+fn logs_reported(w: &Witness) -> u64 {
+    let out = Command::new(BIN)
+        .args(["witness", "info", &w.url])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["logs"].as_u64().unwrap()
+}
+
+fn record_name(seed: &[u8; 32]) -> String {
+    use sha2::Digest;
+    let origin = witness_log_core::c2sp::canonical_origin(
+        &ed25519_dalek::SigningKey::from_bytes(seed).verifying_key(),
+    );
+    format!(
+        "{}.json",
+        hex::encode(sha2::Sha256::digest(origin.as_bytes()))
+    )
+}
+
+/// Through 0.5.0 `serve` parsed every record in `logs/` before listening, so
+/// start-up time and memory grew with every log the witness had ever
+/// cosigned (minutes for ~25,000 logs on a cold disk: the 100,000-agent
+/// load test). Records are now read when a request for their origin
+/// arrives. A record that cannot be read must still fail closed for its
+/// log, never be taken for a log the witness has not seen.
+#[test]
+fn a_witness_starts_without_reading_its_records_and_refuses_an_unreadable_one() {
+    let root = tmpdir("lazy");
+    let mut w = Witness::init(&root, 0);
+    w.kill();
+    // 2,000 records under valid names, every one unparsable: a start that
+    // read any of them would refuse to serve.
+    let logs = w.dir.join("logs");
+    for i in 0..2000 {
+        use sha2::Digest;
+        let name = hex::encode(sha2::Sha256::digest(format!("filler-{i}").as_bytes()));
+        std::fs::write(logs.join(format!("{name}.json")), b"{ not json").unwrap();
+    }
+    // And one for a real identity, truncated as if by a bad restore.
+    let seed = [11u8; 32];
+    let broken = logs.join(record_name(&seed));
+    std::fs::write(&broken, b"{\"origin\": \"witness-log/").unwrap();
+    w.start();
+    assert_eq!(logs_reported(&w), 2001, "counted by name, none read");
+
+    let dir_path = root.join("directory.json");
+    let d = serde_json::json!({ "witnesses": [w.entry.clone()] });
+    std::fs::write(&dir_path, serde_json::to_vec(&d).unwrap()).unwrap();
+    let dir_s = dir_path.to_str().unwrap();
+    let submit = |journal_path: &Path, out: &str| {
+        run(&[
+            "witness",
+            "submit",
+            journal_path.to_str().unwrap(),
+            "--directory",
+            dir_s,
+            "--out",
+            root.join(out).to_str().unwrap(),
+            "--min",
+            "1",
+        ])
+    };
+
+    // The log whose record is unreadable is refused, not enrolled afresh at
+    // size 0 (which would let it be walked onto a fork).
+    let j = root.join("broken.jsonl");
+    journal(&j, &seed, &[b"a", b"b"]);
+    let (code, err) = submit(&j, "broken.json");
+    assert_eq!(code, 20, "{err}");
+    assert!(
+        err.contains("HTTP 500") && err.contains("unreadable"),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read(&broken).unwrap(),
+        b"{\"origin\": \"witness-log/",
+        "the record is left for the operator to restore"
+    );
+    assert_eq!(logs_reported(&w), 2001);
+
+    // Any other log is served as usual and counted.
+    let j2 = root.join("fresh.jsonl");
+    journal(&j2, &[12u8; 32], &[b"c"]);
+    let (code, err) = submit(&j2, "fresh.json");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(logs_reported(&w), 2002);
+    drop(w);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A restarted witness has nothing cached, so its refusal must come from
+/// the record file read on demand: a same-size fork after a hard kill and
+/// restart is still refused with 422, and recorded as verifiable proof.
+#[test]
+fn a_same_size_fork_after_restart_is_refused_with_evidence() {
+    let root = tmpdir("restart-fork");
+    let mut w = Witness::init(&root, 0);
+    let dir_path = root.join("directory.json");
+    let write_dir = |w: &Witness| {
+        let d = serde_json::json!({ "witnesses": [w.entry.clone()] });
+        std::fs::write(&dir_path, serde_json::to_vec(&d).unwrap()).unwrap();
+    };
+    write_dir(&w);
+    let dir_s = dir_path.to_str().unwrap().to_string();
+    let submit = |journal_path: &Path, out: &str| {
+        run(&[
+            "witness",
+            "submit",
+            journal_path.to_str().unwrap(),
+            "--directory",
+            &dir_s,
+            "--out",
+            root.join(out).to_str().unwrap(),
+            "--min",
+            "1",
+        ])
+    };
+    let seed = [13u8; 32];
+    let honest = root.join("honest.jsonl");
+    journal(&honest, &seed, &[b"e0", b"e1", b"e2", b"e3", b"e4"]);
+    let (code, err) = submit(&honest, "h.json");
+    assert_eq!(code, 0, "{err}");
+
+    w.kill();
+    w.start();
+    write_dir(&w);
+
+    let fork = root.join("fork.jsonl");
+    journal(&fork, &seed, &[b"e0", b"e1", b"rewritten", b"e3", b"e4"]);
+    let (code, err) = submit(&fork, "f.json");
+    assert_eq!(code, 20, "{err}");
+    assert!(err.contains("REFUSED (422)"), "{err}");
+    let ev: Vec<_> = std::fs::read_dir(w.dir.join("evidence"))
+        .expect("evidence dir")
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(ev.len(), 1, "one proof for the log");
+    assert_eq!(
+        ev[0].file_name().unwrap().to_str().unwrap(),
+        record_name(&seed)
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ev[0]).unwrap()).unwrap();
+    let proof: witness_log_network::tlog_witness::EquivocationProof =
+        serde_json::from_value(doc["proof"].clone()).unwrap();
+    assert!(proof.verify(), "evidence must verify independently");
+    let (code, out) = run(&["witness", "verify-evidence", ev[0].to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
+
+    // The honest history still advances on the restarted witness.
+    let mut j = JournaledLog::resume(honest.to_str().unwrap()).unwrap().0;
+    j.append_intent(b"e5").unwrap();
+    j.sync().unwrap();
+    drop(j);
+    let (code, err) = submit(&honest, "h2.json");
+    assert_eq!(code, 0, "{err}");
+    drop(w);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn witness_rejects_hostile_http() {
     use std::io::{Read, Write};

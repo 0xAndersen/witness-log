@@ -121,6 +121,7 @@ mod journal_serve;
 mod log_cmd;
 mod testnet;
 mod witness_cmd;
+mod witness_store;
 
 const HELP: &str = "witness-log — verifiable audit trails for autonomous agents
 

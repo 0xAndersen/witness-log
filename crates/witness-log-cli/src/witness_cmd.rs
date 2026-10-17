@@ -5,28 +5,33 @@
 //!
 //! 1. **Persist before cosigning.** A log's new size/root is written and
 //!    fsynced (atomic rename, then directory fsync) BEFORE the cosignature
-//!    leaves the process. If persisting fails, the in-memory record is
-//!    rolled back and the client gets a 500, never a cosignature. A
+//!    leaves the process. The decision is made on a copy of the record;
+//!    if persisting fails, the cached copy is dropped (the file stays the
+//!    authority) and the client gets a 500, never a cosignature. A
 //!    witness that cosigns, crashes and restarts with older state can be
 //!    walked onto a fork -- this is the one bug a witness must not have.
 //! 2. **One process per state directory.** A lock file stops two
 //!    witnesses sharing state (each would hold its own in-memory view
 //!    and could cosign two forks between them).
 //! 3. **Serialized decisions.** All add-checkpoint handling runs under one
-//!    mutex, so the size check and the persist are atomic (spec: "to
-//!    prevent a rollback race").
+//!    mutex, so reading a log's record, the size check and the persist are
+//!    atomic (spec: "to prevent a rollback race").
 //! 4. **Bounded everything.** See `http.rs` for request limits; open
-//!    enrollment is capped in total logs and per-client rate.
+//!    enrollment is capped in total logs and per-client rate. Records are
+//!    read on demand with a bounded cache (`witness_store.rs`), so startup
+//!    time and memory do not grow with the number of logs witnessed.
 //!
 //! State layout (`<dir>`):
 //!   witness.key    32-byte Ed25519 seed, hex, mode 0600
 //!   witness.json   key name, operator org, public URL, compute provider
-//!   logs/<sha256(origin)>.json   one record per witnessed log
+//!   logs/<sha256(origin)>.json   one record per witnessed log, read when a
+//!                  request for that origin arrives
 //!   evidence/<sha256(origin)>.json  proven equivocation (two log-signed
 //!                  roots for one size) -- self-contained, publishable
 //!   witness.lock   held while serving
 
 use crate::http::{self, Request, Response};
+use crate::witness_store::{persist_record, record_path, LogStore, DEFAULT_CACHE_CAPACITY};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,8 +47,7 @@ use witness_log_core::c2sp::{
     canonical_origin, Checkpoint, Cosignature, NoteSignature, VerifierKey,
 };
 use witness_log_network::tlog_witness::{
-    cosignature_to_receipt, AddCheckpointOutcome, AddCheckpointRequest, KnownLog, KnownLogRecord,
-    WitnessService,
+    cosignature_to_receipt, AddCheckpointOutcome, AddCheckpointRequest, KnownLog,
 };
 use witness_log_network::{Dossier, WitnessDirectory, WitnessEntry, WitnessReceipt};
 
@@ -250,13 +254,6 @@ fn atomic_write_mode(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()>
     Ok(())
 }
 
-fn record_path(dir: &Path, origin: &str) -> PathBuf {
-    dir.join("logs").join(format!(
-        "{}.json",
-        hex::encode(Sha256::digest(origin.as_bytes()))
-    ))
-}
-
 fn load_key(dir: &Path) -> Result<SigningKey, String> {
     let p = dir.join("witness.key");
     let s = fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -275,67 +272,6 @@ fn load_config(dir: &Path) -> Result<WitnessConfig, String> {
         return Err(format!("{}: invalid key_name", p.display()));
     }
     Ok(c)
-}
-
-/// Load every log record. Any unreadable or inconsistent record aborts
-/// startup: silently skipping one would reset that log to size 0 and let
-/// it be walked onto a fork.
-fn load_service(dir: &Path) -> Result<WitnessService, String> {
-    let logs_dir = dir.join("logs");
-    if !logs_dir.is_dir() {
-        // `init` creates it. Missing state with a key present means the
-        // witness's memory was deleted; starting empty would let every
-        // log it ever cosigned be walked onto a fork.
-        return Err(format!(
-            "{} is missing. This witness has a key but no record of what it cosigned; \
-             starting empty would allow forks. Restore it from backup, or run `init` \
-             in a fresh directory to start a new witness with a new key.",
-            logs_dir.display()
-        ));
-    }
-    let mut records = Vec::new();
-    for entry in fs::read_dir(&logs_dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            // Leftover temp file from a crash mid-write; the rename never
-            // happened, so the previous record is still authoritative.
-            let _ = fs::remove_file(&path);
-            continue;
-        }
-        let s = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let r: KnownLogRecord =
-            serde_json::from_str(&s).map_err(|e| format!("{}: {e}", path.display()))?;
-        if record_path(dir, &r.origin) != path {
-            return Err(format!(
-                "{}: record origin does not match its file name (tampered state?)",
-                path.display()
-            ));
-        }
-        records.push(r);
-    }
-    let state = witness_log_network::tlog_witness::WitnessState {
-        format_version: witness_log_network::tlog_witness::WitnessState::FORMAT_VERSION,
-        witness_pubkey: None, // bound through witness.json's pubkey_hex instead
-        logs: records,
-    };
-    WitnessService::from_state(&state).map_err(|e| e.to_string())
-}
-
-fn to_record(k: &KnownLog) -> KnownLogRecord {
-    KnownLogRecord {
-        origin: k.origin.clone(),
-        log_vkey: k.log_vkey.encode(),
-        tree_size: k.tree_size,
-        root_hash: hex::encode(k.root_hash),
-        checkpoint_note: k.checkpoint_note.clone(),
-    }
-}
-
-fn persist_record(dir: &Path, k: &KnownLog) -> std::io::Result<()> {
-    let json = serde_json::to_vec_pretty(&to_record(k)).map_err(std::io::Error::other)?;
-    atomic_write(&record_path(dir, &k.origin), &json)
 }
 
 // ------------------------------------------------------------------ init
@@ -471,19 +407,18 @@ fn cmd_add_log(args: &[String]) -> ExitCode {
         eprintln!("{e}");
         return ExitCode::from(1);
     }
-    let k = KnownLog {
-        origin: origin.to_string(),
-        log_vkey: vk,
-        tree_size: 0,
-        root_hash: [0u8; 32],
-        checkpoint_note: None,
-    };
+    let k = KnownLog::new(origin, vk);
     if !dir.join("witness.key").exists() {
         return usage_err("witness add-log: <dir> is not an initialised witness");
     }
     match persist_record(&dir, &k) {
         Ok(()) => {
-            eprintln!("added {origin}; restart the witness for it to take effect");
+            // `serve` reads records on demand, so a running witness picks
+            // this up on the first request for the origin. Its `GET /` log
+            // count includes it from the next start.
+            eprintln!(
+                "added {origin}; a running witness reads it on the next request for this log"
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -654,14 +589,12 @@ fn acquire_lock(dir: &Path) -> Result<Lock, String> {
 
 struct Server {
     lock: Lock,
-    /// Origins whose equivocation is already recorded this run; one proof
-    /// per log is all anyone needs.
-    evidence_recorded: std::collections::HashSet<String>,
     refused_unproven: u64,
     dir: PathBuf,
     cfg: WitnessConfig,
     key: SigningKey,
-    svc: WitnessService,
+    /// Per-log records, read on demand (bounded cache, never a full scan).
+    logs: LogStore,
     open_enrollment: bool,
     max_logs: usize,
     /// Per-client enrollment rate limit: (window start, count).
@@ -754,7 +687,9 @@ fn cmd_serve(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let svc = match load_service(&dir) {
+    // Lists logs/ by name only. Records are read when a request for their
+    // origin arrives; an unreadable one fails that request closed.
+    let logs = match LogStore::open(&dir, DEFAULT_CACHE_CAPACITY) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("refusing to start: {e}");
@@ -775,7 +710,7 @@ fn cmd_serve(args: &[String]) -> ExitCode {
     eprintln!(
         "witness {} listening on http://{bound} ({} logs, open enrollment: {})",
         cfg.key_name,
-        svc.log_count(),
+        logs.count(),
         if args.iter().any(|a| a == "--open-enrollment") {
             "on"
         } else {
@@ -784,12 +719,11 @@ fn cmd_serve(args: &[String]) -> ExitCode {
     );
     let server = Arc::new(Mutex::new(Server {
         lock,
-        evidence_recorded: std::collections::HashSet::new(),
         refused_unproven: 0,
         dir,
         cfg,
         key,
-        svc,
+        logs,
         open_enrollment: args.iter().any(|a| a == "--open-enrollment"),
         max_logs,
         enroll_rate: HashMap::new(),
@@ -827,7 +761,7 @@ fn info(server: &Arc<Mutex<Server>>) -> Response {
         "pubkey_hex": hex::encode(s.key.verifying_key().to_bytes()),
         "vkey": VerifierKey::for_cosignature(&s.cfg.key_name, &s.key.verifying_key()).encode(),
         "open_enrollment": s.open_enrollment,
-        "logs": s.svc.log_count(),
+        "logs": s.logs.count(),
         "cosigned_since_start": s.cosigned,
         "proven_equivocations_since_start": s.refused_forks,
         "refused_unproven_since_start": s.refused_unproven,
@@ -860,58 +794,91 @@ fn add_checkpoint(server: &Arc<Mutex<Server>>, req: &Request) -> Response {
         );
         std::process::exit(3);
     }
-    let mut newly_enrolled = false;
-    if s.svc.known_log(&origin).is_none() && s.open_enrollment {
-        if s.svc.log_count() >= s.max_logs {
-            return Response::text(503, "witness is at its log capacity\n").retry_after(3600);
+    // What this witness already cosigned for the origin: its record file,
+    // read now unless it is cached. A record that exists but cannot be
+    // read or trusted is NOT an unknown log -- enrolling it afresh at size
+    // 0 would cosign a fork -- so the request is refused until the
+    // operator restores the file.
+    let held = match s.logs.get(&origin) {
+        Ok(held) => held,
+        Err(e) => {
+            eprintln!(
+                "refusing {origin}: unreadable record ({e}). Not cosigning for this log until \
+                 the file is restored; do not delete it (the log would be enrolled afresh at \
+                 size 0)."
+            );
+            return Response::text(
+                500,
+                "witness state for this log is unreadable; not cosigning\n",
+            );
         }
-        let ip = http::client_key(req.peer.ip());
-        let now = Instant::now();
-        let slot = s.enroll_rate.entry(ip).or_insert((now, 0));
-        if now.duration_since(slot.0) > Duration::from_secs(60) {
-            *slot = (now, 0);
+    };
+    let (mut record, newly_enrolled) = match held {
+        Some(k) => (k, false),
+        None => {
+            let unknown = AddCheckpointOutcome::UnknownLog {
+                origin: origin.clone(),
+            };
+            if !s.open_enrollment {
+                let (text, ctype) = unknown.http_body();
+                return Response::typed(unknown.http_status(), ctype, text);
+            }
+            if s.logs.count() >= s.max_logs {
+                return Response::text(503, "witness is at its log capacity\n").retry_after(3600);
+            }
+            let ip = http::client_key(req.peer.ip());
+            let now = Instant::now();
+            let slot = s.enroll_rate.entry(ip).or_insert((now, 0));
+            if now.duration_since(slot.0) > Duration::from_secs(60) {
+                *slot = (now, 0);
+            }
+            if slot.1 >= s.enroll_per_minute {
+                let wait = 60u64
+                    .saturating_sub(now.duration_since(slot.0).as_secs())
+                    .max(1);
+                return Response::text(429, "enrollment rate limit\n").retry_after(wait);
+            }
+            let enrolled = KnownLog::from_canonical_request(&request);
+            if enrolled.is_some() {
+                slot.1 += 1;
+            }
+            // Keep the rate table bounded.
+            if s.enroll_rate.len() > 10_000 {
+                s.enroll_rate
+                    .retain(|_, (t, _)| now.duration_since(*t) <= Duration::from_secs(60));
+            }
+            match enrolled {
+                Some(k) => (k, true),
+                // The origin names its own key, so this witness DOES know
+                // which key must have signed: a failure here is a bad
+                // signature (403), not an unknown log (404).
+                None if witness_log_core::c2sp::identity_from_canonical_origin(&origin)
+                    .is_some() =>
+                {
+                    return Response::text(403, "checkpoint signature not verified\n");
+                }
+                None => {
+                    let (text, ctype) = unknown.http_body();
+                    return Response::typed(unknown.http_status(), ctype, text);
+                }
+            }
         }
-        if slot.1 >= s.enroll_per_minute {
-            let wait = 60u64
-                .saturating_sub(now.duration_since(slot.0).as_secs())
-                .max(1);
-            return Response::text(429, "enrollment rate limit\n").retry_after(wait);
-        }
-        newly_enrolled = s.svc.enroll_canonical(&request);
-        if newly_enrolled {
-            slot.1 += 1;
-        } else if witness_log_core::c2sp::identity_from_canonical_origin(&origin).is_some() {
-            // The origin names its own key, so this witness DOES know which
-            // key must have signed: a failure here is a bad signature (403),
-            // not an unknown log (404).
-            return Response::text(403, "checkpoint signature not verified\n");
-        }
-        // Keep the rate table bounded.
-        if s.enroll_rate.len() > 10_000 {
-            s.enroll_rate
-                .retain(|_, (t, _)| now.duration_since(*t) <= Duration::from_secs(60));
-        }
-    }
+    };
 
-    let previous = s.svc.known_log(&origin).cloned();
-    let outcome = s
-        .svc
-        .handle_add_checkpoint(&request, &s.cfg.key_name, &s.key, now_s());
+    // `record` is a copy: the store changes only once the advanced record
+    // is on disk, so a refusal or a failed persist leaves nothing to undo.
+    // A log enrolled by this request therefore exists only once its first
+    // cosignature is persisted; every other outcome -- including a 422 on
+    // first contact, which the final review found left a phantom log
+    // counting toward --max-logs -- leaves no trace. (A first-contact
+    // request can never be provable equivocation: the witness holds
+    // nothing to contradict.)
+    let outcome = record.handle_add_checkpoint(&request, &s.cfg.key_name, &s.key, now_s());
 
     match &outcome {
         AddCheckpointOutcome::Cosigned { .. } => {
-            let persisted = match s.svc.known_log(&origin) {
-                Some(k) => persist_record(&s.dir, k),
-                None => Err(std::io::Error::other("record vanished")),
-            };
-            if let Err(e) = persisted {
-                // Roll back and DO NOT release the cosignature.
-                match previous {
-                    Some(p) if !newly_enrolled => s.svc.set_known_log(p),
-                    _ => {
-                        s.svc.remove_log(&origin);
-                    }
-                }
+            if let Err(e) = s.logs.put(record, newly_enrolled) {
+                // DO NOT release the cosignature.
                 eprintln!("persist failed for {origin}: {e}; cosignature withheld");
                 return Response::text(500, "could not persist state; not cosigning\n");
             }
@@ -922,9 +889,7 @@ fn add_checkpoint(server: &Arc<Mutex<Server>>, req: &Request) -> Response {
             ..
         } => {
             s.refused_forks += 1;
-            if s.evidence_recorded.insert(origin.clone()) {
-                record_evidence(&s.dir, proof);
-            }
+            record_evidence(&s.dir, proof);
         }
         AddCheckpointOutcome::ConsistencyFailed { .. } => {
             // Refused, but a failing proof is not proof of a fork: anyone
@@ -933,14 +898,6 @@ fn add_checkpoint(server: &Arc<Mutex<Server>>, req: &Request) -> Response {
         }
         _ => {}
     }
-    // Enrollment is kept only once a cosignature has been persisted. Every
-    // other outcome -- including a 422 on first contact, which the final
-    // review found left a phantom in-memory log counting toward
-    // --max-logs -- drops it again. (A first-contact request can never be
-    // provable equivocation: the witness holds nothing to contradict.)
-    if newly_enrolled && !matches!(outcome, AddCheckpointOutcome::Cosigned { .. }) {
-        s.svc.remove_log(&origin);
-    }
     let (text, ctype) = outcome.http_body();
     Response::typed(outcome.http_status(), ctype, text)
 }
@@ -948,7 +905,9 @@ fn add_checkpoint(server: &Arc<Mutex<Server>>, req: &Request) -> Response {
 /// Write a proven equivocation to `evidence/<sha256(origin)>.json`. One
 /// file per log, first proof wins: one proof is all anyone needs, storage
 /// is bounded by `--max-logs` (each proof is a few KiB since checkpoint
-/// bodies are capped), and no log's evidence can crowd out another's.
+/// bodies are capped), and no log's evidence can crowd out another's. The
+/// file's existence is the record that a log's proof is already kept, so
+/// nothing about it is held in memory.
 fn record_evidence(dir: &Path, proof: &witness_log_network::tlog_witness::EquivocationProof) {
     let ev_dir = dir.join("evidence");
     let path = ev_dir.join(format!(
@@ -1476,6 +1435,284 @@ mod lock_tests {
         assert!(lock.still_ours());
         drop(lock);
         assert!(!dir.join("witness.lock").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// The request path of `serve`, in process: records read on demand, a
+/// bounded cache, and the one mutex that makes each decision atomic.
+#[cfg(test)]
+mod serve_tests {
+    use super::*;
+    use witness_log_core::merkle::{leaf_hash, MerkleTree};
+    use witness_log_network::tlog_witness::EquivocationProof;
+
+    /// A log identity and the leaves of one history it signs.
+    struct TestLog {
+        key: SigningKey,
+        leaves: Vec<String>,
+    }
+
+    impl TestLog {
+        fn new(seed: u8, leaves: &[&str]) -> Self {
+            Self {
+                key: SigningKey::from_bytes(&[seed; 32]),
+                leaves: leaves.iter().map(|l| l.to_string()).collect(),
+            }
+        }
+        fn origin(&self) -> String {
+            canonical_origin(&self.key.verifying_key())
+        }
+        fn tree(&self) -> MerkleTree {
+            let mut t = MerkleTree::new();
+            for l in &self.leaves {
+                t.append(leaf_hash(l.as_bytes()));
+            }
+            t
+        }
+        /// The add-checkpoint body for this history's head, from `old`.
+        fn body(&self, old: u64) -> Vec<u8> {
+            let t = self.tree();
+            let size = t.size();
+            let proof = if old == 0 || old == size {
+                vec![]
+            } else {
+                t.consistency_proof(old, size).unwrap()
+            };
+            self.request(old, proof)
+        }
+        fn request(&self, old: u64, proof: Vec<[u8; 32]>) -> Vec<u8> {
+            let t = self.tree();
+            let cp = Checkpoint {
+                origin: self.origin(),
+                tree_size: t.size(),
+                root_hash: t.root(),
+                extensions: vec![],
+            };
+            AddCheckpointRequest {
+                old_size: old,
+                consistency_proof: proof,
+                checkpoint_note: cp.sign(&self.key).unwrap(),
+            }
+            .to_http_body()
+            .unwrap()
+            .into_bytes()
+        }
+    }
+
+    fn witness_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "wl-serve-{tag}-{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(d.join("logs")).unwrap();
+        d
+    }
+
+    /// A `serve` over `dir` as `cmd_serve` builds it, with a record cache
+    /// of `cache` entries and `--max-logs max_logs`.
+    fn server(dir: &Path, cache: usize, max_logs: usize) -> Arc<Mutex<Server>> {
+        fs::write(
+            dir.join("witness.lock"),
+            format!("{}\n", std::process::id()),
+        )
+        .unwrap();
+        Arc::new(Mutex::new(Server {
+            lock: Lock(dir.join("witness.lock")),
+            refused_unproven: 0,
+            dir: dir.to_path_buf(),
+            cfg: WitnessConfig {
+                key_name: "w.test/witness".into(),
+                operator_org: "Test".into(),
+                public_url: "http://127.0.0.1:7380".into(),
+                compute_provider: None,
+                pubkey_hex: None,
+            },
+            key: SigningKey::from_bytes(&[42; 32]),
+            logs: LogStore::open(dir, cache).unwrap(),
+            open_enrollment: true,
+            max_logs,
+            enroll_rate: HashMap::new(),
+            enroll_per_minute: usize::MAX,
+            started: 0,
+            cosigned: 0,
+            refused_forks: 0,
+        }))
+    }
+
+    fn post(server: &Arc<Mutex<Server>>, body: Vec<u8>) -> (u16, String) {
+        let r = add_checkpoint(
+            server,
+            &Request {
+                method: "POST".into(),
+                path: "/add-checkpoint".into(),
+                body,
+                peer: "127.0.0.1:9".parse().unwrap(),
+            },
+        );
+        (r.status, String::from_utf8_lossy(&r.body).into_owned())
+    }
+
+    /// `logs` as `GET /` reports it.
+    fn info_logs(server: &Arc<Mutex<Server>>) -> u64 {
+        let r = info(server);
+        let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        v["logs"].as_u64().unwrap()
+    }
+
+    fn evidence_path(dir: &Path, origin: &str) -> PathBuf {
+        dir.join("evidence").join(format!(
+            "{}.json",
+            hex::encode(Sha256::digest(origin.as_bytes()))
+        ))
+    }
+
+    #[test]
+    fn a_log_evicted_from_the_cache_still_refuses_forks() {
+        let dir = witness_dir("evict");
+        let srv = server(&dir, 1, 100);
+        let a = TestLog::new(1, &["a0", "a1", "a2"]);
+        let (b, c) = (TestLog::new(2, &["b0"]), TestLog::new(3, &["c0"]));
+        assert_eq!(post(&srv, a.body(0)).0, 200);
+        assert_eq!(post(&srv, b.body(0)).0, 200, "evicts a");
+        assert_eq!(srv.lock().unwrap().logs.cached(), 1);
+
+        // Same size, different root: refused from the record on disk, and
+        // the two log-signed notes are kept as proof.
+        let same = TestLog::new(1, &["a0", "rewritten", "a2"]);
+        let (st, body) = post(&srv, same.body(3));
+        assert_eq!(st, 422, "{body}");
+        let doc: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence_path(&dir, &a.origin())).unwrap()).unwrap();
+        let proof: EquivocationProof = serde_json::from_value(doc["proof"].clone()).unwrap();
+        assert!(proof.verify(), "evidence must verify independently");
+
+        // Evict a again; a growing fork is refused too (not provable, so
+        // no new evidence), and the honest history still advances.
+        assert_eq!(post(&srv, c.body(0)).0, 200, "evicts a");
+        let grow = TestLog::new(1, &["a0", "rewritten", "a2", "a3"]);
+        assert_eq!(post(&srv, grow.body(3)).0, 422);
+        assert_eq!(post(&srv, c.body(1)).0, 200, "evicts a");
+        let honest = TestLog::new(1, &["a0", "a1", "a2", "a3"]);
+        assert_eq!(post(&srv, honest.body(3)).0, 200);
+        {
+            let s = srv.lock().unwrap();
+            assert_eq!((s.refused_forks, s.refused_unproven), (1, 1));
+            assert_eq!(s.logs.count(), 3);
+            assert!(s.logs.cached() <= 1);
+        }
+        let rec: serde_json::Value =
+            serde_json::from_slice(&fs::read(record_path(&dir, &a.origin())).unwrap()).unwrap();
+        assert_eq!(rec["tree_size"], 4);
+        drop(srv);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_requests_for_one_origin_are_serialized() {
+        let dir = witness_dir("race");
+        // No cache: every request reads the record from disk, so the read,
+        // the decision and the persist must all sit under the one mutex.
+        let srv = server(&dir, 0, 100);
+        let race = |logs: &[TestLog], old: u64| -> Vec<u16> {
+            std::thread::scope(|sc| {
+                let hs: Vec<_> = logs
+                    .iter()
+                    .map(|l| {
+                        let srv = &srv;
+                        sc.spawn(move || post(srv, l.body(old)).0)
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap()).collect()
+            })
+        };
+        // Sixteen different first histories for one identity.
+        let firsts: Vec<TestLog> = (0..16)
+            .map(|i| TestLog::new(7, &["shared", &format!("v{i}")]))
+            .collect();
+        let st = race(&firsts, 0);
+        assert_eq!(st.iter().filter(|&&s| s == 200).count(), 1, "{st:?}");
+        assert!(st.iter().all(|&s| s == 200 || s == 409), "{st:?}");
+        let winner = st.iter().position(|&s| s == 200).unwrap();
+
+        // Sixteen different extensions of the cosigned head.
+        let nexts: Vec<TestLog> = (0..16)
+            .map(|i| TestLog::new(7, &["shared", &format!("v{winner}"), &format!("n{i}")]))
+            .collect();
+        let st = race(&nexts, 2);
+        assert_eq!(st.iter().filter(|&&s| s == 200).count(), 1, "{st:?}");
+        assert!(st.iter().all(|&s| s == 200 || s == 409), "{st:?}");
+        let won = st.iter().position(|&s| s == 200).unwrap();
+        let rec: serde_json::Value =
+            serde_json::from_slice(&fs::read(record_path(&dir, &firsts[0].origin())).unwrap())
+                .unwrap();
+        assert_eq!(rec["root_hash"], hex::encode(nexts[won].tree().root()));
+        assert_eq!(srv.lock().unwrap().logs.count(), 1);
+        drop(srv);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn log_count_and_max_logs_come_from_names_not_contents() {
+        let dir = witness_dir("count");
+        // Fifty records `serve` must not read at startup: unparsable on
+        // purpose, so reading any of them would refuse to start.
+        for i in 0..50 {
+            let name = hex::encode(Sha256::digest(format!("filler-{i}").as_bytes()));
+            fs::write(dir.join("logs").join(format!("{name}.json")), b"not json").unwrap();
+        }
+        let srv = server(&dir, 8, 52);
+        assert_eq!(info_logs(&srv), 50);
+        assert_eq!(srv.lock().unwrap().logs.cached(), 0);
+
+        // A 422 on first contact enrolls nothing.
+        let junk = TestLog::new(3, &["x"]).request(0, vec![[0u8; 32]]);
+        assert_eq!(post(&srv, junk).0, 422);
+        assert_eq!(info_logs(&srv), 50);
+
+        assert_eq!(post(&srv, TestLog::new(4, &["y"]).body(0)).0, 200);
+        assert_eq!(post(&srv, TestLog::new(5, &["z"]).body(0)).0, 200);
+        assert_eq!(info_logs(&srv), 52);
+        // At --max-logs: no new log, but known logs are still served.
+        assert_eq!(post(&srv, TestLog::new(6, &["w"]).body(0)).0, 503);
+        assert_eq!(post(&srv, TestLog::new(4, &["y", "y1"]).body(1)).0, 200);
+        assert_eq!(info_logs(&srv), 52);
+
+        // A restart counts the same, again without reading a record.
+        drop(srv);
+        let srv = server(&dir, 8, 52);
+        assert_eq!(info_logs(&srv), 52);
+        drop(srv);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_record_is_refused_not_enrolled_afresh() {
+        let dir = witness_dir("garbage");
+        let a = TestLog::new(9, &["a0", "a1"]);
+        let path = record_path(&dir, &a.origin());
+        for broken in [&b"{ \"origin\": \"trunc"[..], b""] {
+            fs::write(&path, broken).unwrap();
+            let srv = server(&dir, 8, 100);
+            assert_eq!(info_logs(&srv), 1);
+            for old in [0, 2] {
+                let (st, body) = post(&srv, a.body(old));
+                assert_eq!(st, 500, "{body}");
+                assert!(body.contains("unreadable"), "{body}");
+            }
+            assert_eq!(fs::read(&path).unwrap(), broken, "left as it was");
+            let s = srv.lock().unwrap();
+            assert_eq!((s.cosigned, s.logs.count()), (0, 1));
+            drop(s);
+            drop(srv);
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

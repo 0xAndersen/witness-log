@@ -63,6 +63,238 @@ pub struct KnownLog {
     pub checkpoint_note: Option<String>,
 }
 
+impl KnownLog {
+    /// A log this witness has never cosigned: size 0, no note.
+    /// `log_vkey` MUST be obtained out-of-band (see
+    /// [`WitnessService::add_log`]).
+    pub fn new(origin: &str, log_vkey: VerifierKey) -> Self {
+        Self {
+            origin: origin.to_string(),
+            log_vkey,
+            tree_size: 0,
+            root_hash: [0u8; 32],
+            checkpoint_note: None,
+        }
+    }
+
+    /// Decode one persisted record. A malformed record is an error, never
+    /// a log at size 0: treating it as new would let the log be walked
+    /// onto a fork.
+    pub fn from_record(r: &KnownLogRecord) -> Result<Self, WitnessError> {
+        let log_vkey = VerifierKey::parse(&r.log_vkey)
+            .map_err(|e| WitnessError::Malformed(format!("{}: vkey: {e}", r.origin)))?;
+        let root_hash: [u8; 32] = hex::decode(&r.root_hash)
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| WitnessError::Malformed(format!("{}: root_hash", r.origin)))?;
+        Ok(Self {
+            origin: r.origin.clone(),
+            log_vkey,
+            tree_size: r.tree_size,
+            root_hash,
+            checkpoint_note: r.checkpoint_note.clone(),
+        })
+    }
+
+    /// The persisted form of this record; [`from_record`](Self::from_record)
+    /// reverses it.
+    pub fn to_record(&self) -> KnownLogRecord {
+        KnownLogRecord {
+            origin: self.origin.clone(),
+            log_vkey: self.log_vkey.encode(),
+            tree_size: self.tree_size,
+            root_hash: hex::encode(self.root_hash),
+            checkpoint_note: self.checkpoint_note.clone(),
+        }
+    }
+
+    /// A new, size-0 record for the request's log if, and only if, its
+    /// origin is a [`canonical_origin`](witness_log_core::c2sp::canonical_origin)
+    /// and the checkpoint is validly signed by the key that origin names.
+    ///
+    /// This decides only whether the request *could* be enrolled. The
+    /// caller MUST first establish that the witness holds no record for
+    /// the origin: enrolling a known log again resets it to size 0 and
+    /// lets it be walked onto a fork. [`WitnessService::enroll_canonical`]
+    /// does that check against its own map; a server that keeps records
+    /// in storage does it against storage, and must treat a record it
+    /// cannot read as known, not as absent.
+    pub fn from_canonical_request(request: &AddCheckpointRequest) -> Option<Self> {
+        use witness_log_core::c2sp::identity_from_canonical_origin;
+        let checkpoint = Checkpoint::from_note(&request.checkpoint_note).ok()?;
+        let identity = identity_from_canonical_origin(&checkpoint.origin)?;
+        let vkey = VerifierKey::for_ed25519(&checkpoint.origin, &identity);
+        request
+            .checkpoint_note
+            .verify(std::slice::from_ref(&vkey))
+            .ok()?;
+        Some(Self::new(&checkpoint.origin, vkey))
+    }
+
+    /// The `tlog-witness` protocol for this one log: decide whether to
+    /// cosign `request` given what this record holds, and advance the
+    /// record only when the outcome is
+    /// [`Cosigned`](AddCheckpointOutcome::Cosigned). Every other outcome
+    /// leaves `self` unchanged.
+    ///
+    /// [`WitnessService::handle_add_checkpoint`] is this plus the lookup
+    /// of the record by origin. A request for a different origin is
+    /// [`UnknownLog`](AddCheckpointOutcome::UnknownLog). Callers that
+    /// keep records elsewhere must serialize calls for one origin and
+    /// persist the advanced record before releasing the cosignature.
+    pub fn handle_add_checkpoint(
+        &mut self,
+        request: &AddCheckpointRequest,
+        witness_key_name: &str,
+        signing_key: &ed25519_dalek::SigningKey,
+        now_unix_seconds: u64,
+    ) -> AddCheckpointOutcome {
+        let Ok(checkpoint) = Checkpoint::from_note(&request.checkpoint_note) else {
+            return AddCheckpointOutcome::UnknownOrBadSignature;
+        };
+        if checkpoint.origin != self.origin {
+            return AddCheckpointOutcome::UnknownLog {
+                origin: checkpoint.origin,
+            };
+        }
+        self.apply(
+            request,
+            &checkpoint,
+            witness_key_name,
+            signing_key,
+            now_unix_seconds,
+        )
+    }
+
+    /// Steps 2-5 of the protocol for a request whose checkpoint names
+    /// this log (`checkpoint.origin == self.origin`).
+    fn apply(
+        &mut self,
+        request: &AddCheckpointRequest,
+        checkpoint: &Checkpoint,
+        witness_key_name: &str,
+        signing_key: &ed25519_dalek::SigningKey,
+        now_unix_seconds: u64,
+    ) -> AddCheckpointOutcome {
+        // 2. Verify the LOG's signature under the key held out-of-band.
+        //    Everything after this is about a checkpoint we know is
+        //    genuinely from this log.
+        if request
+            .checkpoint_note
+            .verify(std::slice::from_ref(&self.log_vkey))
+            .is_err()
+        {
+            return AddCheckpointOutcome::UnknownOrBadSignature;
+        }
+
+        // 3a. Request-level sanity (c2sp.org/tlog-witness, in spec order).
+        //     old size larger than the checkpoint: 400, never evidence.
+        if request.old_size > checkpoint.tree_size {
+            return AddCheckpointOutcome::StaleCheckpoint {
+                witness_size: request.old_size,
+                submitted_size: checkpoint.tree_size,
+            };
+        }
+
+        // 3. Does the submitter agree with us about where we are? If
+        //    not, tell them where we actually are so they can resubmit
+        //    with the right proof. This is a normal, expected response.
+        if request.old_size != self.tree_size {
+            return AddCheckpointOutcome::SizeMismatch {
+                witness_size: self.tree_size,
+                witness_root: self.root_hash,
+            };
+        }
+
+        // 3b. 422 cases the spec names that don't need prior state: a
+        //     proof sent from size 0 (there is nothing to prove from), and
+        //     an empty tree whose root is not SHA-256 of the empty string.
+        let malformed_claim = (request.old_size == 0 && !request.consistency_proof.is_empty())
+            || (checkpoint.tree_size == 0 && checkpoint.root_hash != empty_tree_root());
+        if malformed_claim {
+            return AddCheckpointOutcome::ConsistencyFailed {
+                witness_size: self.tree_size,
+                witness_root: self.root_hash,
+                submitted_size: checkpoint.tree_size,
+                submitted_root: checkpoint.root_hash,
+                equivocation: None,
+            };
+        }
+
+        // 4. Consistency. The new head must extend the one we hold.
+        //    A first checkpoint (witness_size 0) has nothing to extend,
+        //    so it is accepted on signature alone — the witness simply
+        //    has no prior claim to contradict.
+        if self.tree_size > 0 {
+            if checkpoint.tree_size < self.tree_size {
+                // Smaller than what we hold. Refuse, but do NOT call it
+                // equivocation: a stale genuine checkpoint looks identical
+                // and there is no proof here that could distinguish them.
+                return AddCheckpointOutcome::StaleCheckpoint {
+                    witness_size: self.tree_size,
+                    submitted_size: checkpoint.tree_size,
+                };
+            }
+            let consistent = verify_consistency(
+                self.tree_size,
+                &self.root_hash,
+                checkpoint.tree_size,
+                &checkpoint.root_hash,
+                &request.consistency_proof,
+            );
+            if !consistent {
+                // Refuse. Provable equivocation only when the log signed a
+                // different root at the very size we cosigned: then we hold
+                // two conflicting log signatures. A different size with a
+                // failing proof may be a fork or just a junk proof relayed
+                // by anyone -- refused, but not evidence.
+                let equivocation = if checkpoint.tree_size == self.tree_size
+                    && checkpoint.root_hash != self.root_hash
+                {
+                    match (
+                        &self.checkpoint_note,
+                        log_signed_only(&request.checkpoint_note, &self.log_vkey),
+                    ) {
+                        (Some(earlier), Some(conflicting)) => Some(EquivocationProof {
+                            origin: self.origin.clone(),
+                            log_vkey: self.log_vkey.encode(),
+                            earlier_note: earlier.clone(),
+                            conflicting_note: conflicting,
+                        }),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                return AddCheckpointOutcome::ConsistencyFailed {
+                    witness_size: self.tree_size,
+                    witness_root: self.root_hash,
+                    submitted_size: checkpoint.tree_size,
+                    submitted_root: checkpoint.root_hash,
+                    equivocation,
+                };
+            }
+        }
+
+        // 5. Cosign, then advance our record — atomically from the
+        //    caller's perspective, since nothing between these two
+        //    lines can fail.
+        let note_text = match checkpoint.note_text() {
+            Ok(t) => t,
+            Err(_) => return AddCheckpointOutcome::UnknownOrBadSignature,
+        };
+        let cosignature =
+            Cosignature::sign(witness_key_name, signing_key, now_unix_seconds, &note_text);
+        self.checkpoint_note = log_signed_only(&request.checkpoint_note, &self.log_vkey);
+        self.tree_size = checkpoint.tree_size;
+        self.root_hash = checkpoint.root_hash;
+        AddCheckpointOutcome::Cosigned {
+            cosignature,
+            new_size: checkpoint.tree_size,
+        }
+    }
+}
+
 /// A `tlog-witness` add-checkpoint request: a signed checkpoint note,
 /// plus a consistency proof from the witness's last known size to the
 /// new one.
@@ -452,16 +684,8 @@ impl WitnessService {
         if self.logs.contains_key(origin) {
             return false;
         }
-        self.logs.insert(
-            origin.to_string(),
-            KnownLog {
-                origin: origin.to_string(),
-                log_vkey,
-                tree_size: 0,
-                root_hash: [0u8; 32],
-                checkpoint_note: None,
-            },
-        );
+        self.logs
+            .insert(origin.to_string(), KnownLog::new(origin, log_vkey));
         true
     }
 
@@ -500,43 +724,26 @@ impl WitnessService {
     /// and nothing is enrolled from an unverified request, so junk
     /// requests cannot grow the witness's state.
     pub fn enroll_canonical(&mut self, request: &AddCheckpointRequest) -> bool {
-        use witness_log_core::c2sp::{identity_from_canonical_origin, VerifierKey};
         let Ok(checkpoint) = Checkpoint::from_note(&request.checkpoint_note) else {
             return false;
         };
         if self.logs.contains_key(&checkpoint.origin) {
             return false;
         }
-        let Some(identity) = identity_from_canonical_origin(&checkpoint.origin) else {
-            return false;
-        };
-        let vkey = VerifierKey::for_ed25519(&checkpoint.origin, &identity);
-        if request
-            .checkpoint_note
-            .verify(std::slice::from_ref(&vkey))
-            .is_err()
-        {
-            return false;
+        match KnownLog::from_canonical_request(request) {
+            Some(k) => {
+                self.logs.insert(k.origin.clone(), k);
+                true
+            }
+            None => false,
         }
-        self.add_log(&checkpoint.origin, vkey);
-        true
     }
 
     /// Snapshot of everything this witness must remember. Persist it
     /// durably BEFORE releasing a cosignature: a witness that cosigns,
     /// crashes and restarts with older state can be walked onto a fork.
     pub fn export_state(&self) -> WitnessState {
-        let mut logs: Vec<KnownLogRecord> = self
-            .logs
-            .values()
-            .map(|k| KnownLogRecord {
-                origin: k.origin.clone(),
-                log_vkey: k.log_vkey.encode(),
-                tree_size: k.tree_size,
-                root_hash: hex::encode(k.root_hash),
-                checkpoint_note: k.checkpoint_note.clone(),
-            })
-            .collect();
+        let mut logs: Vec<KnownLogRecord> = self.logs.values().map(KnownLog::to_record).collect();
         logs.sort_by(|a, b| a.origin.cmp(&b.origin));
         WitnessState {
             format_version: WitnessState::FORMAT_VERSION,
@@ -557,23 +764,8 @@ impl WitnessService {
         }
         let mut logs = HashMap::new();
         for r in &state.logs {
-            let log_vkey = VerifierKey::parse(&r.log_vkey)
-                .map_err(|e| WitnessError::Malformed(format!("{}: vkey: {e}", r.origin)))?;
-            let root_hash: [u8; 32] = hex::decode(&r.root_hash)
-                .ok()
-                .and_then(|b| b.try_into().ok())
-                .ok_or_else(|| WitnessError::Malformed(format!("{}: root_hash", r.origin)))?;
             if logs
-                .insert(
-                    r.origin.clone(),
-                    KnownLog {
-                        origin: r.origin.clone(),
-                        log_vkey,
-                        tree_size: r.tree_size,
-                        root_hash,
-                        checkpoint_note: r.checkpoint_note.clone(),
-                    },
-                )
+                .insert(r.origin.clone(), KnownLog::from_record(r)?)
                 .is_some()
             {
                 return Err(WitnessError::Malformed(format!(
@@ -603,131 +795,20 @@ impl WitnessService {
         let Ok(checkpoint) = Checkpoint::from_note(&request.checkpoint_note) else {
             return AddCheckpointOutcome::UnknownOrBadSignature;
         };
-        let Some(known) = self.logs.get(&checkpoint.origin).cloned() else {
+        let Some(known) = self.logs.get_mut(&checkpoint.origin) else {
             return AddCheckpointOutcome::UnknownLog {
                 origin: checkpoint.origin,
             };
         };
-
-        // 2. Verify the LOG's signature under the key held out-of-band.
-        //    Everything after this is about a checkpoint we know is
-        //    genuinely from this log.
-        if request
-            .checkpoint_note
-            .verify(std::slice::from_ref(&known.log_vkey))
-            .is_err()
-        {
-            return AddCheckpointOutcome::UnknownOrBadSignature;
-        }
-
-        // 3a. Request-level sanity (c2sp.org/tlog-witness, in spec order).
-        //     old size larger than the checkpoint: 400, never evidence.
-        if request.old_size > checkpoint.tree_size {
-            return AddCheckpointOutcome::StaleCheckpoint {
-                witness_size: request.old_size,
-                submitted_size: checkpoint.tree_size,
-            };
-        }
-
-        // 3. Does the submitter agree with us about where we are? If
-        //    not, tell them where we actually are so they can resubmit
-        //    with the right proof. This is a normal, expected response.
-        if request.old_size != known.tree_size {
-            return AddCheckpointOutcome::SizeMismatch {
-                witness_size: known.tree_size,
-                witness_root: known.root_hash,
-            };
-        }
-
-        // 3b. 422 cases the spec names that don't need prior state: a
-        //     proof sent from size 0 (there is nothing to prove from), and
-        //     an empty tree whose root is not SHA-256 of the empty string.
-        let malformed_claim = (request.old_size == 0 && !request.consistency_proof.is_empty())
-            || (checkpoint.tree_size == 0 && checkpoint.root_hash != empty_tree_root());
-        if malformed_claim {
-            return AddCheckpointOutcome::ConsistencyFailed {
-                witness_size: known.tree_size,
-                witness_root: known.root_hash,
-                submitted_size: checkpoint.tree_size,
-                submitted_root: checkpoint.root_hash,
-                equivocation: None,
-            };
-        }
-
-        // 4. Consistency. The new head must extend the one we hold.
-        //    A first checkpoint (witness_size 0) has nothing to extend,
-        //    so it is accepted on signature alone — the witness simply
-        //    has no prior claim to contradict.
-        if known.tree_size > 0 {
-            if checkpoint.tree_size < known.tree_size {
-                // Smaller than what we hold. Refuse, but do NOT call it
-                // equivocation: a stale genuine checkpoint looks identical
-                // and there is no proof here that could distinguish them.
-                return AddCheckpointOutcome::StaleCheckpoint {
-                    witness_size: known.tree_size,
-                    submitted_size: checkpoint.tree_size,
-                };
-            }
-            let consistent = verify_consistency(
-                known.tree_size,
-                &known.root_hash,
-                checkpoint.tree_size,
-                &checkpoint.root_hash,
-                &request.consistency_proof,
-            );
-            if !consistent {
-                // Refuse. Provable equivocation only when the log signed a
-                // different root at the very size we cosigned: then we hold
-                // two conflicting log signatures. A different size with a
-                // failing proof may be a fork or just a junk proof relayed
-                // by anyone -- refused, but not evidence.
-                let equivocation = if checkpoint.tree_size == known.tree_size
-                    && checkpoint.root_hash != known.root_hash
-                {
-                    match (
-                        &known.checkpoint_note,
-                        log_signed_only(&request.checkpoint_note, &known.log_vkey),
-                    ) {
-                        (Some(earlier), Some(conflicting)) => Some(EquivocationProof {
-                            origin: known.origin.clone(),
-                            log_vkey: known.log_vkey.encode(),
-                            earlier_note: earlier.clone(),
-                            conflicting_note: conflicting,
-                        }),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                return AddCheckpointOutcome::ConsistencyFailed {
-                    witness_size: known.tree_size,
-                    witness_root: known.root_hash,
-                    submitted_size: checkpoint.tree_size,
-                    submitted_root: checkpoint.root_hash,
-                    equivocation,
-                };
-            }
-        }
-
-        // 5. Cosign, then advance our record — atomically from the
-        //    caller's perspective, since nothing between these two
-        //    lines can fail.
-        let note_text = match checkpoint.note_text() {
-            Ok(t) => t,
-            Err(_) => return AddCheckpointOutcome::UnknownOrBadSignature,
-        };
-        let cosignature =
-            Cosignature::sign(witness_key_name, signing_key, now_unix_seconds, &note_text);
-        let note = log_signed_only(&request.checkpoint_note, &known.log_vkey);
-        if let Some(entry) = self.logs.get_mut(&checkpoint.origin) {
-            entry.tree_size = checkpoint.tree_size;
-            entry.root_hash = checkpoint.root_hash;
-            entry.checkpoint_note = note;
-        }
-        AddCheckpointOutcome::Cosigned {
-            cosignature,
-            new_size: checkpoint.tree_size,
-        }
+        // 2-5. See `KnownLog::apply`: the record is advanced only on
+        //      `Cosigned`, so a refusal leaves it exactly as it was.
+        known.apply(
+            request,
+            &checkpoint,
+            witness_key_name,
+            signing_key,
+            now_unix_seconds,
+        )
     }
 }
 
