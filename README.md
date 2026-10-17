@@ -124,6 +124,7 @@ Tessera, immudb, Signet, Microsoft AGT, Agent Receipts and SCITT, each from prim
 
 **Python**
 
+<!-- doctest: group=python before="witness-log testnet up --out trusted.json" after="witness-log testnet down" -->
 ```python
 import witness_log
 log = witness_log.open("agent.jsonl")
@@ -150,6 +151,7 @@ the agent; `WITNESS_LOG_IDENTITY_SEED_ENV` seals every journal so the key never 
 
 **CLI, no code.** Three local witnesses are enough to see every verdict on one machine:
 
+<!-- doctest: group=cli -->
 ```sh
 witness-log testnet up --out trusted.json
 witness-log log init agent.jsonl

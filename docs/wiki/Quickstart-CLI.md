@@ -40,6 +40,7 @@ and whether anyone independent saw it, are facts that come from outside.
 
 Then run the attack:
 
+<!-- doctest: group=demo exit=40 -->
 ```sh
 witness-log demo --tamper
 ```
@@ -80,13 +81,15 @@ code is in the [CLI reference](CLI-Reference).
 **From install to WITNESSED, no code.** Three local witnesses under three
 operator names are enough to see every verdict on one machine:
 
+<!-- doctest: group=testnet -->
 ```sh
 witness-log testnet up --out trusted.json          # starts 3 witnesses; writes the directory
 witness-log log init agent.jsonl                   # prints {"identity": "<hex>", ...}
 witness-log log append agent.jsonl --intent '{"tool":"transfer_funds","amount_usd":250}'
 witness-log log append agent.jsonl --result '{"status":"ok","tx_id":"tx_7ac31"}' --outcome ok
 witness-log submit agent.jsonl --directory trusted.json --out dossier.json
-witness-log verify dossier.json --identity <hex> --directory trusted.json   # exit 0
+witness-log verify dossier.json --directory trusted.json \
+  --identity "$(witness-log log info agent.jsonl | jq -r .identity)"       # exit 0
 witness-log testnet down
 ```
 
@@ -182,11 +185,13 @@ Where `trusted.json` comes from: [Getting witnessed](Getting-Witnessed) and
 under two organisation names and list their entries (`witness init`
 prints the entry as JSON on stdout; the prose goes to stderr):
 
+<!-- doctest: group=manual before="witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello" -->
 ```sh
 witness-log witness init w1 --name w1.local/w --org "Org One" --url http://127.0.0.1:7381 > w1.json
 witness-log witness init w2 --name w2.local/w --org "Org Two" --url http://127.0.0.1:7382 > w2.json
 witness-log witness serve w1 --listen 127.0.0.1:7381 --open-enrollment &
 witness-log witness serve w2 --listen 127.0.0.1:7382 --open-enrollment &
+sleep 1                                                  # give them a moment to start listening
 jq -s '{witnesses: .}' w1.json w2.json > trusted.json     # or a bare array: jq -s . w1.json w2.json
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
 witness-log verify dossier.json --identity "$(jq -r .identity_pubkey dossier.json)" --directory trusted.json   # exit 0
