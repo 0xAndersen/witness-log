@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.6.0 — UNRELEASED
+
+No wire-format, leaf-encoding or verdict-rule change for existing callers:
+every dossier verifies as it did under 0.5.0 unless the caller passes one
+of the new inputs below. Two behaviour changes for operators: the CLI now
+speaks `https://`, and a witness with a damaged record keeps serving its
+other logs instead of refusing to start.
+
+### Verification
+
+- **`--subject-org`: a log's own operator never counts as independent of
+  it.** The independence rule excluded the subject's operator only when
+  the trusted directory listed the log's own key, which an ordinary agent
+  key never is, so an organisation running both an agent and a witness
+  counted as one of its own two independent operators (two organisations,
+  each with an agent and a witness, reached WITNESSED for each other's
+  logs with one genuinely independent cosigner each). Every verifier now
+  takes the log's operator from the caller, normalised like
+  `operator_org`, and counts its witnesses as receipts but never as
+  independent operators; it can only lower a verdict. Rust
+  `VerifyContext.subject_org` and `evaluate_quorum_for_subject`; CLI
+  `--subject-org` (and a reminder when it is absent); Go
+  `Options.SubjectOrg`, `EvaluateQuorumForSubject`, `--subject-org`;
+  TypeScript and Node `subjectOrg`; wasm `subject_org`; Python
+  `verify_dossier_json(subject_org=)`; the GitHub Action's `subject-org`.
+  `verify --json` gains `subject_org`. Corpus 13 gains four cases with
+  expected independent-operator counts.
+- **`verify --json` has a schema**: `spec/verify-output.schema.json`, with
+  the stability rule written down (fields only added, consumers ignore
+  unknown ones, failure wording not part of the contract). CI validates
+  the reference CLI's output and the bindings' report against it.
+
+### CLI
+
+- **`https://` witnesses.** The built-in client refused every `https://`
+  URL, while the public registry requires `https://` and cloud-init
+  registers its witness as `https://<ip>.sslip.io`, so `witness-log
+  submit` could not reach a registered witness at all. It now speaks TLS
+  (rustls on ring, Mozilla roots compiled in; `WITNESS_LOG_CA_FILE=<pem>`
+  trusts exactly the CAs in that file instead), for `submit`, `directory
+  build --url` and `testnet`. Behind the default `https` feature. The
+  binary grows from about 2.5 to 4.4 MB.
+- **`witness-log doctor`** checks a setup and prints the fix for each
+  problem, changing nothing: whether this binary reaches `https://`
+  witnesses; whether a journal replays, is private, has a stale lock, and
+  stands behind, level with, or **contradicting** the head witnesses
+  cosigned; whether WITNESSED is reachable with a directory at all and
+  whether every witness answers with the key the directory lists; whether
+  a witness state directory is sound. Exit 0 / 1 / 2; `--json`.
+- `witness verify-evidence --help` said 30 for "not proven"; it exits 40.
+
+### Witness
+
+- **Records are read on demand.** `witness serve` no longer reads every
+  per-log record at startup: it lists `logs/` by name and loads a record
+  when its log next submits, with a 4,096-record cache. Measured: 100,000
+  logs start in about 0.5 s (was 7–10 s cold) in 3.3 MiB (was 148 MiB).
+  The on-disk format is unchanged. A record that cannot be read now fails
+  its own log closed (HTTP 500) and is never treated as a new log; before,
+  it stopped the whole witness at startup. Do not delete a damaged record
+  to clear the error: restore it (OPERATORS.md, "Start-up time and
+  memory").
+
+### Integrations
+
+- **Claude Agent SDK**: `witness_log.integrations.claude_agent_sdk`
+  (`witness_hooks(log)` is the `hooks=` value for `ClaudeAgentOptions`):
+  every tool call as an intent and a result leaf with the payloads
+  `witness-log-hook` writes, paired by `tool_use_id`, `strict=True` to deny
+  a call that could not be recorded, subagent routing with
+  `AgentJournals`. Extra `witness-log[claude-agent-sdk]` (>= 0.1.50).
+- **GitHub Action**: `uses: 0xAndersen/witness-log@v0.6.0` downloads the
+  released CLI, checks it against `SHA256SUMS`, runs `verify`, and gates
+  the job on the verdict, with outputs and a job summary
+  (docs/wiki/GitHub-Action.md).
+
+### Operators and adoption
+
+- **Three-organisation pilot**: `examples/pilot-triangle/run.py` (CLI
+  only, localhost, runs in CI) and docs/wiki/Pilot-Three-Organisations.md:
+  three organisations with one witness each is the smallest group in which
+  every member's logs reach WITNESSED without anyone else.
+  docs/outreach/founding-operators.md is the one-page ask and three email
+  drafts for recruiting the first two outside operators.
+
+### Docs and contributing
+
+- **Docs that run.** `docs/doctest.py` runs every code block marked
+  `<!-- doctest -->` in CI (13 so far: README, Quickstart-CLI,
+  Quickstart-Python, Getting-Witnessed). It found that Quickstart-Python
+  section 4 reopened a journal its own section 1 still held (OSError for
+  anyone following along), that Getting-Witnessed's "complete" script had
+  no journal, and that both hand-run witness scripts raced their
+  witnesses' startup; all fixed.
+- `make check` runs what CI's main jobs run and skips missing toolchains;
+  a dev container (Rust, Go, Node, Python) for Codespaces.
+- SPEC: the verify output contract (§9.2); three "planned for 0.4.0"
+  statements that shipped in 0.4.0 now say what exists.
+
 ## 0.5.0 — 2026-10-14
 
 Breaking. RFC-0002 is implemented: a failed check is a new verdict,

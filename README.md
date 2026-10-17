@@ -161,8 +161,12 @@ witness-log verify dossier.json --directory trusted.json
 witness-log testnet down
 ```
 
-`submit` is fail-closed: a directory majority or exit 20. Every subcommand and exit code:
+`submit` is fail-closed: a directory majority or exit 20. `witness-log doctor` checks a journal, a directory
+or a witness and prints the fix for each problem. Every subcommand and exit code:
 [CLI reference](docs/wiki/CLI-Reference.md).
+
+**CI.** `uses: 0xAndersen/witness-log@v0.6.0` verifies a dossier in a GitHub workflow and fails the job unless
+it is WITNESSED. [GitHub Action](docs/wiki/GitHub-Action.md).
 
 **Rust.** `witness-log-core` (log, journal, redaction, C2SP encoding) and `witness-log-network` (witnesses,
 quorum, dossiers, verdicts). `cargo run -p witness-log-core --example quickstart` is the whole integration in
@@ -193,6 +197,8 @@ docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witnes
 Or paste [`deploy/witness/cloud-init.yaml`](deploy/witness/cloud-init.yaml) into a new VM and it comes up with
 TLS and registers itself; the `deploy-fleet` workflow does that for N servers from one cloud token. A witness
 never sees payloads, only hashes, and a hundred witnesses under one organisation count as one voice.
+Three organisations that each run one witness and exchange directory entries reach WITNESSED for each
+other's agents without anyone else: [Pilot: three organisations](docs/wiki/Pilot-Three-Organisations.md).
 [Operator onboarding](docs/wiki/Operator-Onboarding.md) · [`OPERATORS.md`](deploy/witness/OPERATORS.md) ·
 live [status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) of every registered witness.
 
