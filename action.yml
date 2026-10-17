@@ -58,6 +58,10 @@ inputs:
     description: Path to revocation statements you know of (`--revocations`).
     required: false
     default: ""
+  subject-org:
+    description: "The organisation that operates the log being verified (`--subject-org`, witness-log 0.6.0 or later). Its own witnesses then never count as independent operators; without it, an operator that also runs a witness in your directory counts as independent of itself."
+    required: false
+    default: ""
   allow-sub-majority:
     description: "`true` accepts WITNESSED from fewer than a strict majority of the directory as exit 0 (`--allow-sub-majority`)."
     required: false
@@ -311,6 +315,7 @@ runs:
         WL_KNOWN_HEADS: ${{ inputs.known-heads }}
         WL_EVIDENCE: ${{ inputs.evidence }}
         WL_REVOCATIONS: ${{ inputs.revocations }}
+        WL_SUBJECT_ORG: ${{ inputs.subject-org }}
         WL_ALLOW_SUB_MAJORITY: ${{ inputs.allow-sub-majority }}
         WL_FAIL_ON: ${{ inputs.fail-on }}
       run: |
@@ -337,6 +342,7 @@ runs:
         min_witnesses=$(trim "${WL_MIN_WITNESSES:-}")
         threshold=$(trim "${WL_THRESHOLD:-}")
         revocations=$(trim "${WL_REVOCATIONS:-}")
+        subject_org=$(trim "${WL_SUBJECT_ORG:-}")
         allow_sub=$(lower "$(trim "${WL_ALLOW_SUB_MAJORITY:-}")")
         fail_on=$(lower "$(trim "${WL_FAIL_ON:-}")")
         [ -n "$fail_on" ] || fail_on=not-witnessed
@@ -352,6 +358,12 @@ runs:
           *) input_error="fail-on must be not-witnessed, invalid-or-diverged or never, not '$fail_on'" ;;
         esac
         [ -n "$dossier" ] || input_error="the dossier input is required"
+        if [ -n "$subject_org" ]; then
+          v=${WL_VERSION#v}; major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}
+          if [ "${major:-0}" -eq 0 ] 2>/dev/null && [ "${minor:-0}" -lt 6 ] 2>/dev/null; then
+            input_error="subject-org needs witness-log v0.6.0 or later; this run resolved $WL_VERSION (set version: latest or v0.6.0)"
+          fi
+        fi
 
         args=("$dossier")
         [ -z "$identity" ] || args+=(--identity "$identity")
@@ -359,6 +371,7 @@ runs:
         [ -z "$min_witnesses" ] || args+=(--min-witnesses "$min_witnesses")
         [ -z "$threshold" ] || args+=(--threshold "$threshold")
         [ -z "$revocations" ] || args+=(--revocations "$revocations")
+        [ -z "$subject_org" ] || args+=(--subject-org "$subject_org")
         [ "$allow_sub" != true ] || args+=(--allow-sub-majority)
         heads=0
         while IFS= read -r h; do

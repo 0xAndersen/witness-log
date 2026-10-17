@@ -26,6 +26,7 @@
     "verdict": "unanchored"
   },
   "strict": true,
+  "subject_org": null,
   "threshold_used": 0.66,
   "verdict": "UNANCHORED"
 }

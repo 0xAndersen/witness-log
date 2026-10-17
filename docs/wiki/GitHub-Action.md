@@ -40,6 +40,7 @@ agent's operator prove only that the operator agrees with itself.
 | `known-heads` | | `--known-head`, repeated | heads you already trust for this identity, `<size>:<root hex>`, separated by newlines or commas |
 | `evidence` | | `--evidence`, repeated | witness equivocation proof files, one path per line |
 | `revocations` | | `--revocations` | revocation statements you know of |
+| `subject-org` | | `--subject-org` | the organisation that operates the log; its own witnesses never count as independent operators. Needs witness-log 0.6.0 or later (the step fails with that message on an older `version`) |
 | `allow-sub-majority` | `false` | `--allow-sub-majority` | `true` accepts WITNESSED from fewer than a strict majority of the directory as exit 0 |
 | `fail-on` | `not-witnessed` | | which outcomes fail the step (below) |
 | `version` | | | the CLI release: `v0.5.0` or later, or `latest`. Empty: the action's own tag when it is a version, otherwise the latest release (below) |

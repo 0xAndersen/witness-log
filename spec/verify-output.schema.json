@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xAndersen/witness-log/blob/main/spec/verify-output.schema.json",
+  "title": "witness-log verify --json",
+  "description": "The machine-readable result of `witness-log verify <dossier> --json` (Rust CLI) and `witness-log-verify --json` (Go CLI). `report` is also what the libraries return as the verifier's report: Python `verify_dossier_json`, the wasm and Node `report`, TypeScript `report`. Stability contract: fields are only ever added; an existing field keeps its name, type and meaning. Consumers must ignore fields they do not know. The wording of `failures` and `contradictions` entries is not part of the contract (whether each list is empty is). The exit status of the process equals `exit_code`.",
+  "type": "object",
+  "required": [
+    "verdict",
+    "exit_code",
+    "report",
+    "path",
+    "identity_pubkey",
+    "identity_pinned",
+    "directory_pinned",
+    "threshold_used",
+    "min_witnesses_used",
+    "strict",
+    "allow_sub_majority"
+  ],
+  "properties": {
+    "verdict": {
+      "description": "The verdict in the form the text output prints.",
+      "enum": ["WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED", "INVALID"]
+    },
+    "exit_code": {
+      "description": "0 WITNESSED; 11 WITNESSED by fewer than a strict majority of the trusted directory (split view possible) unless allow_sub_majority or not strict; 10 CONSISTENT-UNWITNESSED; 20 UNANCHORED; 30 DIVERGED; 40 INVALID. Usage errors exit 2 and print no JSON.",
+      "enum": [0, 10, 11, 20, 30, 40]
+    },
+    "report": { "$ref": "#/$defs/report" },
+    "path": { "type": "string", "description": "The dossier path as given." },
+    "identity_pubkey": {
+      "type": "string",
+      "description": "The dossier's own identity_pubkey field (claimed by the file, not trusted)."
+    },
+    "identity_pinned": { "type": "boolean", "description": "--identity was given." },
+    "directory_pinned": { "type": "boolean", "description": "--directory was given." },
+    "threshold_used": { "type": "number", "minimum": 0, "maximum": 1 },
+    "min_witnesses_used": { "type": ["integer", "null"], "minimum": 1 },
+    "subject_org": {
+      "type": ["string", "null"],
+      "description": "--subject-org as given (since 0.6.0): the organisation that operates the log; its witnesses never count as independent operators."
+    },
+    "strict": { "type": "boolean", "description": "Exit 11 for a sub-majority WITNESSED (the default since 0.5.0)." },
+    "allow_sub_majority": { "type": "boolean" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "report": {
+      "type": "object",
+      "required": [
+        "verdict",
+        "checkpoint_signature_valid",
+        "identity_bound",
+        "identity_pinned",
+        "leaves_structurally_valid",
+        "bindings_valid",
+        "bindings_asserted",
+        "merkle_continuity_valid",
+        "internally_consistent",
+        "externally_anchored",
+        "split_view_unsafe",
+        "failures",
+        "contradictions",
+        "known_heads_unchecked",
+        "leaf_count",
+        "claimed_tree_size",
+        "quorum"
+      ],
+      "properties": {
+        "verdict": {
+          "enum": ["witnessed", "consistent_unwitnessed", "unanchored", "diverged", "invalid"]
+        },
+        "checkpoint_signature_valid": { "type": "boolean" },
+        "identity_bound": {
+          "type": "boolean",
+          "description": "identity_pubkey equals the checkpoint signer, and the --identity given, if any."
+        },
+        "identity_pinned": { "type": "boolean" },
+        "leaves_structurally_valid": { "type": "boolean" },
+        "bindings_valid": { "type": "boolean" },
+        "bindings_asserted": {
+          "type": "boolean",
+          "description": "The dossier carries key bindings. False is 'not asserted', not a failure."
+        },
+        "merkle_continuity_valid": { "type": "boolean" },
+        "internally_consistent": {
+          "type": "boolean",
+          "description": "Every check above passed: the file does not contradict itself."
+        },
+        "externally_anchored": {
+          "type": "boolean",
+          "description": "A trusted directory was supplied, so receipts were scored against something the verifier trusts."
+        },
+        "split_view_unsafe": {
+          "type": "boolean",
+          "description": "WITNESSED, but the counted cosigners are not a strict majority of the directory (exit 11 under strict)."
+        },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Why INVALID; empty otherwise."
+        },
+        "contradictions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Why DIVERGED (a --known-head not reproduced, or an --evidence proof that verifies); empty otherwise."
+        },
+        "known_heads_unchecked": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Known heads larger than the dossier, which could not be checked (\"<size>:<root>\")."
+        },
+        "leaf_count": { "type": "integer", "minimum": 0 },
+        "claimed_tree_size": { "type": "integer", "minimum": 0 },
+        "quorum": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }],
+          "description": "Null when no trusted directory was supplied."
+        }
+      },
+      "additionalProperties": true
+    },
+    "quorum": {
+      "type": "object",
+      "required": [
+        "tree_size",
+        "valid_receipts",
+        "total_directory_witnesses",
+        "quorum_fraction",
+        "meets_count_threshold",
+        "count_gate",
+        "distinct_independent_operators",
+        "independent_operators_represented",
+        "distinct_operators_represented",
+        "distinct_operators_in_directory",
+        "diversity_fraction",
+        "distinct_compute_providers_represented",
+        "distinct_compute_providers_in_directory",
+        "compute_diversity_fraction",
+        "project_operated_receipts",
+        "split_view_resistant",
+        "newest_trusted_witness_ms"
+      ],
+      "properties": {
+        "tree_size": { "type": "integer", "minimum": 0 },
+        "valid_receipts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Distinct keys from the trusted directory whose receipt verifies."
+        },
+        "total_directory_witnesses": { "type": "integer", "minimum": 0 },
+        "quorum_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "meets_count_threshold": { "type": "boolean" },
+        "count_gate": { "type": "string", "description": "Human-readable gate, e.g. \"fraction >= 0.66\"." },
+        "distinct_independent_operators": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number WITNESSED gates on (>= 2): distinct operator_org among counted receipts, project-operated and the log's own operator excluded."
+        },
+        "independent_operators_represented": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Those operators, normalised (trimmed, case-folded, whitespace collapsed)."
+        },
+        "distinct_operators_represented": { "type": "integer", "minimum": 0 },
+        "distinct_operators_in_directory": { "type": "integer", "minimum": 0 },
+        "diversity_fraction": { "type": "number", "minimum": 0 },
+        "distinct_compute_providers_represented": { "type": "integer", "minimum": 0 },
+        "distinct_compute_providers_in_directory": { "type": "integer", "minimum": 0 },
+        "compute_diversity_fraction": { "type": "number", "minimum": 0 },
+        "project_operated_receipts": { "type": "integer", "minimum": 0 },
+        "split_view_resistant": {
+          "type": "boolean",
+          "description": "The counted receipts are a strict majority of the directory."
+        },
+        "newest_trusted_witness_ms": {
+          "type": ["integer", "null"],
+          "description": "Newest witnessed_at_ms among counted receipts: the freshness to trust, rather than the checkpoint's own timestamp."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -44,6 +44,7 @@
     "verdict": "consistent_unwitnessed"
   },
   "strict": true,
+  "subject_org": null,
   "threshold_used": 0.66,
   "verdict": "CONSISTENT-UNWITNESSED"
 }
