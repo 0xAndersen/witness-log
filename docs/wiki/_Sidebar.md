@@ -11,6 +11,7 @@
 - [Quickstart: Rust](Quickstart-Rust)
 - [Quickstart: CLI](Quickstart-CLI)
 - [CLI reference](CLI-Reference)
+- [GitHub Action](GitHub-Action)
 - [MCP integration](MCP-Integration)
   - [MCP proxy](MCP-Proxy) · [Hooks](Hooks)
 - [Framework guides](Framework-Guides)

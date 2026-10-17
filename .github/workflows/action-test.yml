@@ -1,0 +1,283 @@
+name: action-test
+
+# Runs the GitHub Action defined by action.yml (`uses: ./`) on Linux, macOS
+# and Windows against fixtures in this repository, and checks its outputs:
+# WITNESSED (the examples/ sample and the Go c2sp golden), INVALID (a
+# tampered copy, reported with fail-on: never), DIVERGED (a contradicted
+# known head), the split-view exit 11 with and without allow-sub-majority,
+# CONSISTENT-UNWITNESSED, UNANCHORED and usage errors. The matrix job pins
+# version v0.5.0 so it is reproducible; the resolution job leaves `version`
+# empty (with `uses: ./` there is no action ref, so it resolves the latest
+# release) and checks that a version before v0.5.0 is refused.
+
+on:
+  push:
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+      - examples/sample-dossier.json
+      - examples/trusted-directory.json
+      - clients/go/testdata/c2sp/**
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+      - examples/sample-dossier.json
+      - examples/trusted-directory.json
+      - clients/go/testdata/c2sp/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned:
+    name: v0.5.0 on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fixtures
+        id: fx
+        run: |
+          set -euo pipefail
+          mkdir -p .action-test
+          a=clients/go/testdata/c2sp/a.json
+          # One leaf hash changed: the leaves no longer reproduce the signed root.
+          jq '.leaves[0].payload_hash |= (if startswith("0") then "1" else "0" end) + .[1:]' "$a" > .action-test/tampered.json
+          # Six witnesses, two of which cosigned a.json: a WITNESSED minority.
+          jq -s '{witnesses: (.[0].witnesses + .[1].witnesses)}' \
+            clients/go/testdata/c2sp/trusted.json examples/trusted-directory.json > .action-test/six.json
+          {
+            echo "sample-id=$(jq -r .identity_pubkey examples/sample-dossier.json | tr -d '\r')"
+            echo "a-id=$(jq -r .identity_pubkey "$a" | tr -d '\r')"
+            echo "a-head=$(jq -r '.checkpoint | "\(.tree_size):\(.root_hash)"' "$a" | tr -d '\r')"
+            echo "a-root=$(jq -r .checkpoint.root_hash "$a" | tr -d '\r')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Sample dossier (WITNESSED)
+        id: sample
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: examples/sample-dossier.json
+          identity: ${{ steps.fx.outputs.sample-id }}
+          directory: examples/trusted-directory.json
+          min-witnesses: 2
+
+      - name: Go c2sp golden (WITNESSED)
+        id: golden
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: clients/go/testdata/c2sp/trusted.json
+
+      - name: Tampered copy, report only (INVALID)
+        id: tampered
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: .action-test/tampered.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: clients/go/testdata/c2sp/trusted.json
+          fail-on: never
+
+      - name: Contradicted known head (DIVERGED fails invalid-or-diverged)
+        id: diverged
+        continue-on-error: true
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: clients/go/testdata/c2sp/trusted.json
+          fail-on: invalid-or-diverged
+          # The real head, a wrong root for size 3, and a head larger than the dossier.
+          known-heads: |
+            ${{ steps.fx.outputs.a-head }}, 3:0000000000000000000000000000000000000000000000000000000000000000
+            100:${{ steps.fx.outputs.a-root }}
+
+      - name: Sub-majority (exit 11 fails not-witnessed)
+        id: split
+        continue-on-error: true
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: .action-test/six.json
+          min-witnesses: 2
+
+      - name: Sub-majority accepted (allow-sub-majority)
+        id: split_ok
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: .action-test/six.json
+          min-witnesses: 2
+          allow-sub-majority: true
+
+      - name: Below the gate (CONSISTENT-UNWITNESSED passes invalid-or-diverged)
+        id: unwitnessed
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.fx.outputs.a-id }}
+          directory: .action-test/six.json
+          fail-on: invalid-or-diverged
+
+      - name: No identity, no directory (UNANCHORED)
+        id: unanchored
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          fail-on: never
+
+      - name: Missing dossier (usage error fails even with fail-on never)
+        id: usage
+        continue-on-error: true
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: .action-test/does-not-exist.json
+          fail-on: never
+
+      - name: Unknown fail-on value (usage error)
+        id: bad_input
+        continue-on-error: true
+        uses: ./
+        with:
+          version: v0.5.0
+          dossier: clients/go/testdata/c2sp/a.json
+          fail-on: sometimes
+
+      - name: Check the outputs
+        env:
+          OUT_sample: ${{ toJSON(steps.sample.outputs) }}
+          OUTCOME_sample: ${{ steps.sample.outcome }}
+          OUT_golden: ${{ toJSON(steps.golden.outputs) }}
+          OUTCOME_golden: ${{ steps.golden.outcome }}
+          OUT_tampered: ${{ toJSON(steps.tampered.outputs) }}
+          OUTCOME_tampered: ${{ steps.tampered.outcome }}
+          OUT_diverged: ${{ toJSON(steps.diverged.outputs) }}
+          OUTCOME_diverged: ${{ steps.diverged.outcome }}
+          OUT_split: ${{ toJSON(steps.split.outputs) }}
+          OUTCOME_split: ${{ steps.split.outcome }}
+          OUT_split_ok: ${{ toJSON(steps.split_ok.outputs) }}
+          OUTCOME_split_ok: ${{ steps.split_ok.outcome }}
+          OUT_unwitnessed: ${{ toJSON(steps.unwitnessed.outputs) }}
+          OUTCOME_unwitnessed: ${{ steps.unwitnessed.outcome }}
+          OUT_unanchored: ${{ toJSON(steps.unanchored.outputs) }}
+          OUTCOME_unanchored: ${{ steps.unanchored.outcome }}
+          OUT_usage: ${{ toJSON(steps.usage.outputs) }}
+          OUTCOME_usage: ${{ steps.usage.outcome }}
+          OUT_bad_input: ${{ toJSON(steps.bad_input.outputs) }}
+          OUTCOME_bad_input: ${{ steps.bad_input.outcome }}
+        run: |
+          set -uo pipefail
+          fails=0
+          check() { # <label> <got> <want>
+            if [ "$2" = "$3" ]; then echo "ok    $1 = '$3'"
+            else echo "::error title=action-test::$1: got '$2', want '$3'"; fails=$((fails + 1)); fi
+          }
+          expect() { # <step> <outcome> [output=value ...]
+            local name=$1 out_var="OUT_$1" outcome_var="OUTCOME_$1" kv got
+            check "$name outcome" "${!outcome_var}" "$2"
+            shift 2
+            for kv in "$@"; do
+              got=$(printf '%s' "${!out_var}" | jq -r --arg k "${kv%%=*}" '.[$k] // ""' | tr -d '\r')
+              check "$name ${kv%%=*}" "$got" "${kv#*=}"
+            done
+          }
+          report() { # <step> <jq expression that must be true of the --json report>
+            local out_var="OUT_$1" path
+            path=$(printf '%s' "${!out_var}" | jq -r '.report // ""' | tr -d '\r')
+            if [ -n "$path" ] && jq -e "$2" "$path" > /dev/null; then echo "ok    $1 report: $2"
+            else echo "::error title=action-test::$1 report '$path': $2 is not true"; fails=$((fails + 1)); fi
+          }
+
+          expect sample success version=v0.5.0 verdict=WITNESSED exit-code=0 identity-pinned=true \
+            directory-pinned=true split-view-unsafe=false valid-receipts=3 independent-operators=2
+          report sample '.verdict == "WITNESSED" and .min_witnesses_used == 2'
+          expect golden success verdict=WITNESSED exit-code=0 identity-pinned=true directory-pinned=true \
+            split-view-unsafe=false valid-receipts=2 independent-operators=2
+          expect tampered success verdict=INVALID exit-code=40 identity-pinned=true
+          report tampered '.verdict == "INVALID" and (.report.failures | length) > 0 and .report.merkle_continuity_valid == false'
+          expect diverged failure verdict=DIVERGED exit-code=30
+          report diverged '(.report.contradictions | length) == 1 and (.report.known_heads_unchecked | length) == 1'
+          expect split failure verdict=WITNESSED exit-code=11 split-view-unsafe=true valid-receipts=2
+          expect split_ok success verdict=WITNESSED exit-code=0 split-view-unsafe=true
+          expect unwitnessed success verdict=CONSISTENT-UNWITNESSED exit-code=10
+          expect unanchored success verdict=UNANCHORED exit-code=20 identity-pinned=false \
+            directory-pinned=false valid-receipts=0 independent-operators=0
+          expect usage failure verdict= exit-code=2 report=
+          expect bad_input failure verdict= exit-code=2
+
+          echo "$fails failed check(s)"
+          [ "$fails" -eq 0 ]
+
+  resolved:
+    name: version resolution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Latest release and fixture identity
+        id: want
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "tag=$(gh api repos/0xAndersen/witness-log/releases/latest --jq .tag_name)" >> "$GITHUB_OUTPUT"
+          echo "a-id=$(jq -r .identity_pubkey clients/go/testdata/c2sp/a.json)" >> "$GITHUB_OUTPUT"
+
+      - name: No version input (resolves the latest release)
+        id: latest
+        uses: ./
+        with:
+          dossier: clients/go/testdata/c2sp/a.json
+          identity: ${{ steps.want.outputs.a-id }}
+          directory: clients/go/testdata/c2sp/trusted.json
+
+      - name: A version before v0.5.0 is refused
+        id: old
+        continue-on-error: true
+        uses: ./
+        with:
+          version: v0.4.3
+          dossier: clients/go/testdata/c2sp/a.json
+
+      - name: Check
+        env:
+          WANT: ${{ steps.want.outputs.tag }}
+          GOT: ${{ steps.latest.outputs.version }}
+          VERDICT: ${{ steps.latest.outputs.verdict }}
+          OLD_OUTCOME: ${{ steps.old.outcome }}
+          OLD_VERSION: ${{ steps.old.outputs.version }}
+        run: |
+          set -uo pipefail
+          fails=0
+          check() { if [ "$2" = "$3" ]; then echo "ok    $1 = '$3'"; else echo "::error title=action-test::$1: got '$2', want '$3'"; fails=$((fails + 1)); fi; }
+          check "resolved version" "$GOT" "$WANT"
+          check "verdict with the resolved version" "$VERDICT" WITNESSED
+          check "v0.4.3 outcome" "$OLD_OUTCOME" failure
+          check "v0.4.3 version output" "$OLD_VERSION" ""
+          [ "$fails" -eq 0 ]

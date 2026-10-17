@@ -1,0 +1,672 @@
+# witness-log verify, as a GitHub Action:
+#
+#   - uses: 0xAndersen/witness-log@v0.6.0
+#     with:
+#       dossier: dossier.json
+#       identity: ${{ vars.AGENT_IDENTITY }}
+#       directory: trusted-directory.json
+#
+# Downloads the released `witness-log` CLI for the runner, checks it against
+# the release's SHA256SUMS (a mismatch fails the step), runs
+# `witness-log verify` and fails the step unless the verdict is WITNESSED
+# (exit 0); `fail-on` relaxes that. Outputs carry the verdict and the
+# `--json` report; the job summary explains it in plain words.
+#
+# Every input reaches the scripts through `env:`, never by `${{ }}`
+# interpolation inside `run:`, so an input cannot inject shell code. The
+# token is used only to read this repository's releases.
+#
+# Documentation: docs/wiki/GitHub-Action.md. Tests:
+# .github/workflows/action-test.yml.
+
+name: witness-log verify
+description: Verify a witness-log dossier offline against the identity and witness directory you trust, and gate the job on the verdict.
+author: 0xAndersen
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  dossier:
+    description: Path to the dossier JSON to verify.
+    required: true
+  identity:
+    description: The identity public key you expect (64 hex), from outside the dossier. Without it the verdict says nothing about whose log this is.
+    required: false
+    default: ""
+  directory:
+    description: Path to the witness directory you trust. Without it the best verdict is UNANCHORED.
+    required: false
+    default: ""
+  min-witnesses:
+    description: Count gate as an absolute number of witnesses (`--min-witnesses N`).
+    required: false
+    default: ""
+  threshold:
+    description: Count gate as a fraction of the directory, 0.0 to 1.0 (`--threshold`; the CLI default is 0.66).
+    required: false
+    default: ""
+  known-heads:
+    description: Heads you already trust for this identity, each `<size>:<root hex>`, separated by newlines or commas (`--known-head`, repeated).
+    required: false
+    default: ""
+  evidence:
+    description: Witness equivocation proof files, one path per line (`--evidence`, repeated).
+    required: false
+    default: ""
+  revocations:
+    description: Path to revocation statements you know of (`--revocations`).
+    required: false
+    default: ""
+  allow-sub-majority:
+    description: "`true` accepts WITNESSED from fewer than a strict majority of the directory as exit 0 (`--allow-sub-majority`)."
+    required: false
+    default: "false"
+  fail-on:
+    description: "Which outcomes fail the step: `not-witnessed` (anything but exit 0), `invalid-or-diverged` (only DIVERGED 30 and INVALID 40) or `never` (report only). A usage error (exit 2) or a failed download always fails."
+    required: false
+    default: not-witnessed
+  version:
+    description: "witness-log release to run: `v0.5.0` or later, or `latest`. Empty: the action's own tag when it is a version (`uses: 0xAndersen/witness-log@v0.6.0`), otherwise the latest release."
+    required: false
+    default: ""
+  token:
+    description: Token used only to read the witness-log releases (resolve `latest`, download the CLI).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: "WITNESSED, CONSISTENT-UNWITNESSED, UNANCHORED, DIVERGED or INVALID; empty when verify reached no verdict (exit 2). WITNESSED with exit-code 11 is a sub-majority (split view)."
+    value: ${{ steps.verify.outputs.verdict }}
+  exit-code:
+    description: "The verify exit code: 0, 10, 11, 20, 30, 40, or 2 for a usage error."
+    value: ${{ steps.verify.outputs.exit-code }}
+  report:
+    description: Path to the `witness-log verify --json` output (empty when there is none).
+    value: ${{ steps.verify.outputs.report }}
+  identity-pinned:
+    description: "`true` when the verdict is about the identity you passed in `identity`."
+    value: ${{ steps.verify.outputs.identity-pinned }}
+  directory-pinned:
+    description: "`true` when receipts were scored against the directory you passed in `directory`."
+    value: ${{ steps.verify.outputs.directory-pinned }}
+  split-view-unsafe:
+    description: "`true` when the result is WITNESSED but the cosigners are not a strict majority of the directory."
+    value: ${{ steps.verify.outputs.split-view-unsafe }}
+  valid-receipts:
+    description: Valid witness receipts from your directory (0 without a directory).
+    value: ${{ steps.verify.outputs.valid-receipts }}
+  independent-operators:
+    description: Distinct independent operators among those receipts (WITNESSED needs 2).
+    value: ${{ steps.verify.outputs.independent-operators }}
+  version:
+    description: The witness-log release that ran, e.g. v0.5.0.
+    value: ${{ steps.resolve.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the witness-log release
+      id: resolve
+      shell: bash
+      env:
+        WL_VERSION_INPUT: ${{ inputs.version }}
+        # github.action_ref works in a composite action only through env:.
+        WL_ACTION_REF: ${{ github.action_ref }}
+        WL_ACTION_PATH: ${{ github.action_path }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        repo=0xAndersen/witness-log
+        semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+        oneline() { printf '%s' "$1" | tr '\r\n' '  ' | sed 's/%/%25/g'; }
+        die() { echo "::error title=witness-log::$(oneline "$1")"; exit 1; }
+        to_unix() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        to_native() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+        latest_tag() { # gh with the token, else curl with it (kept off the command line), else without
+          local path="repos/$repo/releases/latest" json="" tag
+          if command -v gh >/dev/null 2>&1 && [ -n "${GH_TOKEN:-}" ]; then
+            json=$(gh api --hostname github.com "$path" 2>/dev/null) || json=""
+          fi
+          if [ -z "$json" ] && [ -n "${GH_TOKEN:-}" ]; then
+            json=$(printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" \
+              | curl -fsSL --retry 3 -K - -H 'Accept: application/vnd.github+json' "https://api.github.com/$path" 2>/dev/null) || json=""
+          fi
+          if [ -z "$json" ]; then
+            json=$(curl -fsSL --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/$path" 2>/dev/null) || json=""
+          fi
+          tag=$(printf '%s\n' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+          printf '%s' "${tag%%$'\n'*}"
+        }
+
+        [ -n "${RUNNER_TEMP:-}" ] || die "RUNNER_TEMP is not set: run this action on a GitHub Actions runner"
+
+        # The action's own ref; GITHUB_ACTION_PATH ends in it for a remote action.
+        ref=${WL_ACTION_REF:-}
+        if [ -z "$ref" ] && [ -n "${WL_ACTION_PATH:-}" ]; then
+          p=$(printf '%s' "$WL_ACTION_PATH" | tr '\\' '/')
+          case "$p" in */_actions/*/*/*) ref=${p##*/} ;; esac
+        fi
+
+        v=$(printf '%s' "${WL_VERSION_INPUT:-}" | tr -d '[:space:]')
+        if [ -n "$v" ] && [ "$v" != latest ]; then
+          given=$v
+          case "$v" in v*) ;; *) v="v$v" ;; esac
+          [[ "$v" =~ $semver ]] || die "version '$given' is not a release tag such as v0.5.0 (or latest)"
+          from="the version input"
+        elif [ -z "$v" ] && [[ "$ref" =~ $semver ]]; then
+          v=$ref
+          from="the action ref"
+        else
+          v=$(latest_tag)
+          [[ "$v" =~ $semver ]] || die "could not resolve the latest witness-log release from the GitHub API; set the version input (for example version: v0.5.0)"
+          from="the latest release"
+        fi
+
+        # 0.5.0 introduced the exit codes this action reads: INVALID is 40
+        # (it was 30) and a sub-majority WITNESSED is 11 by default.
+        core=${v#v}; core=${core%%-*}
+        major=${core%%.*}; rest=${core#*.}; minor=${rest%%.*}
+        if [ "$major" -eq 0 ] && [ "$minor" -lt 5 ]; then
+          die "witness-log $v is older than v0.5.0. Before 0.5.0 a failed check exited 30 (now 40) and a sub-majority WITNESSED exited 0 (now 11), so this action cannot read its verdicts. Use version v0.5.0 or later."
+        fi
+
+        exe=witness-log
+        case "${RUNNER_OS:-}/${RUNNER_ARCH:-}" in
+          Linux/X64) target=x86_64-unknown-linux-gnu ;;
+          Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS/X64) target=x86_64-apple-darwin ;;
+          macOS/ARM64) target=aarch64-apple-darwin ;;
+          Windows/X64) target=x86_64-pc-windows-msvc; exe=witness-log.exe ;;
+          Windows/ARM64)
+            target=x86_64-pc-windows-msvc; exe=witness-log.exe
+            echo "::notice title=witness-log::no Windows ARM64 build is released; using the x64 build, which Windows on ARM runs under emulation" ;;
+          *) die "no witness-log release build for ${RUNNER_OS:-unknown OS} ${RUNNER_ARCH:-unknown arch}; released: Linux X64/ARM64, macOS X64/ARM64, Windows X64" ;;
+        esac
+
+        asset="witness-log-$v-$target.tar.gz"
+        cache_dir=$(to_native "$(to_unix "$RUNNER_TEMP")/witness-log-cache/$v-$target")
+        # An earlier use of this action in the same job already holds the
+        # archive: skip actions/cache, so the job saves the entry only once.
+        present=false
+        [ ! -f "$(to_unix "$cache_dir")/$asset" ] || present=true
+
+        echo "witness-log $v (from $from), $target"
+        {
+          echo "version=$v"
+          echo "target=$target"
+          echo "exe=$exe"
+          echo "asset=$asset"
+          echo "cache-dir=$cache_dir"
+          echo "present=$present"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore the cached witness-log archive
+      if: steps.resolve.outputs.present != 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.resolve.outputs.cache-dir }}
+        key: witness-log-cli-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.target }}
+
+    - name: Install witness-log (SHA-256 checked against SHA256SUMS)
+      id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WL_VERSION: ${{ steps.resolve.outputs.version }}
+        WL_TARGET: ${{ steps.resolve.outputs.target }}
+        WL_EXE: ${{ steps.resolve.outputs.exe }}
+        WL_ASSET: ${{ steps.resolve.outputs.asset }}
+        WL_CACHE_DIR: ${{ steps.resolve.outputs.cache-dir }}
+      run: |
+        set -euo pipefail
+        repo=0xAndersen/witness-log
+        oneline() { printf '%s' "$1" | tr '\r\n' '  ' | sed 's/%/%25/g'; }
+        die() { echo "::error title=witness-log::$(oneline "$1")"; exit 1; }
+        to_unix() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        to_native() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+        sha256_of() {
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+          elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+          else openssl dgst -sha256 -r < "$1" | cut -d' ' -f1; fi
+        }
+        fetch() { # <release asset name> <dir>: gh (GH_TOKEN), else the public download URL
+          rm -f "$2/$1"
+          if command -v gh >/dev/null 2>&1 && [ -n "${GH_TOKEN:-}" ] \
+            && gh release download "$WL_VERSION" --repo "github.com/$repo" --pattern "$1" --dir "$2" --clobber >/dev/null 2>&1 \
+            && [ -s "$2/$1" ]; then return 0; fi
+          rm -f "$2/$1"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$2/$1" "https://github.com/$repo/releases/download/$WL_VERSION/$1"
+        }
+        release_url="https://github.com/$repo/releases/tag/$WL_VERSION"
+
+        tmp=$(to_unix "$RUNNER_TEMP")
+        work=$(mktemp -d "$tmp/witness-log-download.XXXXXX")
+
+        # SHA256SUMS is fetched fresh on every run, so a cached archive is
+        # checked exactly like a downloaded one.
+        fetch SHA256SUMS "$work" \
+          || die "could not download SHA256SUMS of witness-log $WL_VERSION ($release_url). If the release was tagged minutes ago its assets may still be building."
+        expected=$(tr -d '\r' < "$work/SHA256SUMS" | awk -v f="$WL_ASSET" '$2 == f || $2 == ("*" f) { print $1 }')
+        case "$expected" in
+          "" | *[!0-9a-fA-F]*) die "SHA256SUMS of witness-log $WL_VERSION has no single entry for $WL_ASSET" ;;
+        esac
+        [ "${#expected}" -eq 64 ] || die "SHA256SUMS of witness-log $WL_VERSION has a malformed entry for $WL_ASSET"
+        expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
+
+        cache=$(to_unix "$WL_CACHE_DIR")
+        mkdir -p "$cache"
+        archive="$cache/$WL_ASSET"
+        from=""
+        if [ -f "$archive" ]; then
+          if [ "$(sha256_of "$archive")" = "$expected" ]; then
+            from="the cache"
+          else
+            echo "::warning title=witness-log::the cached $WL_ASSET does not match SHA256SUMS; discarding it and downloading the release asset again"
+            rm -f "$archive"
+          fi
+        fi
+        if [ -z "$from" ]; then
+          fetch "$WL_ASSET" "$work" \
+            || die "could not download $WL_ASSET ($release_url). If the release was tagged minutes ago its assets may still be building."
+          actual=$(sha256_of "$work/$WL_ASSET")
+          if [ "$actual" != "$expected" ]; then
+            rm -f "$work/$WL_ASSET"
+            die "SHA-256 mismatch for $WL_ASSET: SHA256SUMS says $expected, the download is $actual. Refusing to run it."
+          fi
+          mv -f "$work/$WL_ASSET" "$archive"
+          from="the release"
+        fi
+        rm -rf "$work"
+
+        bindir="$tmp/witness-log-bin/$WL_VERSION-$WL_TARGET"
+        rm -rf "$bindir"
+        mkdir -p "$bindir"
+        (cd "$bindir" && tar -xzf "$archive") || die "could not unpack $WL_ASSET"
+        bin="$bindir/$WL_EXE"
+        [ -f "$bin" ] || die "$WL_ASSET does not contain $WL_EXE"
+        chmod +x "$bin" 2>/dev/null || true
+        got=$("$bin" --version 2>/dev/null | sed -n 1p | tr -d '\r') || got=""
+        case "$got" in
+          "witness-log ${WL_VERSION#v}" | "witness-log ${WL_VERSION#v} "*) ;;
+          *) die "the $WL_ASSET binary reports '$got', expected witness-log ${WL_VERSION#v}" ;;
+        esac
+
+        echo "$got ($WL_TARGET) from $from; SHA-256 $expected matches SHA256SUMS"
+        to_native "$bindir" >> "$GITHUB_PATH"
+        echo "bin=$(to_native "$bin")" >> "$GITHUB_OUTPUT"
+
+    - name: witness-log verify
+      id: verify
+      shell: bash
+      env:
+        WL_BIN: ${{ steps.install.outputs.bin }}
+        WL_VERSION: ${{ steps.resolve.outputs.version }}
+        WL_DOSSIER: ${{ inputs.dossier }}
+        WL_IDENTITY: ${{ inputs.identity }}
+        WL_DIRECTORY: ${{ inputs.directory }}
+        WL_MIN_WITNESSES: ${{ inputs.min-witnesses }}
+        WL_THRESHOLD: ${{ inputs.threshold }}
+        WL_KNOWN_HEADS: ${{ inputs.known-heads }}
+        WL_EVIDENCE: ${{ inputs.evidence }}
+        WL_REVOCATIONS: ${{ inputs.revocations }}
+        WL_ALLOW_SUB_MAJORITY: ${{ inputs.allow-sub-majority }}
+        WL_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        set -euo pipefail
+        to_unix() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        to_native() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+        trim() { local s=$1; s=${s#"${s%%[![:space:]]*}"}; s=${s%"${s##*[![:space:]]}"}; printf '%s' "$s"; }
+        lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+        oneline() { printf '%s' "$1" | tr '\r\n\t' '   '; }
+        cmd_escape() { oneline "$1" | sed 's/%/%25/g'; }
+        md() { oneline "$1" | sed -e 's/|/\\|/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+        mdcode() { printf '`%s`' "$(oneline "$1" | tr '`' "'" | sed 's/|/\\|/g')"; }
+        short() { if [ "${#1}" -gt 20 ]; then printf '%s...%s' "${1:0:8}" "${1:${#1}-8}"; else printf '%s' "$1"; fi; }
+        said() { case "$1" in true) printf '%s' "$2" ;; false) printf '%s' "$3" ;; *) printf 'not reported' ;; esac; }
+
+        bin=$(to_unix "$WL_BIN")
+        out=$(mktemp -d "$(to_unix "$RUNNER_TEMP")/witness-log-verify.XXXXXX")
+        report="$out/report.json"
+
+        # ---- inputs -> verify arguments ---------------------------------
+        dossier=$(trim "${WL_DOSSIER:-}")
+        identity=$(trim "${WL_IDENTITY:-}")
+        directory=$(trim "${WL_DIRECTORY:-}")
+        min_witnesses=$(trim "${WL_MIN_WITNESSES:-}")
+        threshold=$(trim "${WL_THRESHOLD:-}")
+        revocations=$(trim "${WL_REVOCATIONS:-}")
+        allow_sub=$(lower "$(trim "${WL_ALLOW_SUB_MAJORITY:-}")")
+        fail_on=$(lower "$(trim "${WL_FAIL_ON:-}")")
+        [ -n "$fail_on" ] || fail_on=not-witnessed
+
+        input_error=""
+        case "$allow_sub" in
+          "" | false) allow_sub=false ;;
+          true) ;;
+          *) input_error="allow-sub-majority must be true or false, not '$allow_sub'" ;;
+        esac
+        case "$fail_on" in
+          not-witnessed | invalid-or-diverged | never) ;;
+          *) input_error="fail-on must be not-witnessed, invalid-or-diverged or never, not '$fail_on'" ;;
+        esac
+        [ -n "$dossier" ] || input_error="the dossier input is required"
+
+        args=("$dossier")
+        [ -z "$identity" ] || args+=(--identity "$identity")
+        [ -z "$directory" ] || args+=(--directory "$directory")
+        [ -z "$min_witnesses" ] || args+=(--min-witnesses "$min_witnesses")
+        [ -z "$threshold" ] || args+=(--threshold "$threshold")
+        [ -z "$revocations" ] || args+=(--revocations "$revocations")
+        [ "$allow_sub" != true ] || args+=(--allow-sub-majority)
+        heads=0
+        while IFS= read -r h; do
+          h=$(trim "$h"); [ -n "$h" ] || continue
+          args+=(--known-head "$h"); heads=$((heads + 1))
+        done <<EOF
+        $(printf '%s\n' "${WL_KNOWN_HEADS:-}" | tr ',' '\n')
+        EOF
+        evidence=0
+        while IFS= read -r e; do
+          e=$(trim "$e"); [ -n "$e" ] || continue
+          args+=(--evidence "$e"); evidence=$((evidence + 1))
+        done <<EOF
+        ${WL_EVIDENCE:-}
+        EOF
+
+        # ---- run verify ---------------------------------------------------
+        # Once for the log (its own words), once with --json for the outputs.
+        # Workflow commands are off meanwhile: the output can quote the dossier.
+        code=2
+        if [ -z "$input_error" ]; then
+          stop=$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n') || stop=""
+          [ -n "$stop" ] || stop="witness-log-$$-$RANDOM$RANDOM$RANDOM"
+          echo "::stop-commands::$stop"
+          set +e
+          "$bin" verify "${args[@]}"
+          shown=$?
+          "$bin" verify "${args[@]}" --json > "$report" 2> "$out/stderr.txt"
+          code=$?
+          set -e
+          echo "::$stop::"
+          [ "$shown" = "$code" ] || echo "::warning title=witness-log::verify exited $shown, then $code with --json; using $code"
+        else
+          printf '%s\n' "$input_error" | tee "$out/stderr.txt" >&2
+        fi
+        stderr_line=$(sed -n '/./{p;q;}' "$out/stderr.txt" | tr -d '\r')
+
+        # ---- read the --json report ------------------------------------
+        jq_prog='
+          def s: if . == null then "" else tostring | gsub("[\r\n\t]+"; " ") end;
+          (.report // {}) as $r | ($r.quorum // {}) as $q |
+          "verdict=\(.verdict | s)",
+          "exit_code=\(.exit_code | s)",
+          "identity_pinned=\(.identity_pinned | s)",
+          "directory_pinned=\(.directory_pinned | s)",
+          "identity_pubkey=\(.identity_pubkey | s)",
+          "split_view_unsafe=\($r.split_view_unsafe | s)",
+          "checkpoint_signature_valid=\($r.checkpoint_signature_valid | s)",
+          "identity_bound=\($r.identity_bound | s)",
+          "leaves_structurally_valid=\($r.leaves_structurally_valid | s)",
+          "bindings_valid=\($r.bindings_valid | s)",
+          "merkle_continuity_valid=\($r.merkle_continuity_valid | s)",
+          "leaf_count=\($r.leaf_count | s)",
+          "has_quorum=\($r.quorum != null)",
+          "valid_receipts=\($q.valid_receipts | s)",
+          "directory_witnesses=\($q.total_directory_witnesses | s)",
+          "count_gate=\($q.count_gate | s)",
+          "meets_count_threshold=\($q.meets_count_threshold | s)",
+          "independent_operators=\($q.distinct_independent_operators | s)",
+          "operator_names=\(($q.independent_operators_represented // []) | map(s) | join(", "))",
+          (($r.failures // [])[] | "failure=\(s)"),
+          (($r.contradictions // [])[] | "contradiction=\(s)"),
+          (($r.known_heads_unchecked // [])[] | "unchecked=\(s)")'
+        py_prog='
+        import json, re, sys
+        d = json.load(open(sys.argv[1], encoding="utf-8"))
+        r = d.get("report") or {}
+        q = r.get("quorum") or {}
+        def s(v):
+            if v is None: return ""
+            if isinstance(v, bool): return "true" if v else "false"
+            if not isinstance(v, str): v = json.dumps(v)
+            return re.sub(r"[\r\n\t]+", " ", v)
+        top = ["verdict", "exit_code", "identity_pinned", "directory_pinned", "identity_pubkey"]
+        rep = ["split_view_unsafe", "checkpoint_signature_valid", "identity_bound", "leaves_structurally_valid",
+               "bindings_valid", "merkle_continuity_valid", "leaf_count"]
+        quo = [("valid_receipts", "valid_receipts"), ("directory_witnesses", "total_directory_witnesses"),
+               ("count_gate", "count_gate"), ("meets_count_threshold", "meets_count_threshold"),
+               ("independent_operators", "distinct_independent_operators")]
+        lines = [k + "=" + s(d.get(k)) for k in top] + [k + "=" + s(r.get(k)) for k in rep]
+        lines.append("has_quorum=" + s(r.get("quorum") is not None))
+        lines += [k + "=" + s(q.get(j)) for k, j in quo]
+        lines.append("operator_names=" + ", ".join(s(x) for x in q.get("independent_operators_represented") or []))
+        for key, field in (("failure", "failures"), ("contradiction", "contradictions"), ("unchecked", "known_heads_unchecked")):
+            lines += [key + "=" + s(x) for x in r.get(field) or []]
+        sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))'
+
+        r_verdict="" r_exit_code="" r_identity_pinned="" r_directory_pinned="" r_identity_pubkey=""
+        r_split_view_unsafe="" r_checkpoint_signature_valid="" r_identity_bound="" r_leaves_structurally_valid=""
+        r_bindings_valid="" r_merkle_continuity_valid="" r_leaf_count="" r_has_quorum="" r_valid_receipts=""
+        r_directory_witnesses="" r_count_gate="" r_meets_count_threshold="" r_independent_operators=""
+        r_operator_names=""
+        failures=(); contradictions=(); unchecked=()
+        is_verdict=false
+        parse_error=""
+        case "$code" in
+          0 | 10 | 11 | 20 | 30 | 40)
+            is_verdict=true
+            parsed=""
+            if [ ! -s "$report" ]; then
+              parse_error="verify exited $code but wrote no JSON report"
+            elif command -v jq >/dev/null 2>&1; then
+              parsed=$(jq -r "$jq_prog" "$report" | tr -d '\r') || parse_error="could not read the verify JSON report with jq"
+            elif py=$(command -v python3 || command -v python); then
+              parsed=$("$py" -I -c "$py_prog" "$report" | tr -d '\r') || parse_error="could not read the verify JSON report with $py"
+            else
+              parse_error="reading the verify JSON report needs jq or python on the runner"
+            fi
+            while IFS= read -r line; do
+              [ -n "$line" ] || continue
+              key=${line%%=*}; val=${line#*=}
+              case "$key" in
+                failure) failures+=("$val") ;;
+                contradiction) contradictions+=("$val") ;;
+                unchecked) unchecked+=("$val") ;;
+                *) if [[ "$key" =~ ^[a-z_]+$ ]]; then printf -v "r_$key" '%s' "$val"; fi ;;
+              esac
+            done <<EOF
+        $parsed
+        EOF
+            if [ -z "$parse_error" ] && [ "$r_exit_code" != "$code" ]; then
+              parse_error="the JSON report says exit code '$r_exit_code' but verify exited $code"
+            fi
+            ;;
+        esac
+        n_failures=${#failures[@]}; n_contradictions=${#contradictions[@]}; n_unchecked=${#unchecked[@]}
+
+        # ---- decide -------------------------------------------------------
+        verdict=$(oneline "$r_verdict")
+        fail=false
+        reason=""
+        if [ "$is_verdict" = true ] && [ -n "$parse_error" ]; then
+          fail=true; reason="$parse_error"
+        elif [ "$is_verdict" = true ]; then
+          case "$fail_on" in
+            not-witnessed)
+              if [ "$code" = 11 ]; then
+                fail=true
+                reason="WITNESSED, but by fewer than a strict majority of your directory (exit 11), and fail-on is not-witnessed. Raise the gate above half the directory, or accept this with allow-sub-majority: true."
+              elif [ "$code" != 0 ]; then
+                fail=true; reason="$verdict (exit $code) is not WITNESSED, and fail-on is not-witnessed."
+              fi ;;
+            invalid-or-diverged)
+              if [ "$code" -ge 30 ]; then fail=true; reason="$verdict (exit $code), and fail-on is invalid-or-diverged."; fi ;;
+            never) ;;
+          esac
+        elif [ "$code" = 2 ]; then
+          fail=true; reason="witness-log verify reached no verdict (usage error, exit 2): $stderr_line"
+        else
+          fail=true; reason="witness-log verify exited $code, which is not a verdict: $stderr_line"
+        fi
+
+        # ---- outputs -------------------------------------------------------
+        report_out=""
+        if [ "$is_verdict" = true ] && [ -z "$parse_error" ]; then report_out=$(to_native "$report"); fi
+        valid_receipts=""; independent_operators=""
+        if [ "$is_verdict" = true ]; then
+          valid_receipts=${r_valid_receipts:-0}
+          independent_operators=${r_independent_operators:-0}
+        fi
+        {
+          echo "verdict=$verdict"
+          echo "exit-code=$code"
+          echo "report=$report_out"
+          echo "identity-pinned=$(oneline "$r_identity_pinned")"
+          echo "directory-pinned=$(oneline "$r_directory_pinned")"
+          echo "split-view-unsafe=$(oneline "$r_split_view_unsafe")"
+          echo "valid-receipts=$(oneline "$valid_receipts")"
+          echo "independent-operators=$(oneline "$independent_operators")"
+          echo "fail=$fail"
+          echo "fail-reason=$(oneline "$reason")"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$fail" = false ] && [ "$code" != 0 ]; then
+          echo "::warning title=witness-log verify::$(cmd_escape "$verdict (exit $code) for $dossier; fail-on is $fail_on, so the step passes")"
+        fi
+
+        # ---- job summary ---------------------------------------------------
+        [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+        case "$code" in
+          0) topic=witnessed
+             if [ "$r_split_view_unsafe" = true ]; then
+               line="The record checks out and witnesses from at least two independent organisations in your directory cosigned it, but they are fewer than a strict majority of it; allow-sub-majority accepted that."
+             else
+               line="The record checks out, and witnesses from at least two independent organisations in your directory, a strict majority of it, cosigned this exact history."
+             fi ;;
+          11) topic=split-view
+              line="The record checks out and witnesses from at least two independent organisations cosigned it, but they are fewer than a strict majority of your directory, so the rest could have cosigned a different history without anyone noticing." ;;
+          10) topic=consistent-unwitnessed
+              line="The record checks out, but too few of the witnesses you trust cosigned it (below the gate, or fewer than two independent organisations), so the log could show someone else a different history." ;;
+          20) topic=unanchored
+              line="The file agrees with itself, but no trusted directory was given, so nothing outside the file vouches for it." ;;
+          30) topic=diverged
+              line="The file is valid on its own but contradicts a head or an equivocation proof you supplied: this identity has signed two different histories." ;;
+          40) topic=invalid
+              line="A check failed, so this file is not valid evidence of anything about the identity." ;;
+          2) topic=""
+             line="witness-log verify could not run: an input is missing, unreadable or malformed. This is not a verdict, and it always fails the step." ;;
+          *) topic=""
+             line="witness-log verify exited $code, which is not a verdict; this always fails the step." ;;
+        esac
+        if [ "$fail" = true ]; then step="**failed**"; else step="passed"; fi
+        readable=false
+        if [ "$is_verdict" = true ] && [ -z "$parse_error" ]; then readable=true; fi
+        if [ -n "$parse_error" ]; then line="The verdict could not be read from the JSON report, so the step fails."; fi
+        if [ -n "$dossier" ]; then shown_dossier=$(mdcode "$dossier"); else shown_dossier="no dossier"; fi
+
+        {
+          if [ "$readable" = true ]; then
+            echo "### witness-log verify: $(md "$verdict")"
+          else
+            echo "### witness-log verify: no verdict (exit $code)"
+          fi
+          echo
+          echo "$line"
+          if [ "$code" = 0 ] && [ "$r_identity_pinned" = false ]; then
+            echo
+            echo "No \`identity\` was given, so this says nothing about whose log it is. Pin it for a gate."
+          fi
+          echo
+          echo "Dossier $shown_dossier, exit code \`$code\`, witness-log $(md "${WL_VERSION:-}"), fail-on $(mdcode "$fail_on"): step $step."
+          if [ "$fail" = true ] && [ "$is_verdict" = true ]; then echo; printf '%s\n' "$(md "$reason")"; fi
+          echo
+
+          if [ "$readable" = true ]; then
+            if [ "$r_identity_pinned" = true ]; then
+              id_row=$(said "$r_identity_bound" "signed by the identity you pinned, \`$(short "$identity")\`" \
+                "**failed**: not signed by the identity you pinned, \`$(short "$identity")\`")
+            else
+              id_row=$(said "$r_identity_bound" "not pinned (no \`identity\` input): consistent with the dossier's own claim, \`$(short "$r_identity_pubkey")\`, which says nothing about whose log it is" \
+                "**failed**: the dossier's claimed identity does not match its signing key")
+            fi
+            if [ "$r_has_quorum" = true ]; then
+              receipts_row="$r_valid_receipts valid, from the $r_directory_witnesses witnesses in your directory; gate $(mdcode "$r_count_gate") $(said "$r_meets_count_threshold" met "**not met**")"
+              ops_row="$r_independent_operators"
+              [ -z "$r_operator_names" ] || ops_row="$ops_row: $(md "$r_operator_names")"
+              [ "${r_independent_operators:-0}" -ge 2 ] 2>/dev/null || ops_row="$ops_row (WITNESSED needs 2)"
+            else
+              receipts_row="not scored: no \`directory\` input, so no witness counts"
+              ops_row="not scored: no \`directory\` input"
+            fi
+            if [ "$verdict" = WITNESSED ]; then
+              split_row=$(said "$r_split_view_unsafe" \
+                "**possible**: the cosigners are fewer than a strict majority of your directory, so the others could have cosigned a conflicting history" \
+                "ruled out: the cosigners are a strict majority of your directory")
+            else
+              split_row="not assessed: only a WITNESSED result is"
+            fi
+            if [ "$heads" -eq 0 ]; then heads_row="none supplied"
+            else
+              heads_row="$heads supplied"
+              [ "$n_unchecked" -eq 0 ] || heads_row="$heads_row; $n_unchecked larger than the dossier, so not checked: $(md "${unchecked[*]}")"
+            fi
+            if [ "$evidence" -eq 0 ]; then evidence_row="none supplied"; else evidence_row="$evidence file(s) supplied"; fi
+            bindings_row=$(said "$r_bindings_valid" "valid" "**failed**: a key binding does not verify, or a revocation cuts it off")
+            [ -z "$revocations" ] || bindings_row="$bindings_row (your revocations applied)"
+
+            echo "| Check | What it found |"
+            echo "|---|---|"
+            echo "| Checkpoint signature | $(said "$r_checkpoint_signature_valid" valid "**failed**: the checkpoint signature does not verify") |"
+            echo "| Identity | $id_row |"
+            echo "| Leaf structure | $(said "$r_leaves_structurally_valid" valid "**failed**: a leaf is malformed") |"
+            echo "| Key bindings and revocations | $bindings_row |"
+            echo "| Merkle continuity | $(said "$r_merkle_continuity_valid" "the $r_leaf_count leaves reproduce the signed root" "**failed**: the leaves do not reproduce the signed root (altered, reordered, dropped or added leaves)") |"
+            echo "| Witness receipts | $receipts_row |"
+            echo "| Independent operators | $ops_row |"
+            echo "| Split view | $split_row |"
+            echo "| Known heads | $heads_row |"
+            echo "| Equivocation evidence | $evidence_row |"
+            echo
+            if [ "$n_failures" -gt 0 ]; then
+              echo "**Failures** (why INVALID):"
+              echo
+              for f in "${failures[@]}"; do echo "- $(md "$f")"; done
+              echo
+            fi
+            if [ "$n_contradictions" -gt 0 ]; then
+              echo "**Contradictions** (why DIVERGED):"
+              echo
+              for c in "${contradictions[@]}"; do echo "- $(md "$c")"; done
+              echo
+            fi
+            if [ -n "$topic" ]; then
+              explain=$("$bin" explain "$topic" 2>/dev/null | tr -d '\r' | sed '/./,$!d') || explain=""
+              if [ -n "$explain" ]; then
+                echo "<details><summary>What $(md "$verdict") means: <code>witness-log explain $topic</code></summary>"
+                echo
+                echo '````text'
+                printf '%s\n' "$explain"
+                echo '````'
+                echo
+                echo "</details>"
+                echo
+              fi
+            fi
+          elif [ -s "$out/stderr.txt" ]; then
+            echo '````text'
+            sed -n '1,20p' "$out/stderr.txt" | tr -d '\r'
+            echo '````'
+            echo
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Gate on the verdict
+      if: steps.verify.outputs.fail == 'true'
+      shell: bash
+      env:
+        WL_REASON: ${{ steps.verify.outputs.fail-reason }}
+      run: |
+        echo "::error title=witness-log verify::$(printf '%s' "${WL_REASON:-witness-log verify failed}" | sed 's/%/%25/g')"
+        exit 1
