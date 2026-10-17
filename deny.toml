@@ -30,6 +30,9 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
+    # webpki-roots (the CLI's compiled-in Mozilla CA set for https://
+    # witnesses): the CA data's own permissive license.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 

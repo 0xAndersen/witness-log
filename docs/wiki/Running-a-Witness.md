@@ -1,6 +1,6 @@
 # Running a witness
 
-A witness is a small always-on service (~2 MB binary, a few MB of RAM, a
+A witness is a small always-on service (~4 MB binary, a few MB of RAM, a
 state directory of a few KB plus one small record per log, which must
 persist) that cosigns other people's logs over
 `c2sp.org/tlog-witness`. Its one job is never to cosign two histories of

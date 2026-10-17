@@ -10,11 +10,12 @@
 //! Transport security note: the protocol's integrity does not depend on
 //! TLS -- checkpoints are signed by the log and cosignatures by the
 //! witness, and the client verifies both, so an on-path attacker can
-//! only withhold or delay. The built-in client speaks plain `http://`;
-//! public witnesses SHOULD still sit behind a TLS-terminating proxy for
-//! privacy, and clients reaching `https://` witnesses use any HTTP
-//! library with `witness_log_network::tlog_witness` (see the Python
-//! example in the README).
+//! only withhold or delay. Public witnesses SHOULD still sit behind a
+//! TLS-terminating proxy for privacy, and the built-in client speaks both
+//! `http://` and `https://` (the `https` feature, on by default: rustls on
+//! ring, Mozilla roots compiled in; `WITNESS_LOG_CA_FILE=<pem>` trusts
+//! exactly the CA certificates in that file instead, for a private PKI).
+//! The server side is plain HTTP only; TLS terminates in front of it.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -363,18 +364,25 @@ pub struct Url {
     pub port: u16,
     /// Path prefix without a trailing slash ("" or "/witness").
     pub base_path: String,
+    /// `https://`: the request goes over TLS (the `https` feature).
+    pub tls: bool,
 }
 
 pub fn parse_url(s: &str) -> Result<Url, String> {
-    if s.starts_with("https://") {
-        return Err(format!(
-            "{s}: the built-in client speaks http:// only. Signatures make the protocol \
-             tamper-proof without TLS; for https witnesses use the library from any HTTP client"
-        ));
-    }
-    let rest = s
-        .strip_prefix("http://")
-        .ok_or_else(|| format!("{s}: URL must start with http://"))?;
+    let (rest, tls, default_port) = if let Some(rest) = s.strip_prefix("https://") {
+        if !cfg!(feature = "https") {
+            return Err(format!(
+                "{s}: this witness-log was built without the `https` feature, so it speaks \
+                 http:// only. Rebuild with default features, or use the library from any \
+                 HTTP client"
+            ));
+        }
+        (rest, true, 443)
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        (rest, false, 80)
+    } else {
+        return Err(format!("{s}: URL must start with http:// or https://"));
+    };
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, ""),
@@ -385,7 +393,7 @@ pub fn parse_url(s: &str) -> Result<Url, String> {
             .ok_or_else(|| format!("{s}: bad IPv6 literal"))?;
         let port = match p.strip_prefix(':') {
             Some(p) => p.parse().map_err(|_| format!("{s}: bad port"))?,
-            None => 80,
+            None => default_port,
         };
         (h.to_string(), port)
     } else {
@@ -394,7 +402,7 @@ pub fn parse_url(s: &str) -> Result<Url, String> {
                 h.to_string(),
                 p.parse().map_err(|_| format!("{s}: bad port"))?,
             ),
-            None => (authority.to_string(), 80),
+            None => (authority.to_string(), default_port),
         }
     };
     if host.is_empty() {
@@ -404,6 +412,7 @@ pub fn parse_url(s: &str) -> Result<Url, String> {
         host,
         port,
         base_path: path.trim_end_matches('/').to_string(),
+        tls,
     })
 }
 
@@ -415,6 +424,12 @@ pub fn request(
     body: &[u8],
     timeout: Duration,
 ) -> Result<(u16, Vec<u8>, Option<u64>), String> {
+    // A bad WITNESS_LOG_CA_FILE is a configuration error: say so before
+    // any connection attempt can fail for some other reason.
+    #[cfg(feature = "https")]
+    if url.tls {
+        tls::config()?;
+    }
     let addrs: Vec<SocketAddr> = (url.host.as_str(), url.port)
         .to_socket_addrs()
         .map_err(|e| format!("resolve {}: {e}", url.host))?
@@ -430,7 +445,7 @@ pub fn request(
             Err(e) => last_err = format!("connect {a}: {e}"),
         }
     }
-    let mut stream = stream.ok_or(last_err)?;
+    let stream = stream.ok_or(last_err)?;
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
     let host_header = if url.host.contains(':') {
@@ -444,9 +459,30 @@ pub fn request(
         env!("CARGO_PKG_VERSION"),
         body.len()
     );
+    if url.tls {
+        #[cfg(feature = "https")]
+        {
+            let mut stream = tls::connect(&url.host, stream)?;
+            return exchange(&mut stream, head.as_bytes(), body, timeout);
+        }
+        #[cfg(not(feature = "https"))]
+        return Err("built without the `https` feature".into());
+    }
+    let mut stream = stream;
+    exchange(&mut stream, head.as_bytes(), body, timeout)
+}
+
+/// Write one request and read the whole response, over plain TCP or TLS.
+fn exchange<S: Read + Write>(
+    stream: &mut S,
+    head: &[u8],
+    body: &[u8],
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>, Option<u64>), String> {
     stream
-        .write_all(head.as_bytes())
+        .write_all(head)
         .and_then(|_| stream.write_all(body))
+        .and_then(|_| stream.flush())
         .map_err(|e| format!("send: {e}"))?;
 
     let start = Instant::now();
@@ -510,6 +546,78 @@ pub fn request(
     Ok((status, body, retry_after))
 }
 
+/// Whether `https://` URLs can be used, and what their certificates are
+/// checked against. A `WITNESS_LOG_CA_FILE` that does not load is the
+/// `Err`, as is a build without the `https` feature.
+pub fn https_ready() -> Result<String, String> {
+    #[cfg(feature = "https")]
+    {
+        tls::config()?;
+        Ok(match std::env::var_os("WITNESS_LOG_CA_FILE") {
+            Some(p) => format!(
+                "the CA certificates in WITNESS_LOG_CA_FILE ({})",
+                p.to_string_lossy()
+            ),
+            None => "the Mozilla root set compiled into this binary".to_string(),
+        })
+    }
+    #[cfg(not(feature = "https"))]
+    Err("this binary was built without the `https` feature".into())
+}
+
+/// TLS for the client (`https://` witnesses and directory URLs).
+#[cfg(feature = "https")]
+mod tls {
+    use std::net::TcpStream;
+    use std::sync::{Arc, OnceLock};
+
+    pub type Stream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+
+    /// Mozilla's root set compiled in, or exactly the certificates in
+    /// `WITNESS_LOG_CA_FILE` (PEM) when that is set: a private CA, or a test.
+    pub fn config() -> Result<Arc<rustls::ClientConfig>, String> {
+        static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
+        CONFIG
+            .get_or_init(|| {
+                let mut roots = rustls::RootCertStore::empty();
+                match std::env::var_os("WITNESS_LOG_CA_FILE") {
+                    Some(path) => {
+                        use rustls::pki_types::pem::PemObject;
+                        use rustls::pki_types::CertificateDer;
+                        let shown = path.to_string_lossy().into_owned();
+                        let certs = CertificateDer::pem_file_iter(&path)
+                            .map_err(|e| format!("WITNESS_LOG_CA_FILE {shown}: {e}"))?
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|e| format!("WITNESS_LOG_CA_FILE {shown}: {e}"))?;
+                        let (added, _) = roots.add_parsable_certificates(certs);
+                        if added == 0 {
+                            return Err(format!(
+                                "WITNESS_LOG_CA_FILE {shown}: no usable certificates"
+                            ));
+                        }
+                    }
+                    None => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
+                }
+                let provider = Arc::new(rustls::crypto::ring::default_provider());
+                let config = rustls::ClientConfig::builder_with_provider(provider)
+                    .with_safe_default_protocol_versions()
+                    .map_err(|e| format!("tls: {e}"))?
+                    .with_root_certificates(roots)
+                    .with_no_client_auth();
+                Ok(Arc::new(config))
+            })
+            .clone()
+    }
+
+    pub fn connect(host: &str, sock: TcpStream) -> Result<Stream, String> {
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|_| format!("{host}: not a valid TLS server name"))?;
+        let conn = rustls::ClientConnection::new(config()?, name)
+            .map_err(|e| format!("tls {host}: {e}"))?;
+        Ok(rustls::StreamOwned::new(conn, sock))
+    }
+}
+
 /// Decode a chunked body (reverse proxies in front of witnesses use it).
 fn decode_chunked(mut raw: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
@@ -549,6 +657,18 @@ mod tests {
         assert_eq!((u.port, u.base_path.as_str()), (80, ""));
         let u = parse_url("http://[::1]:9/").unwrap();
         assert_eq!((u.host.as_str(), u.port), ("::1", 9));
+        assert!(!u.tls);
+        #[cfg(feature = "https")]
+        {
+            let u = parse_url("https://witness.example/w/").unwrap();
+            assert_eq!(
+                (u.host.as_str(), u.port, u.base_path.as_str(), u.tls),
+                ("witness.example", 443, "/w", true)
+            );
+            let u = parse_url("https://[::1]:8443").unwrap();
+            assert_eq!((u.host.as_str(), u.port, u.tls), ("::1", 8443, true));
+        }
+        #[cfg(not(feature = "https"))]
         assert!(parse_url("https://x").is_err());
         assert!(parse_url("ftp://x").is_err());
         assert!(parse_url("http://:80").is_err());
