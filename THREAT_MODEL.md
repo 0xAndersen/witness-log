@@ -81,6 +81,25 @@ cryptographic check it should). This is why `WitnessEntry` and
 compute-provider — rather than one, and why a caller should look at both,
 not just whichever one happens to look better.
 
+**A log's own operator is not independent of it, and only the verifier
+can say who that is.** An organisation that runs an agent and also runs
+a witness listed in the verifier's directory can cosign its own agent's
+log. Its receipt is valid; it says nothing a second party saw. The
+verifier excludes such a witness from the independent-operator count
+when it can tell: when the directory lists the log's own key (the same
+operator), or when the caller names the log's operator with
+`--subject-org` (`subject_org`, `subjectOrg`, `SubjectOrg` in the
+libraries). Nothing in a dossier can say who operates its log in a way
+the verifier should believe, so without `--subject-org` an organisation's
+own witness counts as independent of its own agent, and two
+organisations each running an agent and a witness reach WITNESSED for
+each other's logs with one genuinely independent cosigner each. Pass
+`--subject-org`; the CLI prints a reminder when it is absent. A
+three-organisation pilot is the smallest set in which every log is
+cosigned by two operators other than its own
+(`examples/pilot-triangle/run.py`). Found while designing that pilot,
+before any outside operator was registered; fixed in 0.6.0.
+
 **Split views: what a gate below a majority cannot catch.** A witness
 refuses a second history only for a log it has already seen. A log that
 sends history A to one subset of the directory and history B to a
@@ -185,9 +204,13 @@ witness with an HSM-backed signer if your threat model needs it); a
 network-level DDoS (put it behind your usual edge); and an operator who
 runs many witnesses under different names — that is the Sybil problem,
 answered by the verifier's own trusted directory and diversity scoring,
-not by any one witness. The built-in HTTP client speaks plain `http://`:
-the protocol's integrity rests on signatures, not TLS, so an on-path
-attacker can only delay or drop; use a TLS-terminating proxy for privacy.
+not by any one witness. The protocol's integrity rests on signatures, not
+TLS, so an on-path attacker can only delay or drop; use a TLS-terminating
+proxy for privacy. The built-in client speaks `http://` and, since 0.6.0,
+`https://` (rustls, Mozilla roots compiled in, or exactly the CAs in
+`WITNESS_LOG_CA_FILE`); before that it refused `https://`, so the CLI
+could not submit to witnesses registered in the public registry, which
+requires `https://` URLs.
 Throughput is bounded by one fsync per cosignature (decisions are
 serialized so the size check and the persist are atomic): hundreds per
 second on ordinary disks, which is far above what witnessing needs.

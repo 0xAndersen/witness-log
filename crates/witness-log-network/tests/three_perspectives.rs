@@ -661,6 +661,7 @@ mod regulator {
                 revocations: &[],
                 known_heads: &[],
                 evidence: &[],
+                subject_org: None,
             },
         );
         assert!(r.is_internally_consistent() && r.identity_bound);

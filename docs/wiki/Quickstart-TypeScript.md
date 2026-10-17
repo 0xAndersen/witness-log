@@ -139,7 +139,9 @@ Both return `verdict`, `exitCode` (0/11/10/20/30/40, the CLI's contract),
 `contradictions` (why DIVERGED) and `report` (what `witness-log verify
 --json` prints). Both take `knownHeads` (`"<size>:<root hex>"` heads you
 kept earlier), `evidence` (witness equivocation proofs) and
-`allowSubMajority` besides `identity`, `directory` and the gates.
+`allowSubMajority` besides `identity`, `directory` and the gates, and
+`subjectOrg`: the organisation that operates the log, whose own witnesses
+then never count as independent of it.
 
 `UNANCHORED` means: internally consistent (every leaf reproduces the signed
 root, the signature verifies under the identity, each session key traces to

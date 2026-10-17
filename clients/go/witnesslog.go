@@ -160,6 +160,10 @@ type Options struct {
 	// Evidence holds witness equivocation proofs; one that verifies for
 	// this identity makes the verdict Diverged.
 	Evidence []EquivocationProof
+	// SubjectOrg is the organisation that operates this log, as the
+	// verifier knows it. Witnesses with that operator_org never count as
+	// independent operators for this dossier.
+	SubjectOrg string
 }
 
 // KnownHead is a (tree size, root) the verifier already trusts.
@@ -365,7 +369,7 @@ func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 
 	r.ExternallyAnchored = directory != nil
 	if directory != nil && len(d.WitnessReceipts) > 0 {
-		q := EvaluateQuorum(&d.Checkpoint, d.WitnessReceipts, directory, threshold)
+		q := EvaluateQuorumForSubject(&d.Checkpoint, d.WitnessReceipts, directory, threshold, opts.SubjectOrg)
 		if opts.MinReceipts != nil {
 			q.MeetsCountThreshold = q.ValidReceipts >= *opts.MinReceipts
 			q.CountGate = "count >= " + strconv.Itoa(*opts.MinReceipts)
@@ -557,6 +561,14 @@ func formatFloat(f float64) string {
 // the subject's own operator (if its signing key is in the directory)
 // never counts as independent.
 func EvaluateQuorum(sth *SignedTreeHead, receipts []WitnessReceipt, directory *Directory, threshold float64) *Quorum {
+	return EvaluateQuorumForSubject(sth, receipts, directory, threshold, "")
+}
+
+// EvaluateQuorumForSubject is EvaluateQuorum when the verifier knows which
+// organisation operates the log: witnesses with that operator_org count
+// toward the receipt total but never as independent operators.
+func EvaluateQuorumForSubject(sth *SignedTreeHead, receipts []WitnessReceipt, directory *Directory, threshold float64, subjectOrg string) *Quorum {
+	declaredSubject := normalizeLabel(subjectOrg)
 	var subjectOperator *string
 	for i := range directory.Witnesses {
 		if normalizeHex(directory.Witnesses[i].Pubkey) == normalizeHex(sth.SignerPubkey) {
@@ -595,7 +607,7 @@ func EvaluateQuorum(sth *SignedTreeHead, receipts []WitnessReceipt, directory *D
 		operators[operatorKey(entry)] = struct{}{}
 		if !entry.IsProjectOperated {
 			op := normalizeLabel(entry.OperatorOrg)
-			if subjectOperator == nil || *subjectOperator != op {
+			if (subjectOperator == nil || *subjectOperator != op) && (declaredSubject == "" || declaredSubject != op) {
 				independent[op] = struct{}{}
 			}
 		}

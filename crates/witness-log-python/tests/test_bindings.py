@@ -439,6 +439,7 @@ def test_corpus_13_verdicts_known_heads_and_evidence():
                 None,
                 c["known_heads"],
                 json.dumps([v["evidence"][k] for k in c["evidence"]]),
+                c["subject_org"],
             )
         )
         e = c["expect"]
@@ -447,6 +448,7 @@ def test_corpus_13_verdicts_known_heads_and_evidence():
         assert bool(r["failures"]) == e["has_failures"], c["name"]
         assert len(r["contradictions"]) == e["contradictions"], c["name"]
         assert len(r["known_heads_unchecked"]) == e["known_heads_unchecked"], c["name"]
+        assert (r["quorum"] or {}).get("distinct_independent_operators") == e["independent_operators"], c["name"]
         seen.add(r["verdict"])
     assert seen == {"witnessed", "consistent_unwitnessed", "unanchored", "diverged", "invalid"}
     # A malformed known head is the caller's error, not a verdict.

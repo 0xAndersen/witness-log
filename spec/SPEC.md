@@ -796,11 +796,23 @@ own that the dossier's author does not control:
 - **`trusted_directory`** — a witness directory the verifier itself
   trusts, obtained out-of-band. Receipts are scored against THIS
   directory, never against the dossier's own `witness_directory` field.
+- **`subject_org`** — the organisation the verifier knows operates the
+  log being checked, compared with each witness's `operator_org` after
+  the same normalisation (trimmed, case-folded, internal whitespace
+  collapsed). Witnesses of that operator still count as receipts but
+  never as independent operators. A verifier can otherwise tell that a
+  witness shares the log's operator only when the trusted directory lists
+  the log's own key as a witness, so an organisation that runs both an
+  agent and a witness would count as independent of itself. A
+  `subject_org` that names no operator in the directory changes nothing.
+  It can only lower a verdict, never raise one.
 
-`witness-log verify` exposes these as `--identity <hex>` and `--directory
-<path.json>`. The Python binding's `verify_dossier_json` exposes them as
-optional `expected_identity_pubkey` and `trusted_directory_json`
-parameters. Omitting both is a legal, meaningful verification run — it
+`witness-log verify` exposes these as `--identity <hex>`, `--directory
+<path.json>` and `--subject-org <org>`. The Python binding's
+`verify_dossier_json` exposes them as optional `expected_identity_pubkey`,
+`trusted_directory_json` and `subject_org` parameters; the TypeScript,
+Node and wasm verifiers take `subjectOrg` / `subject_org`, and the Go
+library `Options.SubjectOrg`. Omitting both is a legal, meaningful verification run — it
 proves the dossier doesn't contradict itself — but the reachable verdict
 is capped accordingly; see §9.2.
 
@@ -842,7 +854,7 @@ Verification produces exactly one of five verdicts:
 
 | Verdict | What it means | What it does NOT mean |
 |---|---|---|
-| `Witnessed` | Every cryptographic and structural check passes, AND a `trusted_directory` was supplied, AND the valid receipts from witnesses in that directory come from at least **two distinct independent operators** (project-operated witnesses all count as one bucket; witnesses sharing the subject's own operator count as none), AND the receipt count meets the caller's threshold. Diversity is reported as two separate fractions (operator, compute provider) but the gate is the absolute independent-operator count, because a fraction scales with the receipt count and a single colluding operator could satisfy any fraction with enough keys. | Proof against a colluding operator with a captured witness set — see THREAT_MODEL.md's "Witness independence" section. Only as strong as the trusted directory actually is. |
+| `Witnessed` | Every cryptographic and structural check passes, AND a `trusted_directory` was supplied, AND the valid receipts from witnesses in that directory come from at least **two distinct independent operators** (project-operated witnesses all count as one bucket; witnesses sharing the subject's own operator count as none, where the subject's operator is the `operator_org` of a directory entry whose key is the log's identity key, and also the verifier's `subject_org` when supplied, §9.1), AND the receipt count meets the caller's threshold. Diversity is reported as two separate fractions (operator, compute provider) but the gate is the absolute independent-operator count, because a fraction scales with the receipt count and a single colluding operator could satisfy any fraction with enough keys. | Proof against a colluding operator with a captured witness set — see THREAT_MODEL.md's "Witness independence" section. Only as strong as the trusted directory actually is. |
 | `ConsistentUnwitnessed` | Every cryptographic and structural check passes, a `trusted_directory` WAS supplied, but witness coverage is absent, below threshold, or entirely project-operated. | Equivocation resistance. A single-node log can show different histories to different verifiers undetected. |
 | `Unanchored` | Every cryptographic and structural check passes, but no `trusted_directory` was supplied at all (regardless of what the dossier's own `witness_directory` or `witness_receipts` claim). | Anything about authenticity to a party the verifier didn't already trust. This is the ceiling for a fabricated dossier — see §9.1. |
 | `Diverged` | Every check passes, AND the dossier contradicts evidence the verifier supplied about the same identity (§9.1): a known head whose root its first `tree_size` leaves do not reproduce, or an equivocation proof that verifies for this identity. | That this file is the false copy. Divergence is a relation between two histories of one identity, this dossier and the one the evidence commits to; which one a counterparty was shown is a separate question. |

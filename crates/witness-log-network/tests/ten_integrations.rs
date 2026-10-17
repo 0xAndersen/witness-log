@@ -160,6 +160,7 @@ fn integration_5_verify_a_counterpartys_dossier() {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let r = dossier.verify(0.66, &ctx);
     assert!(r.identity_bound, "pinned identity must bind");
@@ -221,6 +222,7 @@ fn integration_6_reach_witnessed_with_real_witnesses() {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let r = dossier.verify(0.5, &ctx);
     assert_eq!(r.verdict, Verdict::Witnessed, "report: {r:?}");

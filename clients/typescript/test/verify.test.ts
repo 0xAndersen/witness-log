@@ -167,6 +167,7 @@ describe("corpus 13: verdicts (RFC-0002)", () => {
         knownHeads: c.known_heads,
         evidence: c.evidence.map((k: string) => v.evidence[k]),
         allowSubMajority: c.allow_sub_majority,
+        subjectOrg: c.subject_org ?? undefined,
       });
       const e = c.expect;
       assert.equal(r.report.verdict, e.verdict, c.name);
@@ -177,6 +178,7 @@ describe("corpus 13: verdicts (RFC-0002)", () => {
       assert.equal(r.report.contradictions.length, e.contradictions, c.name);
       assert.equal(r.report.known_heads_unchecked.length, e.known_heads_unchecked, c.name);
       assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, c.name);
+      assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
       exits.add(e.exit_code);
     }
     assert.deepEqual([...exits].sort((a, b) => a - b), [0, 10, 11, 20, 30, 40]);

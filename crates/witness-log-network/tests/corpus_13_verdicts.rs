@@ -55,6 +55,7 @@ fn corpus_vector_13_verdicts() {
             revocations: &[],
             known_heads: &known_heads,
             evidence: &evidence,
+            subject_org: c["subject_org"].as_str(),
         };
         let r = dossier.verify(c["threshold"].as_f64().unwrap(), &ctx);
         let e = &c["expect"];
@@ -100,6 +101,11 @@ fn corpus_vector_13_verdicts() {
         assert_eq!(
             r.quorum.as_ref().map(|q| q.valid_receipts as u64),
             e["valid_receipts"].as_u64(),
+            "{name}"
+        );
+        assert_eq!(
+            r.quorum.as_ref().map(|q| q.distinct_independent_operators as u64),
+            e["independent_operators"].as_u64(),
             "{name}"
         );
         seen.insert(e["exit_code"].as_u64().unwrap());

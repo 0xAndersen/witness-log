@@ -789,6 +789,7 @@ func TestCorpus13Verdicts(t *testing.T) {
 			KnownHeads       []string `json:"known_heads"`
 			Evidence         []string `json:"evidence"`
 			AllowSubMajority bool     `json:"allow_sub_majority"`
+			SubjectOrg       *string  `json:"subject_org"`
 			Expect           struct {
 				Verdict              string `json:"verdict"`
 				ExitCode             int    `json:"exit_code"`
@@ -798,6 +799,7 @@ func TestCorpus13Verdicts(t *testing.T) {
 				Contradictions       int    `json:"contradictions"`
 				KnownHeadsUnchecked  int    `json:"known_heads_unchecked"`
 				ValidReceipts        *int   `json:"valid_receipts"`
+				IndependentOperators *int   `json:"independent_operators"`
 			} `json:"expect"`
 		} `json:"cases"`
 	}
@@ -813,6 +815,9 @@ func TestCorpus13Verdicts(t *testing.T) {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
 		opts := Options{Threshold: c.Threshold, MinReceipts: c.MinWitnesses}
+		if c.SubjectOrg != nil {
+			opts.SubjectOrg = *c.SubjectOrg
+		}
 		if c.ExpectedIdentity != nil {
 			opts.ExpectedIdentityPubkey = *c.ExpectedIdentity
 		}
@@ -843,6 +848,9 @@ func TestCorpus13Verdicts(t *testing.T) {
 			(len(r.Failures) > 0) != e.HasFailures || len(r.Contradictions) != e.Contradictions ||
 			len(r.KnownHeadsUnchecked) != e.KnownHeadsUnchecked {
 			t.Errorf("%s: report %+v, want %+v", c.Name, r, e)
+		}
+		if (r.Quorum == nil) != (e.IndependentOperators == nil) || (r.Quorum != nil && r.Quorum.DistinctIndependentOperators != *e.IndependentOperators) {
+			t.Errorf("%s: independent operators %+v, want %v", c.Name, r.Quorum, e.IndependentOperators)
 		}
 		if (r.Quorum == nil) != (e.ValidReceipts == nil) || (r.Quorum != nil && r.Quorum.ValidReceipts != *e.ValidReceipts) {
 			t.Errorf("%s: quorum %+v, want valid_receipts %v", c.Name, r.Quorum, e.ValidReceipts)

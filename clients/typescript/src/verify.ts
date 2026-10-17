@@ -199,6 +199,11 @@ export interface VerifyDossierOptions {
    * exit 0 instead of 11. Default false (strict, the CLI's default since 0.5.0).
    */
   allowSubMajority?: boolean;
+  /**
+   * The organisation that operates this log, as you know it. Witnesses
+   * with that `operator_org` never count as independent operators.
+   */
+  subjectOrg?: string;
 }
 
 export interface DossierVerification {
@@ -823,10 +828,12 @@ export function evaluateQuorum(
   receipts: WitnessReceipt[],
   directory: WitnessDirectory,
   threshold: number,
+  subjectOrg?: string,
 ): QuorumResult {
   const signer = sth.signer_pubkey.toLowerCase();
   const subjectEntry = directory.witnesses.find((w) => w.pubkey.toLowerCase() === signer);
   const subjectOperator = subjectEntry ? operatorKey(subjectEntry) : undefined;
+  const declaredSubject = subjectOrg === undefined ? undefined : normalizeLabel(subjectOrg) || undefined;
   const operators = new Set<string>();
   const providers = new Set<string>();
   const counted = new Set<string>();
@@ -843,7 +850,7 @@ export function evaluateQuorum(
     operators.add(operatorKey(entry));
     if (!entry.is_project_operated) {
       const op = normalizeLabel(entry.operator_org ?? "");
-      if (subjectOperator !== op) independent.add(op);
+      if (subjectOperator !== op && declaredSubject !== op) independent.add(op);
     }
     providers.add(computeProviderKey(entry));
     if (entry.is_project_operated) projectOperated += 1;
@@ -1019,7 +1026,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   let quorum: QuorumResult | null = null;
   const receipts = Array.isArray(d.witness_receipts) ? d.witness_receipts : [];
   if (trusted !== undefined && receipts.length > 0) {
-    quorum = evaluateQuorum(checkpoint, receipts, trusted, threshold);
+    quorum = evaluateQuorum(checkpoint, receipts, trusted, threshold, opts.subjectOrg);
     if (opts.minWitnesses !== undefined) {
       quorum.meets_count_threshold = quorum.valid_receipts >= opts.minWitnesses;
       quorum.count_gate = `count >= ${opts.minWitnesses}`;

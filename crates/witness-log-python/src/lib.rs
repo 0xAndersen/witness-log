@@ -352,7 +352,7 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// them); a dossier that contradicts either is "diverged" (RFC-0002).
 /// A dossier that fails a check is "invalid".
 #[pyfunction]
-#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None))]
+#[pyo3(signature = (dossier_json, threshold, expected_identity_pubkey=None, trusted_directory_json=None, min_witnesses=None, revocations_json=None, known_heads=None, evidence_json=None, subject_org=None))]
 #[allow(clippy::too_many_arguments)]
 fn verify_dossier_json(
     py: Python<'_>,
@@ -364,6 +364,7 @@ fn verify_dossier_json(
     revocations_json: Option<String>,
     known_heads: Option<Vec<String>>,
     evidence_json: Option<String>,
+    subject_org: Option<String>,
 ) -> PyResult<String> {
     // Parsing and verifying a long dossier is real CPU work: release the
     // GIL so other Python threads (an agent's event loop, its witnesser)
@@ -378,6 +379,7 @@ fn verify_dossier_json(
             revocations_json,
             known_heads,
             evidence_json,
+            subject_org,
         )
     })
 }
@@ -392,6 +394,7 @@ fn verify_dossier_json_detached(
     revocations_json: Option<String>,
     known_heads: Option<Vec<String>>,
     evidence_json: Option<String>,
+    subject_org: Option<String>,
 ) -> PyResult<String> {
     if min_witnesses == Some(0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -472,6 +475,7 @@ fn verify_dossier_json_detached(
         revocations: &revocations,
         known_heads: &known_heads,
         evidence: &evidence,
+        subject_org: subject_org.as_deref(),
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)

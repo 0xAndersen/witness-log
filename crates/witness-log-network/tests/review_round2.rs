@@ -176,6 +176,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         revocations: &[],
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     let report = dossier.verify(0.66, &ctx);
     assert!(report.bindings_asserted);
@@ -196,6 +197,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         revocations: &known,
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     assert_eq!(
         d3.verify(0.66, &ctx).verdict,
@@ -221,6 +223,7 @@ fn fixed_w2_revocation_applies_to_the_checkpoint_and_from_the_verifier() {
         revocations: &others,
         known_heads: &[],
         evidence: &[],
+        subject_org: None,
     };
     assert_eq!(d4.verify(0.66, &ctx_other).verdict, Verdict::Unanchored);
 }
@@ -314,6 +317,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
             revocations: &[],
             known_heads: &[],
             evidence: &[],
+            subject_org: None,
         },
     );
     let q = r.quorum.as_ref().unwrap();
@@ -338,6 +342,7 @@ fn sound_receipts_counted_against_exact_head_and_trusted_directory_only() {
                     revocations: &[],
                     known_heads: &[],
                     evidence: &[],
+                    subject_org: None,
                 }
             )
             .verdict,
@@ -399,6 +404,7 @@ fn sound_operator_normalisation_and_project_bucket() {
             revocations: &[],
             known_heads: &[],
             evidence: &[],
+            subject_org: None,
         },
     );
     assert_eq!(
@@ -724,6 +730,7 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                     revocations: &[],
                     known_heads: &[],
                     evidence: &[],
+                    subject_org: None,
                 },
             );
             assert_eq!(r.verdict, Verdict::Invalid, "{path:?}");
@@ -741,6 +748,7 @@ fn sound_hostile_dossier_json_does_not_panic_or_upgrade() {
                 revocations: &[],
                 known_heads: &[],
                 evidence: &[],
+                subject_org: None,
             }
         )
         .verdict,

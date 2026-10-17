@@ -550,6 +550,26 @@ pub fn evaluate_quorum(
     directory: &WitnessDirectory,
     threshold_fraction: f64,
 ) -> QuorumResult {
+    evaluate_quorum_for_subject(sth, receipts, directory, threshold_fraction, None)
+}
+
+/// [`evaluate_quorum`] when the verifier knows which organisation operates
+/// the log (`VerifyContext::subject_org`, `verify --subject-org`).
+/// Witnesses with that `operator_org` count toward the receipt total but
+/// never as independent: an organisation's own witness attesting to its
+/// own agent's history is self-attestation. Without it the subject's
+/// operator is known only when the log's key is itself listed in the
+/// directory, which an ordinary agent's key is not, so an organisation
+/// that runs both an agent and a witness would otherwise count as
+/// independent of itself.
+pub fn evaluate_quorum_for_subject(
+    sth: &SignedTreeHead,
+    receipts: &[WitnessReceipt],
+    directory: &WitnessDirectory,
+    threshold_fraction: f64,
+    subject_org: Option<&str>,
+) -> QuorumResult {
+    let declared_subject = subject_org.map(normalize_label).filter(|s| !s.is_empty());
     // A witness run by the same operator as the log being witnessed
     // provides zero independence: that operator is attesting to its own
     // agent's history. If the log's own signing key appears in the
@@ -608,7 +628,9 @@ pub fn evaluate_quorum(
             let op = normalize_label(&entry.operator_org);
             // Exclude the subject's own operator -- self-attestation is
             // not independence, however many keys it holds.
-            if subject_operator.as_deref() != Some(op.as_str()) {
+            if subject_operator.as_deref() != Some(op.as_str())
+                && declared_subject.as_deref() != Some(op.as_str())
+            {
                 independent_operators.insert(op);
             }
         }
@@ -827,6 +849,13 @@ pub struct VerifyContext<'a> {
     /// names makes the verdict `Diverged`, whatever the dossier says.
     /// RFC-0002.
     pub evidence: &'a [tlog_witness::EquivocationProof],
+    /// The organisation that operates this log, as the verifier knows it
+    /// (from the same out-of-band source as the identity). Witnesses whose
+    /// `operator_org` matches it (normalized like every operator label)
+    /// never count as independent operators for this dossier. `None`
+    /// keeps the older rule, which can only exclude the subject's operator
+    /// when the log's own key is listed in the directory.
+    pub subject_org: Option<&'a str>,
 }
 
 /// A head a verifier already trusts for an identity: `--known-head
@@ -1142,11 +1171,12 @@ impl Dossier {
         let externally_anchored = ctx.trusted_directory.is_some();
         let quorum = match ctx.trusted_directory {
             Some(trusted) if !self.witness_receipts.is_empty() => {
-                let mut q = evaluate_quorum(
+                let mut q = evaluate_quorum_for_subject(
                     &self.checkpoint,
                     &self.witness_receipts,
                     trusted,
                     threshold_fraction,
+                    ctx.subject_org,
                 );
                 if let Some(n) = ctx.min_receipts {
                     q.meets_count_threshold = q.valid_receipts >= n;
@@ -2591,6 +2621,7 @@ mod registry_scale_tests {
                 revocations: &[],
                 known_heads: &[],
                 evidence: &[],
+                subject_org: None,
             },
         );
         assert_eq!(
@@ -2611,6 +2642,7 @@ mod registry_scale_tests {
                 revocations: &[],
                 known_heads: &[],
                 evidence: &[],
+                subject_org: None,
             },
         );
         assert_eq!(absolute.verdict, Verdict::Witnessed);
@@ -2624,6 +2656,7 @@ mod registry_scale_tests {
                 revocations: &[],
                 known_heads: &[],
                 evidence: &[],
+                subject_org: None,
             },
         );
         assert_eq!(
