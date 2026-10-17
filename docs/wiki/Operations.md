@@ -40,6 +40,13 @@ persist-before-cosign, the backup rule (`witness.key` + `witness.json` +
 `logs/` as one object), proxy limits, SIGTERM/SIGKILL behaviour, key rotation
 (= new witness), evidence files.
 
+**Scale.** `serve` reads a log's record from `logs/` when a request for
+that log arrives (with a bounded cache), never all records at start, so
+start-up time and memory do not grow with the number of logs witnessed. A
+damaged record fails only its own log closed (HTTP 500, one error line per
+request); never delete it to clear the error, since the log would then be
+enrolled afresh at size 0.
+
 ## Verifier side
 
 Keep your directory under version control; pin `--identity` per agent in

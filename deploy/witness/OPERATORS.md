@@ -54,7 +54,7 @@ The state directory is created `0700` with:
 |---|---|
 | `witness.key` | the 32-byte Ed25519 seed, hex, `0600`. **Private key.** |
 | `witness.json` | key name, org, URL, compute provider, and the public key the directory was initialised with |
-| `logs/<sha256(origin)>.json` | one record per log: origin, log vkey, last cosigned size and root, last cosigned note |
+| `logs/<sha256(origin)>.json` | one record per log: origin, log vkey, last cosigned size and root, last cosigned note. Read when a request for that log arrives, never all at start |
 | `evidence/<sha256(origin)>.json` | written only when a log provably equivocated: two log-signed roots for one size |
 | `witness.lock` | held while `serve` runs; names the PID |
 
@@ -80,6 +80,34 @@ Endpoints:
 Logging is deliberately sparse: one line at start, one when a stale lock
 is removed, one per proven equivocation. Counters are on `GET /`. There is
 no access log; if you want one, your proxy has it.
+
+### Start-up time and memory
+
+`serve` does not read the records in `logs/` when it starts. It lists the
+directory once, by file name (that is the log count `GET /` reports and
+`--max-logs` is checked against), and reads a log's record when a request
+for that log arrives, keeping the 4,096 most recently used records in
+memory. Start-up time and memory therefore stay flat however many logs
+the witness has cosigned. (0.5.0 and earlier parsed every record before
+listening, which took minutes for ~25,000 logs on a cold disk.)
+
+What that changes for an operator:
+
+- A file in `logs/` whose name is not `<sha256(origin)>.json` still stops
+  the start (move it out). A record that is **damaged** (truncated, edited,
+  stored under another log's name) is found only when its log next
+  submits: that log gets HTTP 500 (`witness state for this log is
+  unreadable`) and the witness writes one error line per request naming
+  the file. Every other log is served normally. The witness never treats
+  such a log as new.
+- **Do not delete a damaged record to make the error go away**: the
+  witness would then enroll that log afresh at size 0 and could cosign a
+  fork of it. Restore the file under the rule in section 3 (only from a
+  snapshot newer than the log's last cosignature), or leave the log
+  refused.
+- `witness add-log` takes effect on a running witness without a restart
+  (the record is read on the first request for that log); the `GET /`
+  count includes it from the next start.
 
 ### Behind a reverse proxy (recommended)
 

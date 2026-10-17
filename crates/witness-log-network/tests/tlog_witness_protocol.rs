@@ -615,3 +615,121 @@ fn oversized_checkpoint_bodies_are_refused() {
     .unwrap();
     assert!(AddCheckpointRequest::parse(&body).is_err());
 }
+
+/// A server that keeps each log's record in storage and reads one per
+/// request (`witness serve` since it stopped loading every record at
+/// startup) runs the protocol on a single `KnownLog`. Persisted and
+/// reloaded after every request, that record must decide exactly as the
+/// in-memory service does, and hold exactly what the service holds.
+#[test]
+fn a_record_kept_in_storage_decides_exactly_like_the_service() {
+    let mut log = Log::new();
+    log.append(5);
+    let (mut svc, wkey, _) = witness();
+    svc.add_log(ORIGIN, log.vkey());
+    let mut stored: KnownLogRecord = KnownLog::new(ORIGIN, log.vkey()).to_record();
+
+    let first = log.request(0, None);
+    let fork_same_size = AddCheckpointRequest {
+        old_size: 5,
+        consistency_proof: vec![],
+        checkpoint_note: Checkpoint {
+            origin: ORIGIN.to_string(),
+            tree_size: 5,
+            root_hash: [0x42; 32],
+            extensions: vec![],
+        }
+        .sign(&log.key())
+        .unwrap(),
+    };
+    let wrong_key = AddCheckpointRequest {
+        old_size: 5,
+        consistency_proof: vec![],
+        checkpoint_note: log
+            .checkpoint()
+            .sign(&SigningKey::generate(&mut OsRng))
+            .unwrap(),
+    };
+    let behind = log.request(3, None);
+    let mut requests = vec![
+        first.clone(),
+        log.request(5, None),
+        fork_same_size,
+        wrong_key,
+        behind,
+    ];
+    log.append(3);
+    requests.push(log.request(5, None));
+    log.append(3);
+    let mut junk = log.request(8, None);
+    junk.consistency_proof = vec![[0xAB; 32]; 3];
+    requests.push(junk);
+    requests.push(AddCheckpointRequest {
+        old_size: 8,
+        ..first
+    });
+
+    let mut statuses = Vec::new();
+    for (i, req) in requests.iter().enumerate() {
+        let now = 1_700_000_000 + i as u64;
+        let a = svc.handle_add_checkpoint(req, "witness.example/w1", &wkey, now);
+        let mut k = KnownLog::from_record(&stored).expect("stored record decodes");
+        let b = k.handle_add_checkpoint(req, "witness.example/w1", &wkey, now);
+        assert_eq!(a, b, "request {i}");
+        statuses.push(b.http_status());
+        stored = k.to_record();
+        assert_eq!(svc.export_state().logs, vec![stored.clone()], "request {i}");
+    }
+    assert_eq!(statuses, [200, 200, 422, 403, 409, 200, 422, 400]);
+    assert_eq!(stored.tree_size, 8);
+
+    // A request naming another log is not this record's business.
+    let mut k = KnownLog::from_record(&stored).unwrap();
+    let other = AddCheckpointRequest {
+        old_size: 0,
+        consistency_proof: vec![],
+        checkpoint_note: Checkpoint {
+            origin: "other.example/log".to_string(),
+            ..log.checkpoint()
+        }
+        .sign(&log.key())
+        .unwrap(),
+    };
+    let out = k.handle_add_checkpoint(&other, "witness.example/w1", &wkey, 1);
+    assert_eq!(out.http_status(), 404, "{out:?}");
+    assert_eq!(k.to_record(), stored, "unchanged");
+
+    // A malformed stored record is an error, never a log at size 0.
+    let mut bad = stored.clone();
+    bad.log_vkey = "not a vkey".into();
+    assert!(KnownLog::from_record(&bad).is_err());
+    let mut bad = stored;
+    bad.root_hash = "zz".into();
+    assert!(KnownLog::from_record(&bad).is_err());
+}
+
+#[test]
+fn canonical_enrollment_of_a_single_record() {
+    use witness_log_core::c2sp::canonical_origin;
+    let id = IdentityKeypair::generate();
+    let key = SigningKey::from_bytes(&id.to_bytes());
+    let mut wl = WitnessLog::resume(id, 0);
+    wl.append_intent(b"x");
+    let origin = canonical_origin(&key.verifying_key());
+    let request = |origin: &str, signer: &SigningKey| AddCheckpointRequest {
+        old_size: 0,
+        consistency_proof: vec![],
+        checkpoint_note: wl.c2sp_checkpoint(origin).sign(signer).unwrap(),
+    };
+    let k = KnownLog::from_canonical_request(&request(&origin, &key)).expect("enrolls");
+    assert_eq!(
+        k,
+        KnownLog::new(
+            &origin,
+            VerifierKey::for_ed25519(&origin, &key.verifying_key())
+        )
+    );
+    let other = SigningKey::generate(&mut OsRng);
+    assert!(KnownLog::from_canonical_request(&request(&origin, &other)).is_none());
+    assert!(KnownLog::from_canonical_request(&request("example.com/x", &key)).is_none());
+}
