@@ -31,6 +31,7 @@ workflow itself. One matrix job per adapter:
 | `pydantic-ai` | `pydantic-ai-slim` | `tests/test_pydantic_ai_live.py` |
 | `autogen` | `autogen-agentchat autogen-core autogen-ext` | `tests/test_autogen_live.py` |
 | `llamaindex` | `llama-index-core` | `tests/test_llamaindex_live.py` |
+| `claude-agent-sdk` | `claude-agent-sdk` | `tests/test_claude_agent_sdk_live.py` |
 | `crewai` | `crewai` | `test_integrations.py::test_crewai_crew` |
 
 Each job builds the wheel with `maturin build --release`, installs it,
@@ -54,7 +55,12 @@ Every `tests/test_<adapter>_live.py`:
    autogen-ext's `ReplayChatCompletionClient`, LlamaIndex's
    `MockFunctionCallingLLM`, LangChain's `GenericFakeChatModel`) or a
    minimal subclass of its model interface (Google ADK's `BaseLlm`,
-   CrewAI's `BaseLLM`);
+   CrewAI's `BaseLLM`). The Claude Agent SDK runs its model inside the
+   Claude Code CLI, so its test replaces the CLI instead: a scripted
+   `Transport` that speaks the CLI's side of the control protocol
+   (answers `initialize`, sends `hook_callback` requests for parallel tool
+   calls built from the SDK's hook-input TypedDicts, ends with a
+   `result`), driven by the SDK's own `query()`;
 3. runs the framework's own agent loop with two parallel calls of one
    tool, one tool that raises, and, where the framework has one, a
    handoff;

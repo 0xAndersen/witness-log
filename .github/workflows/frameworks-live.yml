@@ -55,6 +55,9 @@ jobs:
           - adapter: llamaindex
             packages: llama-index-core
             tests: tests/test_llamaindex_live.py
+          - adapter: claude-agent-sdk
+            packages: claude-agent-sdk
+            tests: tests/test_claude_agent_sdk_live.py
           - adapter: crewai
             # crewai pins mcp<2; it gets this job's own environment anyway.
             packages: crewai

@@ -25,6 +25,12 @@ prints (and does not write) the entries for `.claude/settings.json`:
 From then on every tool call is an intent leaf (`PreToolUse`) and a result
 leaf (`PostToolUse`), fsynced before the hook returns.
 
+An agent built on the Claude Agent SDK gets the same payloads in process,
+with no hook command and no daemon:
+`ClaudeAgentOptions(hooks=witness_hooks(log))` from
+`witness_log.integrations.claude_agent_sdk` (see
+[Framework guides](Framework-Guides#claude-agent-sdk)).
+
 ## What is recorded
 
 Claude Code's event (`session_id`, `transcript_path`, `cwd`,

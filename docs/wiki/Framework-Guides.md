@@ -10,6 +10,7 @@ has one.
 | framework | install | adapter | handoff |
 |---|---|---|---|
 | OpenAI Agents SDK | `pip install "witness-log[openai-agents]"` | `witness_log.integrations.openai_agents.WitnessLogAudit` / `WitnessLogHooks` | `on_handoff` |
+| Claude Agent SDK | `pip install "witness-log[claude-agent-sdk]"` | `witness_log.integrations.claude_agent_sdk.witness_hooks` / `WitnessLogClaudeHooks` | – |
 | LangGraph | `pip install "witness-log[langgraph]"` | `witness_log.integrations.langgraph.WitnessLogGraphHandler` | `Command(goto=...)` |
 | LangChain | `pip install "witness-log[langchain]"` | `witness_log.integrations.langchain.WitnessLogCallbackHandler` | – |
 | Google ADK | `pip install "witness-log[google-adk]"` | `witness_log.integrations.google_adk.WitnessLogPlugin` | `transfer_to_agent` |
@@ -34,7 +35,10 @@ What is common to all of them:
   "t", "call_id", "agent", ...}`, the result to `{"tool", "intent_index",
   "outcome", "value", ...}` with `outcome` `"ok"` or `"error"`. A tool
   that raises is recorded as `"error"` whether the framework re-raises it,
-  swallows it into a message for the model, or asks for a retry.
+  swallows it into a message for the model, or asks for a retry. The
+  Claude Agent SDK adapter is the exception: it writes the Claude Code
+  hook's payloads (`hook.claude-code v1`), so its records read like
+  `witness-log-hook`'s; its results carry `intent_index` too.
 - **Never raises into the framework** unless you pass
   `raise_on_error=True`; append failures are kept in `.errors`.
   `record_output=False` keeps return values out of the result leaf
@@ -127,6 +131,69 @@ from agents import function_tool
 def get_balance(account: str) -> dict:
     return {"account": account, "balance": 42}
 ```
+
+## Claude Agent SDK
+
+```python
+import witness_log
+from claude_agent_sdk import ClaudeAgentOptions, query
+from witness_log.integrations.claude_agent_sdk import WitnessLogClaudeHooks, witness_hooks
+
+log = witness_log.open("agent.jsonl")
+options = ClaudeAgentOptions(hooks=witness_hooks(log), allowed_tools=["Read", "Grep"])
+async for message in query(prompt="summarise the open invoices", options=options):
+    ...
+```
+
+`witness_hooks(log)` is the `hooks=` value: a `PreToolUse`, a
+`PostToolUse` and a `PostToolUseFailure` `HookMatcher`, so every tool call
+the agent makes (built-in tools, MCP tools, in-process `@tool` /
+`create_sdk_mcp_server` tools alike) is an intent leaf and a result leaf.
+To keep `.errors` and the kept payloads, or to merge into options that
+already have hooks of their own:
+
+```python
+audit = WitnessLogClaudeHooks(log)
+options = audit.options(ClaudeAgentOptions(model="...", hooks=my_hooks))   # a copy; your hooks are kept
+```
+
+The SDK hands a hook callback the same JSON object Claude Code pipes to a
+command hook, so the payloads are the ones [`witness-log-hook`](Hooks)
+writes, built by the same function (`witness_log.hook.normalize`), and a
+dossier from the SDK reads like one from Claude Code:
+
+```
+PreToolUse          -> intent leaf:  {"profile": "hook.claude-code v1", "event": "PreToolUse",
+                                      "session_id", "tool_name", "tool_input", "tool_use_id", "cwd"}
+PostToolUse         -> result leaf:  the same plus "tool_response" and "intent_index"
+PostToolUseFailure  -> result leaf:  every field but transcript_path ("error", "is_interrupt", ...)
+                                     plus "intent_index"
+```
+
+The intent is byte for byte what the hook writes for that event;
+`intent_index`, the leaf index of the call's intent, is the one key the
+hook does not write (it is the link every adapter's result carries).
+Calls are paired by `tool_use_id`, so parallel calls of one tool are
+recorded separately, and the callbacks are safe across event loops and
+threads. `record_output=False` leaves `tool_response` out.
+
+Failure policy: a callback never raises into the SDK and never blocks the
+tool. A failed append is kept in `.errors` and the callback answers `{}`
+(no decision). `strict=True` is the SDK form of `witness-log-hook
+--strict`: a `PreToolUse` whose intent leaf could not be written answers
+`permissionDecision: "deny"` with the reason, so the tool does not run
+unrecorded. There is no `raise_on_error`: Claude Code logs a hook callback
+that fails and carries on, so raising would block nothing.
+
+With an `AgentJournals` in place of the log, a call made inside a subagent
+(the `Agent` / `Task` tool) goes to the journal named by its `agent_type`
+and a main-thread call to `agent=` (default `"main"`); the payload itself
+does not name the subagent, as with the hook. No handoff attestation is
+written: the hook events do not say which `Agent` call started a
+subagent. Only the configuration needs the SDK; the module imports
+without it. Tested against `claude-agent-sdk` 0.2.168 and the 0.1.50
+floor; see [`examples/claude-agent-sdk`](https://github.com/0xAndersen/witness-log/tree/main/examples/claude-agent-sdk)
+for a run against the real agent.
 
 ## LangGraph
 
