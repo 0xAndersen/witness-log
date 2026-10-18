@@ -209,6 +209,17 @@ jobs:
           sleep 3
           python -c "import json; w=json.load(open('fleet-a/directory.json'))['witnesses']+json.load(open('fleet-b/directory.json'))['witnesses']; json.dump({'witnesses': w}, open('directory.json','w'))"
           python examples/swarm/outside.py --agents 200 --directory directory.json --out swarm-report/outside --processes 4 --threads 12 --operator-serve-seconds 60
+          # The gate checks itself: with a verifier that calls everything
+          # WITNESSED, or witnesses that accept a fork, junk and an oversized
+          # body, the same personas must fail the run, and on a failed
+          # expectation, not a crash. (pytest covers this too, offline.)
+          for fault in weak-verifier lax-witness; do
+            if python examples/swarm/outside.py --agents 300 --only auditor,adversary,verifier_only --directory directory.json --out swarm-report/fault-$fault --processes 2 --threads 8 --inject-fault $fault; then
+              echo "::error::outside.py --inject-fault $fault exited 0: its expectations do not gate the run"; exit 1
+            fi
+            grep -Eq '^- expectations checked: [0-9,]+; failed: [1-9]' swarm-report/fault-$fault/REPORT.md \
+              || { echo "::error::outside.py --inject-fault $fault failed, but not on a failed expectation"; exit 1; }
+          done
           kill $(cat a.pid) $(cat b.pid)
         if: matrix.python != '3.9'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -219,6 +230,7 @@ jobs:
             swarm-report/REPORT.md
             swarm-report/results.json
             swarm-report/outside/REPORT.md
+            swarm-report/fault-*/REPORT.md
 
   integrations:
     # The framework adapters (witness_log.integrations.*) run each

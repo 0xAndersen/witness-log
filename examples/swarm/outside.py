@@ -19,6 +19,24 @@ operation and the verdict distribution.
 
 Processes x threads give the in-flight concurrency (default 8 x 16 = 128
 agents at any moment); the witnesses see all of them.
+
+What a persona checks is an *expectation* (`Agent.expect`): a tampered
+dossier verifies INVALID, a fork is refused with 422, an oversized body
+with 413, a redacted chain stays consistent, an honest dossier reaches
+WITNESSED. Each failed expectation is kept with what was expected and what
+was observed, and counts toward the exit status. A *note* is informational
+only (nothing to audit yet, an optional dependency missing) and never
+fails the run. Exit status: crashed agents + failed expectations + 1 if
+any operation failed, capped at 99; 0 means every check held.
+
+`--inject-fault NAME` proves that gate works: `weak-verifier` makes every
+verdict the CLI or the library returns arrive as WITNESSED (exit 0), as
+from a verifier that accepts anything; `lax-witness` makes the adversary
+see witnesses accept the fork, the junk and the oversized body it sends.
+Either must make the run exit non-zero:
+
+    python examples/swarm/outside.py --agents 100 --only auditor,adversary,verifier_only \\
+        --directory /tmp/fleet/directory.json --inject-fault weak-verifier   # exits non-zero
 """
 from __future__ import annotations
 
@@ -60,9 +78,27 @@ class Agent:
         self.journal = os.path.join(self.dir, "agent.jsonl")
         self.seed = hashlib.sha256(f"swarm-seed-{cfg['run_id']}-{idx}".encode()).digest()
         self.ops: list[dict] = []
+        # Informational only: never fails the run.
         self.notes: list[str] = []
+        # What this agent checked (expectation -> times checked) and every
+        # check that did not hold, with what was expected and observed.
+        self.checks: collections.Counter = collections.Counter()
+        self.failed: list[dict] = []
         self.verdicts: list[str] = []
         self.rng = random.Random(idx)
+
+    def expect(self, check: str, ok, expected, observed) -> bool:
+        """Record a security or correctness expectation. Unlike a note, one
+        that does not hold fails the run: it is counted, reported with
+        `expected` and `observed`, and moves the exit status."""
+        self.checks[check] += 1
+        if not ok:
+            self.failed.append({"check": check, "expected": str(expected)[:200], "observed": str(observed)[:400]})
+        return bool(ok)
+
+    def fault(self) -> str | None:
+        """The fault `--inject-fault` asked for, if any."""
+        return self.cfg.get("inject_fault")
 
     def op(self, name: str, fn, *a, **kw):
         t = time.perf_counter()
@@ -118,6 +154,8 @@ def submit_py(agent: Agent, log, witnesses: list[dict], old: dict | None = None)
                 try:
                     o = int(body.strip())
                 except ValueError:
+                    # Context for the failed witness.add-checkpoint operation
+                    # recorded below (st stays 409), which already fails the run.
                     agent.notes.append(f"409 without a size from {w['name']}: {body[:60]!r}")
                     break
                 continue
@@ -146,13 +184,47 @@ def verify_py(agent: Agent, dossier_json: str, ident: str, directory: dict | Non
     rep = json.loads(agent.op("verify_dossier_json", wl.verify_dossier_json, dossier_json, threshold, ident,
                               json.dumps(directory) if directory else None,
                               MIN_WITNESSES if directory else None))
+    if agent.fault() == "weak-verifier":
+        rep["verdict"] = "witnessed"
     agent.verdicts.append(rep["verdict"])
     return rep
 
 
 def cli(agent: Agent, *args, timeout=120):
     r = subprocess.run([agent.cfg["cli"], *args], capture_output=True, text=True, timeout=timeout)
-    return r.returncode, r.stdout, r.stderr
+    code, out = r.returncode, r.stdout
+    if agent.fault() == "weak-verifier" and args and args[0] in ("verify", "diff"):
+        # What a verifier that accepts anything would answer: WITNESSED, exit 0.
+        code = 0
+        if "--json" in args:
+            try:
+                rep = json.loads(out)
+                rep["verdict"] = "WITNESSED"
+                if "exit_code" in rep:
+                    rep["exit_code"] = 0
+                out = json.dumps(rep)
+            except ValueError:
+                pass
+    return code, out, r.stderr
+
+
+# Refusals a witness owes an adversary; `--inject-fault lax-witness` turns them into 200.
+REFUSALS = (400, 403, 413, 422)
+
+
+def probe(agent: Agent, url: str, body) -> tuple[int, str]:
+    """An adversarial POST: retried while the witness is busy (connection
+    refused, 429, 503), never on a refusal, which is the answer."""
+    st, out = 0, ""
+    for attempt in range(6):
+        st, out, _ = http("POST", url, body)
+        if st not in (0, 429, 503):
+            break
+        wait = RETRY_AFTER.get(url, 0)
+        time.sleep(min(wait, 60) if wait else 0.5 * (attempt + 1))
+    if agent.fault() == "lax-witness" and st in REFUSALS:
+        st = 200
+    return st, out
 
 
 # -------------------------------------------------------------- personas
@@ -187,8 +259,8 @@ def p_coder(a: Agent):
     rep = verify_py(a, dossier, ident, a.directory())
     open(os.path.join(a.dir, "dossier.json"), "w").write(dossier)
     log.close()
-    if rep["verdict"] != "witnessed":
-        a.notes.append(f"expected witnessed, got {rep['verdict']} with {n} receipts {dict(statuses)}")
+    a.expect("an honest dossier cosigned by the network verifies WITNESSED", rep["verdict"] == "witnessed",
+             "witnessed", f"{rep['verdict']} with {n} receipts, add-checkpoint statuses {dict(statuses)}")
 
 
 def p_researcher(a: Agent):
@@ -220,8 +292,7 @@ def p_trader(a: Agent):
         idx = a.rng.randrange(600)
         size, root, path = a.op("inclusion_proof", log.inclusion_proof, idx)
         ok = a.op("verify_inclusion", wl.verify_inclusion, log.leaf_hash_hex(idx), idx, size, path, root)
-        if not ok:
-            a.notes.append(f"inclusion proof for leaf {idx} failed to verify")
+        a.expect("an inclusion proof for a logged leaf verifies", ok, True, f"{ok} for leaf {idx} of {size}")
     ident = log.identity_pubkey_hex()
     responses, statuses, _ = submit_py(a, log, a.pick_witnesses(log, 6))
     dossier, _ = a.op("dossier_from_responses", log.dossier_from_responses, responses)
@@ -237,24 +308,23 @@ def p_support(a: Agent):
     a.op("append_intent", log.append_intent, b"refund approved")
     a.op("sync", log.sync)
     for i in pii[:3]:
-        if not a.op("forget", log.forget, i):
-            a.notes.append(f"forget({i}) returned False on a live leaf")
+        erased = a.op("forget", log.forget, i)
+        a.expect("forget() erases a live payload leaf", erased, True, f"forget({i}) returned {erased}")
     log.close()
     log, dropped = a.op("resume", wl.JournaledLog.resume, a.journal)
-    if dropped:
-        a.notes.append(f"resume dropped {dropped} lines after a clean close")
-    if not a.op("can_forget", log.can_forget, pii[3]):
-        a.notes.append("salt for a pre-restart leaf is gone")
-    if not a.op("forget.after_restart", log.forget, pii[3]):
-        a.notes.append("forget after restart returned False")
+    a.expect("resume after a clean close drops nothing", dropped == 0, "0 lines dropped", f"{dropped} lines dropped")
+    can = a.op("can_forget", log.can_forget, pii[3])
+    a.expect("the salt of a leaf written before a restart survives resume", can, True, f"can_forget({pii[3]}) = {can}")
+    erased = a.op("forget.after_restart", log.forget, pii[3])
+    a.expect("forget() after a restart erases a pre-restart leaf", erased, True, f"forget({pii[3]}) returned {erased}")
     ident = log.identity_pubkey_hex()
     dossier = a.op("to_dossier_json", log.to_dossier_json)
     rep = verify_py(a, dossier, ident, None)
-    if not rep["internally_consistent"]:
-        a.notes.append("dossier inconsistent after redactions")
+    a.expect("a dossier stays internally consistent after redactions", rep["internally_consistent"], True,
+             f"internally_consistent={rep['internally_consistent']}, verdict {rep['verdict']}")
     salts = open(a.journal + ".salts").read().splitlines()
-    if len(salts) != 2:
-        a.notes.append(f"salt sidecar holds {len(salts)} records, expected 2")
+    # 6 payload leaves (5 memory, 1 intent), 4 forgotten: an erased salt must be gone from disk.
+    a.expect("forgotten salts are removed from the .salts sidecar", len(salts) == 2, "2 salt records", f"{len(salts)} salt records")
     log.close()
 
 
@@ -270,8 +340,9 @@ def p_pipeline(a: Agent):
     db = json.loads(log_b.to_dossier_json())
     ha = da["leaves"][-1]["handoff_state_hash"]
     hb = db["leaves"][-1]["handoff_state_hash"]
-    if ha != hb or ha != hashlib.sha256(state).hexdigest():
-        a.notes.append("handoff state hashes disagree")
+    want = hashlib.sha256(state).hexdigest()
+    a.expect("both sides of a handoff commit to SHA-256 of the same state", ha == hb == want,
+             f"sent = received = {want}", f"sent {ha}, received {hb}")
     a.op("sync", log_a.sync)
     a.op("sync", log_b.sync)
     for log in (log_a, log_b):
@@ -303,14 +374,16 @@ def p_mcp_user(a: Agent):
             for i in range(5):
                 r = data(await c.call_tool("append_audit_step", {"session_id": sid, "intent": f"step {i}", "tool_name": "search",
                                                                 "payload": {"q": i}, "state_transition": {"hits": i * 3}}))
-                if r["checkpoint"]["tree_size"] != 1 + 2 * (i + 1) or r["result_index"] != r["intent_index"] + 1:
-                    a.notes.append(f"MCP indices off: {r['intent_index']}/{r['result_index']} size {r['checkpoint']['tree_size']}")
+                want = (1 + 2 * (i + 1), r["intent_index"] + 1)
+                a.expect("MCP append_audit_step returns the indices and checkpoint size it wrote",
+                         (r["checkpoint"]["tree_size"], r["result_index"]) == want,
+                         f"size {want[0]}, result_index {want[1]}",
+                         f"size {r['checkpoint']['tree_size']}, intent {r['intent_index']}, result {r['result_index']}")
             red = data(await c.call_tool("redact_audit_entry", {"session_id": sid, "entry_index": 1}))
-            if not red["erased"]:
-                a.notes.append("MCP redaction did not erase")
+            a.expect("MCP redact_audit_entry erases a live entry", red["erased"], True, f"erased={red['erased']}")
             v = data(await c.call_tool("verify_chain_integrity", {"session_id": sid}))
-            if v["tamper_alerts"]:
-                a.notes.append(f"MCP tamper alerts: {v['tamper_alerts']}")
+            a.expect("MCP verify_chain_integrity raises no tamper alert on an honest chain", not v["tamper_alerts"],
+                     "no tamper alerts", v["tamper_alerts"])
             sub = data(await c.call_tool("submit_to_witnesses", {"session_id": sid, "directory": a.directory(), "max_witnesses": 6, "min_witnesses": MIN_WITNESSES}))
             a.verdicts.append(sub["verdict"])
             return init["identity_pubkey"]
@@ -332,20 +405,17 @@ def p_cli_only(a: Agent):
     json.dump(sub, open(dpath, "w"))
     out = os.path.join(a.dir, "dossier.json")
     code, so, se = a.op("cli.submit", cli, a, "witness", "submit", a.journal, "--directory", dpath, "--out", out)
-    if code != 0:
-        a.notes.append(f"cli submit exit {code}: {se.strip()[-200:]}")
+    if not a.expect("`witness submit` of an honest journal exits 0", code == 0, "exit 0", f"exit {code}: {se.strip()[-200:]}"):
         return
     code, so, se = a.op("cli.verify", cli, a, "verify", out, "--identity", ident, "--directory", dpath, "--json", "--min-witnesses", str(MIN_WITNESSES))
     rep = json.loads(so)
     a.verdicts.append(rep["verdict"].lower().replace("-", "_"))
-    if code != 0:
-        a.notes.append(f"cli verify exit {code}: {rep['verdict']}")
+    a.expect("`verify` of the dossier `submit` wrote, against the same directory, exits 0 (WITNESSED)", code == 0,
+             "exit 0 WITNESSED", f"exit {code} {rep['verdict']}")
     code, so, se = a.op("cli.diff", cli, a, "diff", out, out)
-    if code != 0:
-        a.notes.append(f"diff of identical copies exit {code}")
+    a.expect("`diff` of two identical copies exits 0", code == 0, "exit 0", f"exit {code}")
     code, so, se = a.op("cli.explain", cli, a, "explain", rep["verdict"].lower(), "--json")
-    if code != 0:
-        a.notes.append(f"explain {rep['verdict']} exit {code}")
+    a.expect("`explain <verdict> --json` exits 0", code == 0, "exit 0", f"explain {rep['verdict']}: exit {code}")
 
 
 def p_crash_restart(a: Agent):
@@ -362,8 +432,10 @@ def p_crash_restart(a: Agent):
         "log.sync(); os._exit(137)\n"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
-    if r.returncode != 137:
-        a.notes.append(f"child exited {r.returncode}: {r.stderr[-200:]}")
+    # The crash is the premise of the checks below: a child that failed
+    # some other way makes them meaningless, so it fails the run too.
+    a.expect("the crashing child syncs 20 leaves, then dies with os._exit(137)", r.returncode == 137,
+             "exit 137", f"exit {r.returncode}: {r.stderr[-200:]}")
     t = time.perf_counter()
     try:
         log, dropped = wl.JournaledLog.resume(a.journal)
@@ -371,11 +443,10 @@ def p_crash_restart(a: Agent):
     except Exception as e:  # noqa: BLE001
         a.ops.append({"op": "resume.after_crash", "ms": (time.perf_counter() - t) * 1000, "ok": False, "error": str(e)[:300]})
         raise
-    if log.tree_size() != 21:
-        a.notes.append(f"tree size {log.tree_size()} after crash, expected 21")
+    a.expect("every synced leaf survives a crash", log.tree_size() == 21, "tree size 21", f"tree size {log.tree_size()}")
     bindings = json.loads(log.to_dossier_json())["key_bindings"]
-    if len(bindings) != 3:
-        a.notes.append(f"{len(bindings)} bindings after 3 sessions")
+    a.expect("one key binding per session, across a crash", len(bindings) == 3, "3 bindings after 3 sessions",
+             f"{len(bindings)} bindings")
     ident = log.identity_pubkey_hex()
     responses, _, _ = submit_py(a, log, a.pick_witnesses(log, 4))
     dossier, _ = log.dossier_from_responses(responses)
@@ -383,47 +454,63 @@ def p_crash_restart(a: Agent):
     log.close()
 
 
+SAMPLE_DOSSIER = os.path.join(REPO, "examples", "sample-dossier.json")
+
+
 def p_auditor(a: Agent):
     """Verifies a stranger's dossier offline, then a tampered copy, with the binary."""
     shared = a.cfg["shared"]
     cands = [f for f in os.listdir(shared) if f.endswith(".json")] if os.path.isdir(shared) else []
     if not cands:
-        a.notes.append("no dossiers to audit yet")
         time.sleep(1)
         cands = [f for f in os.listdir(shared) if f.endswith(".json")] if os.path.isdir(shared) else []
-        if not cands:
-            return
-    pick = os.path.join(shared, a.rng.choice(cands))
+    if cands:
+        pick = os.path.join(shared, a.rng.choice(cands))
+    else:
+        # Nothing from the swarm yet (auditors run last, but a batch can
+        # get there first): audit the committed sample rather than nothing,
+        # so the tamper checks below always run.
+        a.notes.append("no swarm dossier to audit yet; audited examples/sample-dossier.json")
+        pick = SAMPLE_DOSSIER
     d = json.load(open(pick))
     dpath = os.path.join(a.dir, "directory.json")
     json.dump(a.directory(), open(dpath, "w"))
     code, so, se = a.op("cli.verify.other", cli, a, "verify", pick, "--identity", d["identity_pubkey"], "--directory", dpath, "--json", "--min-witnesses", str(MIN_WITNESSES))
     try:
         rep = json.loads(so)
-    except Exception:
-        a.notes.append(f"verify produced no JSON: {se[-200:]}")
+    except ValueError:
+        rep = None
+    if not a.expect("`verify --json` prints a JSON report", rep is not None, "JSON on stdout", f"exit {code}: {so[:80]!r} {se[-200:]}"):
         return
     a.verdicts.append(rep["verdict"].lower().replace("-", "_"))
     # Against the whole registry a handful of cosigners is not a strict
     # majority: WITNESSED exits 11 by default since 0.5.0 (RFC-0002).
-    if code not in (0, 10, 11):
-        a.notes.append(f"stranger's dossier verified {rep['verdict']} (exit {code})")
-    if code == 11 and not rep["report"].get("split_view_unsafe"):
-        a.notes.append("exit 11 without split_view_unsafe in the report")
-    d["leaves"][a.rng.randrange(len(d["leaves"]))]["payload_hash"] = "ab" * 32
+    a.expect("a stranger's untouched dossier is not INVALID or DIVERGED", code in (0, 10, 11),
+             "exit 0, 10 or 11", f"exit {code} {rep['verdict']}")
+    if code == 11:
+        a.expect("exit 11 comes with split_view_unsafe in the report", rep["report"].get("split_view_unsafe"),
+                 "split_view_unsafe true", f"split_view_unsafe={rep['report'].get('split_view_unsafe')}")
+    leaf = a.rng.randrange(len(d["leaves"]))
+    d["leaves"][leaf]["payload_hash"] = "ab" * 32
     tp = os.path.join(a.dir, "tampered.json")
     json.dump(d, open(tp, "w"))
     code2, so2, _ = a.op("cli.verify.tampered", cli, a, "verify", tp, "--identity", d["identity_pubkey"], "--directory", dpath, "--json", "--min-witnesses", str(MIN_WITNESSES))
-    if code2 != 40:
-        a.notes.append(f"tampered dossier exit {code2}, expected 40 (INVALID)")
+    a.expect("a tampered dossier verifies INVALID (exit 40)", code2 == 40, "exit 40 INVALID",
+             f"exit {code2} ({_verdict_of(so2)}) after editing leaf {leaf}'s payload_hash")
     code3, so3, _ = a.op("cli.diff", cli, a, "diff", pick, tp)
-    if code3 != 40:
-        a.notes.append(f"diff of tampered copy exit {code3}, expected 40")
+    a.expect("`diff` of a dossier and its tampered copy exits 40", code3 == 40, "exit 40", f"exit {code3}")
     # A head the verifier holds that the dossier does not reproduce: DIVERGED.
     size = len(d["leaves"])
     code4, so4, _ = a.op("cli.verify.known_head", cli, a, "verify", pick, "--identity", d["identity_pubkey"], "--known-head", f"{max(size - 1, 1)}:{'cd' * 32}", "--json")
-    if code4 != 30:
-        a.notes.append(f"contradicted --known-head exit {code4}, expected 30")
+    a.expect("a contradicted --known-head verifies DIVERGED (exit 30)", code4 == 30, "exit 30 DIVERGED",
+             f"exit {code4} ({_verdict_of(so4)})")
+
+
+def _verdict_of(json_out: str) -> str:
+    try:
+        return str(json.loads(json_out)["verdict"])
+    except (ValueError, KeyError, TypeError):
+        return "no JSON verdict"
 
 
 def p_adversary(a: Agent):
@@ -441,21 +528,24 @@ def p_adversary(a: Agent):
         forked.append_intent(f"forged {i}".encode())
     got = collections.Counter()
     for w in ws:
-        st, body, _ = http("POST", w["url"] + "/add-checkpoint", forked.add_checkpoint_body(0))
+        url = w["url"].rstrip("/") + "/add-checkpoint"
+        st, body = probe(a, url, forked.add_checkpoint_body(0))
         if st == 409:
-            st, body, _ = http("POST", w["url"] + "/add-checkpoint", forked.add_checkpoint_body(int(body.strip())))
+            try:
+                st, body = probe(a, url, forked.add_checkpoint_body(int(body.strip())))
+            except ValueError:
+                pass  # a 409 without a size: counted as 409, not 422, below
         got[st] += 1
-    a.ops.append({"op": "fork.attempt", "ms": 0, "ok": 200 not in got, **({} if 200 not in got else {"error": "a fork was cosigned"})})
-    if got[422] != len(ws):
-        a.notes.append(f"fork statuses {dict(got)}")
+    a.expect("no witness cosigns a fork of a head it cosigned", got[200] == 0, "0 cosignatures", f"statuses {dict(got)}")
+    a.expect("every witness refuses a same-size fork with 422", got[422] == len(ws), f"422 from all {len(ws)}",
+             f"statuses {dict(got)}")
     forked.close()
     for w in ws[:2]:
-        st, _, _ = http("POST", w["url"] + "/add-checkpoint", os.urandom(40).hex())
-        if st != 400:
-            a.notes.append(f"junk body got {st}")
-        st, _, _ = http("POST", w["url"] + "/add-checkpoint", "a" * 70000)
-        if st != 413:
-            a.notes.append(f"70 KiB body got {st}")
+        url = w["url"].rstrip("/") + "/add-checkpoint"
+        st, _ = probe(a, url, os.urandom(40).hex())
+        a.expect("a junk add-checkpoint body is refused with 400", st == 400, "400", f"{st} from {w['name']}")
+        st, _ = probe(a, url, "a" * 70000)
+        a.expect("a 70 KiB add-checkpoint body is refused with 413", st == 413, "413", f"{st} from {w['name']}")
 
 
 def p_operator(a: Agent):
@@ -514,8 +604,7 @@ def p_snapshot(a: Agent):
     p = os.path.join(a.dir, "snap.json")
     a.op("save_snapshot", log.save_snapshot, p)
     back = a.op("load_snapshot", wl.WitnessLog.load_snapshot, p)
-    if back.root_hex() != log.root_hex():
-        a.notes.append("snapshot root mismatch")
+    a.expect("a snapshot round trip reproduces the root", back.root_hex() == log.root_hex(), log.root_hex(), back.root_hex())
     cp = a.op("checkpoint", back.checkpoint)
     a.op("verify_continuity", back.verify_continuity, cp)
     verify_py(a, back.to_dossier_json(), back.identity_pubkey_hex(), None)
@@ -532,8 +621,8 @@ def p_multisession(a: Agent):
         if s == 4:
             ident = log.identity_pubkey_hex()
             d = json.loads(log.to_dossier_json())
-            if len(d["key_bindings"]) != 5:
-                a.notes.append(f"{len(d['key_bindings'])} bindings after 5 sessions")
+            a.expect("one key binding per session, over five sessions", len(d["key_bindings"]) == 5,
+                     "5 bindings", f"{len(d['key_bindings'])} bindings")
             responses, _, _ = submit_py(a, log, a.pick_witnesses(log, 5))
             dossier, _ = log.dossier_from_responses(responses)
             verify_py(a, dossier, ident, a.directory())
@@ -571,13 +660,12 @@ def p_c2sp_user(a: Agent):
     np_ = os.path.join(a.dir, "note.txt")
     open(np_, "w").write(note)
     code, so, se = a.op("cli.c2sp.verify", cli, a, "c2sp", "verify", np_, "--vkey", vkey)
-    if code != 0:
-        a.notes.append(f"c2sp verify exit {code}: {se[-200:]}")
+    a.expect("`c2sp verify` accepts the log's own signed note", code == 0, "exit 0", f"exit {code}: {se[-200:]}")
     dp = os.path.join(a.dir, "d.json")
     open(dp, "w").write(dossier)
     code, raw, se = a.op("cli.c2sp.show", cli, a, "c2sp", "show", dp, "--origin", origin, "--raw", "--sign-with", a.journal)
-    if code != 0 or not raw.startswith(origin):
-        a.notes.append(f"c2sp show --raw --sign-with exit {code}")
+    a.expect("`c2sp show --raw --sign-with` prints the signed note", code == 0 and raw.startswith(origin),
+             f"exit 0, note starting {origin}", f"exit {code}, starts {raw[:40]!r}")
 
 
 def p_schema(a: Agent):
@@ -586,6 +674,7 @@ def p_schema(a: Agent):
     try:
         import jsonschema
     except ImportError:
+        # An optional dependency of the harness, not a property of witness-log.
         a.notes.append("jsonschema not installed; skipped")
         return
     log = a.op("open", wl.open, a.journal, a.seed)
@@ -606,16 +695,15 @@ def p_verifier_only(a: Agent):
     trusted = json.load(open(os.path.join(REPO, "examples", "trusted-directory.json")))
     ident = json.loads(sample)["identity_pubkey"]
     rep = verify_py(a, sample, ident, trusted)
-    if rep["verdict"] != "witnessed":
-        a.notes.append(f"sample dossier {rep['verdict']}")
+    a.expect("the sample dossier verifies WITNESSED against its trusted directory", rep["verdict"] == "witnessed",
+             "witnessed", rep["verdict"])
     rep2 = verify_py(a, sample, ident, None)
-    if rep2["verdict"] != "unanchored":
-        a.notes.append(f"sample without directory {rep2['verdict']}")
+    a.expect("without a directory the sample is UNANCHORED, never witnessed", rep2["verdict"] == "unanchored",
+             "unanchored", rep2["verdict"])
     with_bad = json.loads(sample)
     with_bad["checkpoint"]["timestamp_ms"] += 1
     rep3 = verify_py(a, json.dumps(with_bad), ident, trusted)
-    if rep3["verdict"] != "invalid":
-        a.notes.append(f"edited checkpoint is {rep3['verdict']}, not invalid")
+    a.expect("a checkpoint edited by 1 ms verifies INVALID", rep3["verdict"] == "invalid", "invalid", rep3["verdict"])
 
 
 def p_rollback_victim(a: Agent):
@@ -635,8 +723,7 @@ def p_rollback_victim(a: Agent):
     json.dump({"witnesses": a.pick_witnesses(log, 4)}, open(dpath, "w"))
     log.close()
     code, _, se = a.op("cli.submit", cli, a, "witness", "submit", a.journal, "--directory", dpath, "--out", os.path.join(a.dir, "d1.json"))
-    if code != 0:
-        a.notes.append(f"first submit failed: {se[-200:]}")
+    if not a.expect("`witness submit` of an honest journal exits 0", code == 0, "exit 0", f"exit {code}: {se[-200:]}"):
         return
     for f in (a.journal, a.journal + ".salts"):
         shutil.copy(f + ".bak", f)
@@ -645,9 +732,9 @@ def p_rollback_victim(a: Agent):
     log.sync()
     log.close()
     code2, _, se2 = a.op("cli.submit.after_rollback", cli, a, "witness", "submit", a.journal, "--directory", dpath, "--out", os.path.join(a.dir, "d2.json"))
-    if code2 == 0:
-        a.notes.append("submit published a rolled-back history")
-    a.ops[-1]["ok"] = code2 != 0
+    a.expect("`witness submit` refuses to publish a history rolled back from a backup",
+             code2 != 0 and "REFUSING TO SUBMIT" in se2, "non-zero exit, REFUSING TO SUBMIT",
+             f"exit {code2}: {se2[-200:]}")
 
 
 PERSONAS = {
@@ -701,7 +788,8 @@ def run_agent(args) -> dict:
         except Exception:
             pass
     return {"idx": idx, "persona": persona, "status": status, "error": err, "secs": round(time.perf_counter() - t, 2),
-            "ops": a.ops, "notes": a.notes, "verdicts": a.verdicts}
+            "ops": a.ops, "notes": a.notes, "checks": dict(a.checks), "failed_expectations": a.failed,
+            "verdicts": a.verdicts}
 
 
 def worker_process(batch, cfg, threads):
@@ -725,15 +813,63 @@ def pct(xs, p):
     return xs[min(len(xs) - 1, int(round((p / 100) * (len(xs) - 1))))]
 
 
-def report(results: list[dict], cfg: dict, out: str, elapsed: float):
+class Expectations:
+    """What the personas checked, over every agent: the failed-expectation
+    section of the report, the per-check coverage table and the count that
+    goes into the exit status. Shared with outside_0_4.py."""
+
+    def __init__(self) -> None:
+        self.checked: collections.Counter = collections.Counter()
+        self.failed: collections.Counter = collections.Counter()
+        self.clusters: collections.Counter = collections.Counter()
+        self.examples: dict = {}
+
+    def add(self, r: dict) -> None:
+        for check, k in (r.get("checks") or {}).items():
+            self.checked[check] += k
+        for f in r.get("failed_expectations") or []:
+            self.failed[f["check"]] += 1
+            key = (f["check"], signature(f["observed"]))
+            self.clusters[key] += 1
+            self.examples.setdefault(key, (f"{r['persona']}#{r['idx']}", f["expected"], f["observed"]))
+
+    def total_checked(self) -> int:
+        return sum(self.checked.values())
+
+    def total_failed(self) -> int:
+        return sum(self.failed.values())
+
+    def summary(self) -> str:
+        return f"- expectations checked: {self.total_checked():,}; failed: {self.total_failed():,}"
+
+    def lines(self, limit: int = 40) -> list[str]:
+        out = ["## Failed expectations (every one fails the run)", ""]
+        if not self.clusters:
+            out.append("None.")
+        for (check, _), c in self.clusters.most_common(limit):
+            agent, expected, observed = self.examples[(check, _)]
+            out.append(f"- **{c:,}x** {check}: expected `{expected.replace('`', chr(39))}`, "
+                       f"observed `{observed[:240].replace('`', chr(39))}` (e.g. {agent})")
+        out += ["", "## Expectations checked", "", "| expectation | checked | failed |", "|---|---|---|"]
+        for check, k in sorted(self.checked.items(), key=lambda kv: (-self.failed[kv[0]], kv[0])):
+            out.append(f"| {check} | {k:,} | {self.failed[check]:,} |")
+        return out
+
+
+def report(results: list[dict], cfg: dict, out: str, elapsed: float) -> int:
+    """Write REPORT.md and results.json; returns the number of failed expectations."""
     n = len(results)
     crashed = [r for r in results if r["status"] != "ok"]
-    by_persona = collections.defaultdict(lambda: {"n": 0, "crashed": 0, "notes": 0})
+    exp = Expectations()
+    by_persona = collections.defaultdict(lambda: {"n": 0, "crashed": 0, "notes": 0, "checked": 0, "failed": 0})
     for r in results:
+        exp.add(r)
         b = by_persona[r["persona"]]
         b["n"] += 1
         b["crashed"] += r["status"] != "ok"
         b["notes"] += len(r["notes"])
+        b["checked"] += sum(r["checks"].values())
+        b["failed"] += len(r["failed_expectations"])
     ops = collections.defaultdict(list)
     op_fail = collections.Counter()
     op_total = collections.Counter()
@@ -758,26 +894,30 @@ def report(results: list[dict], cfg: dict, out: str, elapsed: float):
             sigs[sig] += 1
             examples.setdefault(sig, r["error"])
         for note in r["notes"]:
-            sig = f"{r['persona']} note: {signature(note)}"
+            sig = f"{r['persona']} note (informational): {signature(note)}"
             sigs[sig] += 1
             examples.setdefault(sig, note)
     verdicts = collections.Counter(v for r in results for v in r["verdicts"])
     total_ops = sum(op_total.values())
     lines = [f"# Outside swarm: {n} agents, {len(PERSONAS)} personas, {cfg['witness_count']} witnesses", "",
-             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}",
+             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}"
+             + (f"; **fault injected: {cfg['inject_fault']}**" if cfg.get("inject_fault") else ""),
              f"- {n} agents in {elapsed:.0f} s, {cfg['processes']} x {cfg['threads']} in flight, {total_ops} operations, "
              f"{sum(len(r['verdicts']) for r in results)} verdicts",
              f"- agents finished cleanly: {n - len(crashed)}/{n}; operations failed: {sum(op_fail.values())}/{total_ops}",
+             exp.summary(),
              f"- witness add-checkpoint statuses: {dict(sorted(statuses.items(), key=lambda kv: -kv[1]))}",
              f"- verdicts: {dict(verdicts.most_common())}", ""]
-    lines += ["## Common issues (clustered by signature, most frequent first)", ""]
+    lines += exp.lines()
+    lines += ["", "## Common issues: failed operations, crashes, notes (clustered by signature, most frequent first)", ""]
     if not sigs:
         lines.append("None.")
     for sig, c in sigs.most_common(40):
         lines.append(f"- **{c}x** `{sig}`  \n  e.g. `{examples[sig][:220]}`")
-    lines += ["", "## Per persona", "", "| persona | agents | crashed | notes |", "|---|---|---|---|"]
+    lines += ["", "## Per persona", "", "| persona | agents | crashed | expectations checked | failed | notes |",
+              "|---|---|---|---|---|---|"]
     for p, b in sorted(by_persona.items()):
-        lines.append(f"| {p} | {b['n']} | {b['crashed']} | {b['notes']} |")
+        lines.append(f"| {p} | {b['n']} | {b['crashed']} | {b['checked']} | {b['failed']} | {b['notes']} |")
     lines += ["", "## Latency per operation (ms; successful calls)", "", "| op | n | p50 | p95 | p99 | max | failed |", "|---|---|---|---|---|---|---|"]
     for op, xs in sorted(ops.items(), key=lambda kv: -len(kv[1])):
         lines.append(f"| {op} | {len(xs)} | {pct(xs, 50):.2f} | {pct(xs, 95):.2f} | {pct(xs, 99):.2f} | {max(xs):.1f} | {op_fail[op]} |")
@@ -785,10 +925,18 @@ def report(results: list[dict], cfg: dict, out: str, elapsed: float):
         if op not in ops:
             lines.append(f"| {op} | 0 | - | - | - | - | {c} |")
     open(os.path.join(out, "REPORT.md"), "w").write("\n".join(lines) + "\n")
-    json.dump({"config": {k: v for k, v in cfg.items() if k not in ("directory",)}, "elapsed": elapsed, "results": results},
+    json.dump({"config": {k: v for k, v in cfg.items() if k not in ("directory",)}, "elapsed": elapsed,
+               "expectations": {"checked": exp.total_checked(), "failed": exp.total_failed(), "by_check": dict(exp.checked),
+                                "failed_by_check": dict(exp.failed)},
+               "results": results},
               open(os.path.join(out, "results.json"), "w"))
-    print("\n".join(lines[:12]))
+    head = lines[:lines.index("## Expectations checked")] if "## Expectations checked" in lines else lines[:14]
+    print("\n".join(head))
     print(f"\nreport: {os.path.join(out, 'REPORT.md')}")
+    return exp.total_failed()
+
+
+FAULTS = ("weak-verifier", "lax-witness")
 
 
 def main() -> int:
@@ -802,6 +950,9 @@ def main() -> int:
     ap.add_argument("--operator-serve-seconds", type=int, default=90)
     ap.add_argument("--agent-witness-base-port", type=int, default=21000)
     ap.add_argument("--only", help="comma-separated personas")
+    ap.add_argument("--inject-fault", choices=FAULTS,
+                    help="self-test of the gate: weak-verifier (every verdict observed as WITNESSED) or lax-witness "
+                         "(the adversary's fork, junk and oversized body observed as accepted); the run must exit non-zero")
     args = ap.parse_args()
     import witness_log as wl
     out = args.out or tempfile.mkdtemp(prefix="outside-")
@@ -816,13 +967,19 @@ def main() -> int:
     cfg = {"work": work, "shared": shared, "agent_dir": agent_dir, "directory": directory, "cli": args.cli,
            "cli_version": ver, "py_version": getattr(wl, "__version__", "?"), "run_id": int(time.time()),
            "witness_count": len(directory["witnesses"]), "processes": args.processes, "threads": args.threads,
-           "operator_serve_seconds": args.operator_serve_seconds, "agent_witness_base_port": args.agent_witness_base_port}
+           "operator_serve_seconds": args.operator_serve_seconds, "agent_witness_base_port": args.agent_witness_base_port,
+           "inject_fault": args.inject_fault}
     personas = assign_personas(args.agents)
     if args.only:
         keep = set(args.only.split(","))
+        unknown = keep - set(PERSONAS)
+        if unknown:
+            ap.error(f"--only: unknown personas {sorted(unknown)}")
         personas = [p for p in personas if p in keep]
     jobs = list(enumerate(personas))
     print(f"{len(jobs)} agents, {len(set(personas))} personas, {cfg['witness_count']} witnesses; target {ver}, witness_log {cfg['py_version']}")
+    if args.inject_fault:
+        print(f"FAULT INJECTED: {args.inject_fault}; this run must exit non-zero")
     print(f"out: {out}")
     batches = [jobs[i::args.processes] for i in range(args.processes)]
     t0 = time.time()
@@ -836,11 +993,11 @@ def main() -> int:
             done += 1
             print(f"  batch {done}/{len(futs)} done, {len(results)} agents, {time.time() - t0:.0f}s", flush=True)
     results.sort(key=lambda r: r["idx"])
-    report(results, cfg, out, time.time() - t0)
+    failed_expectations = report(results, cfg, out, time.time() - t0)
     crashed = sum(r["status"] != "ok" for r in results)
     failed_ops = sum(1 for r in results for o in r["ops"] if not o["ok"])
-    print(f"agents crashed: {crashed}; operations failed: {failed_ops}")
-    return min(99, crashed + (1 if failed_ops else 0))
+    print(f"agents crashed: {crashed}; operations failed: {failed_ops}; expectations failed: {failed_expectations}")
+    return min(99, crashed + failed_expectations + (1 if failed_ops else 0))
 
 
 if __name__ == "__main__":

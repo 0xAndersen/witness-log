@@ -76,8 +76,39 @@ python examples/swarm/outside.py --agents 1000 --directory /tmp/fleet/directory.
 ```
 
 Every operation is timed; every error keeps its message; the report
-clusters failures by signature so the common problems come first. What the
-first 1,000-agent run against 100 witnesses (four operators x 25) found:
+clusters failures by signature so the common problems come first.
+
+What a persona checks is an **expectation**, and the exit status gates on
+it: a tampered dossier verifies INVALID (40), `diff` of it exits 40, a
+contradicted `--known-head` is DIVERGED (30), a fork is refused with 422
+by every witness and cosigned by none, a junk body gets 400 and a 70 KiB
+one 413, no anchor means UNANCHORED, redaction keeps the dossier
+consistent and removes the salt, synced leaves survive a crash, an honest
+cosigned dossier is WITNESSED. A failed expectation is reported with what
+was expected and what was observed and counts toward the exit status
+(crashed agents + failed expectations + 1 if any operation failed, capped
+at 99), and the report's *Expectations checked* table shows how often
+each check ran. A **note** is informational only and never fails the run:
+nothing to audit yet (the auditor then audits `examples/sample-dossier.json`),
+`jsonschema` not installed, a 409 without a size (the failed
+`add-checkpoint` operation it explains already fails the run).
+`outside_0_4.py` reuses these personas and gates the same way.
+
+The gate tests itself. `--inject-fault weak-verifier` makes every verdict
+the CLI or the library returns arrive as WITNESSED (exit 0), as from a
+verifier that accepts anything; `--inject-fault lax-witness` makes the
+adversary see witnesses accept its fork, junk and oversized body. Either
+must make the run exit non-zero, on failed expectations: CI runs both
+right after the honest 200-agent run, and
+`crates/witness-log-python/tests/test_outside_swarm_gate.py` runs them
+against three local witnesses.
+
+```sh
+python examples/swarm/outside.py --agents 300 --only auditor,adversary,verifier_only \
+    --directory /tmp/fleet/directory.json --inject-fault weak-verifier   # must exit non-zero
+```
+
+What the first 1,000-agent run against 100 witnesses (four operators x 25) found:
 
 1. **The receipt threshold did not scale to a registry.** `--threshold 0.66`
    of a 100-witness directory demanded 66 cosignatures per checkpoint; agents
