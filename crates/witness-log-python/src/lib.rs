@@ -823,36 +823,29 @@ impl PyJournaledLog {
         }
     }
 
-    /// Run `f` with the payload sidecar and the open journal both locked,
-    /// in the one order every caller uses (`payloads`, then `inner`).
-    /// Like `with_lock_py`: both are taken without waiting when free;
-    /// otherwise the wait, `f` and the release all happen with the GIL
-    /// released.
-    fn with_store_and_j<R: Send>(
+    /// Run `f` with the payload sidecar and the journal (`None` once
+    /// closed) both locked, in the one order every caller uses
+    /// (`payloads`, then `inner`). Like `with_lock_py`: both are taken
+    /// without waiting when free; otherwise the wait, `f` and the release
+    /// all happen with the GIL released.
+    fn with_store_and_journal<R: Send>(
         &self,
         py: Python<'_>,
         f: impl FnOnce(
                 &mut Option<PayloadStore>,
-                &mut witness_log_core::journal::JournaledLog,
-            ) -> PyResult<R>
+                &mut Option<witness_log_core::journal::JournaledLog>,
+            ) -> R
             + Send,
-    ) -> PyResult<R> {
-        let run = |store: &mut Option<PayloadStore>,
-                   g: &mut Option<witness_log_core::journal::JournaledLog>| {
-            match g.as_mut() {
-                None => Err(PyIOError::new_err(CLOSED_JOURNAL)),
-                Some(j) => f(store, j),
-            }
-        };
+    ) -> R {
         if let Some(mut store) = try_lock(&self.payloads) {
             if let Some(mut g) = try_lock(&self.inner) {
-                return run(&mut store, &mut g);
+                return f(&mut store, &mut g);
             }
         }
         py.detach(|| {
             let mut store = lock(&self.payloads);
             let mut g = lock(&self.inner);
-            let r = run(&mut store, &mut g);
+            let r = f(&mut store, &mut g);
             drop(g);
             drop(store);
             r
@@ -873,7 +866,10 @@ impl PyJournaledLog {
         payload: &[u8],
         append: fn(&mut witness_log_core::journal::JournaledLog, &[u8]) -> std::io::Result<u64>,
     ) -> PyResult<u64> {
-        self.with_store_and_j(py, |store, j| {
+        self.with_store_and_journal(py, |store, g| {
+            let j = g
+                .as_mut()
+                .ok_or_else(|| PyIOError::new_err(CLOSED_JOURNAL))?;
             let idx = append(j, payload).map_err(io_err)?;
             if let Some(s) = store.as_mut() {
                 s.record(idx, payload)
@@ -1423,8 +1419,8 @@ impl PyJournaledLog {
     /// A redacted leaf gets `None` even if a record for it is somehow in
     /// the file (0.5.0 could leave one there: security review 3, F7).
     fn payload<'py>(&self, py: Python<'py>, index: u64) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        let got = self.with_store_and_j(py, |s, j| match s.as_ref() {
-            Some(_) if is_redacted(j.log(), index) => Ok(None),
+        let got = self.with_store_and_journal(py, |s, g| match s.as_ref() {
+            Some(_) if g.as_ref().is_some_and(|j| is_redacted(j.log(), index)) => Ok(None),
             Some(store) => store
                 .get(index)
                 .map_err(|e| PyIOError::new_err(format!("payload sidecar: {e}"))),

@@ -192,6 +192,7 @@ def test_payload_is_none_for_a_forgotten_leaf_even_if_a_record_lands_late(tmp_pa
         log.disclose(i)
     assert log.payload(keep) == b"public"
     log.close()
+    assert log.payload(keep) == b"public" and log.payload(i) is None  # the sidecar outlives close()
     # And after a restart, enabling the store drops that record from disk.
     log = wl.open(p, store_payloads=True)
     assert log.payload(i) is None and i not in _recorded(p + ".payloads")
