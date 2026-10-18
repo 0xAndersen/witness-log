@@ -19,13 +19,20 @@ use std::time::Duration;
 
 const BIN: &str = env!("CARGO_BIN_EXE_witness-log");
 
+/// A fresh directory per call. The counter matters: macOS clocks tick in
+/// microseconds, so two tests starting together got the same nanosecond
+/// stamp, shared one directory, and one test's cleanup deleted the other's
+/// witnesses mid-start (seen once on a macOS runner).
 fn tmpdir() -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static N: AtomicUsize = AtomicUsize::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let p = std::env::temp_dir().join(format!("wl-https-{}-{nanos}", std::process::id()));
+    let n = N.fetch_add(1, Ordering::SeqCst);
+    let p = std::env::temp_dir().join(format!("wl-https-{}-{n}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&p).unwrap();
     p
 }
@@ -66,11 +73,20 @@ impl Witness {
             .spawn()
             .unwrap();
         let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        let mut seen = Vec::new();
         let url = loop {
-            let line = lines.next().expect("witness exited").unwrap();
-            if let Some(i) = line.find("http://") {
-                break line[i..].split_whitespace().next().unwrap().to_string();
+            let Some(line) = lines.next().and_then(Result::ok) else {
+                // Say why, so a CI failure is diagnosable without job logs.
+                let status = child.wait().map(|s| s.to_string()).unwrap_or_default();
+                panic!(
+                    "witness {i} exited ({status}) before listening; stderr:\n{}",
+                    seen.join("\n")
+                );
+            };
+            if let Some(at) = line.find("http://") {
+                break line[at..].split_whitespace().next().unwrap().to_string();
             }
+            seen.push(line);
         };
         std::thread::spawn(move || for _ in lines {});
         let backend = url
