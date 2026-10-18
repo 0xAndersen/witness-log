@@ -692,7 +692,8 @@ fn cmd_serve(args: &[String]) -> ExitCode {
             }
         });
     }
-    let handler = Arc::new(move |req: &Request| route(&server, req, allow_remote));
+    let port = bound.port();
+    let handler = Arc::new(move |req: &Request| route(&server, req, allow_remote, port));
     http::serve(listener, 256, 16, handler);
     ExitCode::SUCCESS
 }
@@ -703,12 +704,24 @@ fn read_directory(path: &str) -> Result<WitnessDirectory, String> {
         .and_then(|s| crate::parse_directory(&s))
 }
 
-fn route(server: &Arc<Mutex<FleetServer>>, req: &Request, allow_remote: bool) -> Response {
+fn route(
+    server: &Arc<Mutex<FleetServer>>,
+    req: &Request,
+    allow_remote: bool,
+    port: u16,
+) -> Response {
     if !allow_remote && !req.peer.ip().is_loopback() {
         return Response::text(
             403,
             "loopback clients only (start with --allow-remote to change)\n",
         );
+    }
+    // A web page in the user's browser is a loopback peer too (security
+    // sweep F1).
+    if !allow_remote {
+        if let Some(r) = crate::http::refuse_browser_request(req, port) {
+            return r;
+        }
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("POST", "/add-entry") => add_entry(server, req),
@@ -1414,6 +1427,8 @@ mod tests {
                 path: "/add-entry".into(),
                 body,
                 peer: "127.0.0.1:9".parse().unwrap(),
+                host: None,
+                origin: None,
             },
         );
         (r.status, String::from_utf8_lossy(&r.body).into_owned())

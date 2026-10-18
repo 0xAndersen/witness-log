@@ -67,6 +67,12 @@ write_files:
       set -euo pipefail
       . /etc/witness-log/env
       WL_REF="${WL_REF:-v0.6.0}"
+      # SHA-256 of deploy/witness/witness-log-witness.service at WL_REF. A
+      # tag can be moved by anyone with write access, so the unit (which
+      # systemd runs as root) is checked against this pin as well; CI fails
+      # if the pin and the file drift. Set it in /etc/witness-log/env only
+      # if you pin a WL_REF whose unit differs.
+      UNIT_SHA256="${UNIT_SHA256:-0bac8963f2b24d1a365b58e1f0552f12b8043e9a4b24cebbf1fe10d63ce269f9}"
       CADDY_VERSION="${CADDY_VERSION:-2.11.7}"
       REPO=0xAndersen/witness-log
       log(){ echo "[witness-log-bootstrap] $*"; }
@@ -139,6 +145,8 @@ write_files:
       #    box runs as root. Refuse a download that is not a unit file.
       curl -fsSL -o /etc/systemd/system/witness-log-witness.service.tmp \
         "https://raw.githubusercontent.com/${REPO}/${WL_REF}/deploy/witness/witness-log-witness.service"
+      echo "${UNIT_SHA256}  /etc/systemd/system/witness-log-witness.service.tmp" | sha256sum -c - \
+        || { log "the systemd unit at ${REPO}@${WL_REF} does not match UNIT_SHA256; refusing it"; exit 1; }
       grep -q '^\[Service\]' /etc/systemd/system/witness-log-witness.service.tmp
       grep -q '^ExecStart=.*witness-log' /etc/systemd/system/witness-log-witness.service.tmp
       mv /etc/systemd/system/witness-log-witness.service.tmp /etc/systemd/system/witness-log-witness.service

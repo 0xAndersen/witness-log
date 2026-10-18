@@ -370,3 +370,60 @@ fn refuses_a_non_loopback_bind_without_allow_remote() {
     assert_eq!(out.status.code(), Some(2));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Security sweep of 0.6.0, F1: a web page in the user's browser is a
+/// loopback peer too. Its `fetch(..., {mode: "no-cors", method: "POST"})`
+/// carries an `Origin` header and a DNS-rebinding page sends a `Host` that
+/// is not a loopback name; both are refused, while ordinary local clients
+/// (no Origin, a loopback Host, or no Host at all) are served as before.
+#[test]
+fn requests_a_browser_could_send_are_refused() {
+    let root = tmpdir("browser");
+    let journal = root.join("agent.jsonl");
+    assert!(wl(&root, &["log", "init", journal.to_str().unwrap()])
+        .status
+        .success());
+    let front = Front::start(&root, &journal, &[]);
+    let port = front.addr.rsplit_once(':').unwrap().1.to_string();
+    let send = |head: &str, body: &str| -> (u16, String) {
+        let mut s = TcpStream::connect(&front.addr).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let req = format!(
+            "POST /append HTTP/1.1\r\n{head}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        s.write_all(req.as_bytes()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        let status: u16 = out.split(' ').nth(1).unwrap().parse().unwrap();
+        (status, out)
+    };
+    let leaf = r#"{"kind":"result","payload":"forged by a web page"}"#;
+    // A cross-site "simple request" from a page.
+    let (st, out) = send(
+        &format!("Host: 127.0.0.1:{port}\r\nOrigin: https://evil.example\r\nContent-Type: text/plain\r\n"),
+        leaf,
+    );
+    assert_eq!(st, 403, "{out}");
+    // DNS rebinding: the page's own host name now resolves to 127.0.0.1.
+    let (st, out) = send(&format!("Host: rebind.evil.example:{port}\r\n"), leaf);
+    assert_eq!(st, 403, "{out}");
+    // A loopback name on another port is not this server either.
+    let (st, _) = send("Host: localhost:1\r\n", leaf);
+    assert_eq!(st, 403);
+    // Nothing was appended.
+    let (_, info) = front.call("GET", "/info", "");
+    assert_eq!(info["tree_size"], 0, "{info}");
+    // Local programs: loopback Host spellings, or none at all.
+    for host in [
+        format!("Host: 127.0.0.1:{port}\r\n"),
+        format!("Host: localhost:{port}\r\n"),
+        format!("Host: LOCALHOST:{port}\r\n"),
+        String::new(),
+    ] {
+        let (st, out) = send(&host, r#"{"kind":"intent","payload":"ok"}"#);
+        assert_eq!(st, 200, "{host:?}: {out}");
+    }
+    let (_, info) = front.call("GET", "/info", "");
+    assert_eq!(info["tree_size"], 4, "{info}");
+}

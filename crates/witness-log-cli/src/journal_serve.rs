@@ -66,6 +66,8 @@ struct State {
     /// /dossier while the head has not moved.
     witnessed: Option<Dossier>,
     allow_remote: bool,
+    /// The bound port, for the loopback-Host check.
+    port: u16,
 }
 
 fn cmd_serve(args: &[String]) -> ExitCode {
@@ -158,6 +160,7 @@ fn cmd_serve(args: &[String]) -> ExitCode {
         state_path,
         witnessed: None,
         allow_remote,
+        port: bound.port(),
     }));
     #[cfg(unix)]
     stop_cleanly_on_signal(state.clone());
@@ -207,6 +210,13 @@ fn route(state: &Arc<Mutex<State>>, req: &Request) -> Response {
                 403,
                 "loopback clients only (start with --allow-remote to change)",
             );
+        }
+        // A web page in the user's browser is a loopback peer too; refuse
+        // its requests and DNS-rebound ones (security sweep F1).
+        if !s.allow_remote {
+            if let Some(r) = crate::http::refuse_browser_request(req, s.port) {
+                return r;
+            }
         }
     }
     match (req.method.as_str(), req.path.as_str()) {

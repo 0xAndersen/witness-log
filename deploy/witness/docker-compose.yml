@@ -14,6 +14,11 @@ services:
       context: ../..
       dockerfile: deploy/witness/Dockerfile
     restart: unless-stopped
+    # Only the proxy reaches the witness, and every client arrives from the
+    # proxy's address, so the per-IP limits are raised here (the image's
+    # default command keeps them, for direct exposure).
+    command: ["witness", "serve", "/state", "--listen", "0.0.0.0:7380", "--open-enrollment",
+              "--max-conns-per-ip", "256", "--enroll-rate", "6000"]
     volumes:
       - state:/state
     expose:

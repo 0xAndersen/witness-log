@@ -122,6 +122,14 @@ jobs:
           cargo run -p witness-log-network --example generate_verdict_corpus
           cargo run -p witness-log-network --example generate_fleet_corpus
           cargo run -p witness-log-network --example generate_evidence_corpus
+      - name: The systemd unit cloud-init installs matches its pinned SHA-256
+        run: |
+          pin=$(grep -o 'UNIT_SHA256:-[0-9a-f]\{64\}' deploy/witness/cloud-init.yaml | cut -d- -f2)
+          actual=$(sha256sum deploy/witness/witness-log-witness.service | cut -d' ' -f1)
+          if [ "$pin" != "$actual" ]; then
+            echo "::error::deploy/witness/witness-log-witness.service changed: update UNIT_SHA256 in cloud-init.yaml to $actual"
+            exit 1
+          fi
       - name: Fail if corpus drifted from committed vectors
         run: |
           git diff --exit-code corpus/ || \

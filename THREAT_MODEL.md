@@ -222,6 +222,24 @@ Throughput is bounded by one fsync per cosignature (decisions are
 serialized so the size check and the persist are atomic): hundreds per
 second on ordinary disks, which is far above what witnessing needs.
 
+## Local servers: `journal serve` and `fleet serve`
+
+Both bind loopback by default and have no authentication: anything that
+can open a TCP connection to the port can append to the journal (or
+submit to the fleet log). On a multi-user host that is every local user;
+run them on a single-user machine, or behind your own authenticating
+proxy with `--allow-remote`.
+
+A web page the operator visits can also reach loopback, by a cross-site
+`fetch` (CSRF) or by pointing its own hostname at 127.0.0.1 (DNS
+rebinding). Since 0.6.1 both servers refuse, with 403, any request that
+carries an `Origin` header or whose `Host` is not `localhost` or a
+loopback address on the server's own port. Browsers always send `Host`
+and send `Origin` on cross-site requests; local programs (curl, the
+Python and Node clients) send neither or a loopback `Host`, so they are
+unaffected. With `--allow-remote` the check is off, because the operator
+has chosen to expose the server and its own proxy decides who may reach it.
+
 ## Accusations are held to a higher bar than verdicts
 
 Several outputs of this project are accusations — "this log equivocated",

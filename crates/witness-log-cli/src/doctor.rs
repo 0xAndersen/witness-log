@@ -2,7 +2,9 @@
 //!
 //! Every check prints one line (✓ fine, ! worth fixing, ✗ will not work,
 //! · for information) and, when something is off, the command that fixes
-//! it. Nothing is changed on disk. Exit 0 when nothing is ✗, 1 when
+//! it. Nothing is changed on disk, except that `--witness DIR` creates
+//! and removes one empty probe file in `DIR/logs/` to test that it is
+//! writable. Exit 0 when nothing is ✗, 1 when
 //! something is, 2 on a usage error.
 //!
 //! What it looks at, each only when given:
@@ -29,7 +31,8 @@ usage: witness-log doctor [<journal>] [--directory <trusted.json>] [--subject-or
                           [--witness <witness dir>] [--offline] [--json]
                           [--identity-seed-env NAME | --identity-seed-file F]
 
-Checks what you give it and says what to fix; changes nothing.
+Checks what you give it and says what to fix; changes nothing (--witness
+creates and removes one empty probe file in DIR/logs/).
   <journal>         an agent journal: replays, file modes, lock, witnessing state
   --directory P     a directory you trust: is WITNESSED reachable, do the witnesses answer
   --subject-org O   the organisation that operates the journal's log (as for `verify`)

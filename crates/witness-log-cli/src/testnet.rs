@@ -435,15 +435,43 @@ fn cmd_down(dir: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Whether `pid`, read from testnet.json, may be signalled: a real
+/// process id (never 0, 1 or a value that becomes negative as pid_t, which
+/// would signal a process group or every process the user owns) and, on
+/// Linux, still a witness-log witness, not an unrelated process that
+/// reused the id after a reboot (security sweep of 0.6.0, F12).
+fn signalable(pid: u32) -> bool {
+    if pid < 2 || pid > i32::MAX as u32 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::read(format!("/proc/{pid}/cmdline")) {
+            Ok(c) => {
+                let args: Vec<&[u8]> = c.split(|b| *b == 0).collect();
+                let has = |w: &[u8]| args.contains(&w);
+                args.first()
+                    .is_some_and(|a| String::from_utf8_lossy(a).contains("witness-log"))
+                    && has(b"witness")
+                    && has(b"serve")
+            }
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
 /// Stop every member: terminate, wait up to 5s for /health to stop
 /// answering, then kill.
 fn stop_all(members: &[Member]) {
-    for m in members {
+    let members: Vec<&Member> = members.iter().filter(|m| signalable(m.pid)).collect();
+    for m in &members {
         terminate(m.pid);
     }
     let started = Instant::now();
     loop {
-        let alive: Vec<&Member> = members
+        let alive: Vec<&&Member> = members
             .iter()
             .filter(|m| health(&m.url, Duration::from_millis(300)))
             .collect();
@@ -489,4 +517,22 @@ fn kill(pid: u32) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+#[cfg(test)]
+mod pid_tests {
+    use super::signalable;
+
+    /// testnet.json is a file anyone with write access to the directory can
+    /// edit: 0 would signal the process group, 2^32-1 becomes -1 (every
+    /// process the user owns), and a recycled pid belongs to someone else.
+    #[test]
+    fn only_a_running_witness_is_signalled() {
+        for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
+            assert!(!signalable(pid), "{pid}");
+        }
+        // This test process is not a `witness-log witness serve`.
+        #[cfg(target_os = "linux")]
+        assert!(!signalable(std::process::id()));
+    }
 }
