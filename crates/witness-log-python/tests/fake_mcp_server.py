@@ -9,7 +9,9 @@ named by FAKE_MCP_PIDFILE (if set) so a test can see restarts.
 only once `path` exists, like a server still shutting down after its
 output closed. Every call with an `"effect"` argument is appended to the
 file named by FAKE_MCP_EFFECTS (if set) before it is answered, so a test
-can see which calls ran, and where."""
+can see which calls ran, and where. On a crash the file named by
+FAKE_MCP_REMOVE_ON_CRASH (if set) is deleted first (the wrapper the proxy
+starts the server with, so it cannot be started again)."""
 
 from __future__ import annotations
 
@@ -66,6 +68,8 @@ def main() -> None:
         elif method == "tools/call":
             args = (msg.get("params") or {}).get("arguments") or {}
             if args.get("crash"):
+                if os.environ.get("FAKE_MCP_REMOVE_ON_CRASH"):
+                    os.remove(os.environ["FAKE_MCP_REMOVE_ON_CRASH"])
                 os._exit(3)
             if args.get("close_stdout_then_exit_when"):
                 sys.stdout.close()
