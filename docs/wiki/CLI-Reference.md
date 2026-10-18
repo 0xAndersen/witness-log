@@ -21,9 +21,9 @@ never parses output.
 
 | code | meaning | produced by |
 |---|---|---|
-| `0` | WITNESSED, cosigned by a strict majority of the trusted directory, or accepted under `--allow-sub-majority` / `--no-strict` (verify); success (everything else) | all commands |
+| `0` | WITNESSED, cosigned by a strict majority of the trusted directory, or accepted under `--allow-sub-majority` (verify); success (everything else) | all commands |
 | `10` | CONSISTENT-UNWITNESSED: cryptography sound, witness coverage below the gate or from fewer than two independent operators (verify); nothing to bind (`bind`) | `verify`, `submit --allow-partial`, `bind` |
-| `11` | WITNESSED, but the cosigning witnesses are not a strict majority of the trusted directory: a conflicting history could have been cosigned by the rest (split view). The default since 0.5.0; `--allow-sub-majority` accepts it as 0; `--no-strict` restores the 0.4 behaviour (no 11) for one release | `verify` |
+| `11` | WITNESSED, but the cosigning witnesses are not a strict majority of the trusted directory: a conflicting history could have been cosigned by the rest (split view). The default since 0.5.0; `--allow-sub-majority` accepts it as 0 | `verify` |
 | `20` | UNANCHORED: internally consistent, no trusted directory supplied (verify); a witness refused the history with 422, or fewer than `--min` cosigned (submit) | `verify`, `submit` |
 | `30` | DIVERGED: the dossier is valid but contradicts a `--known-head` its leaves do not reproduce, or an `--evidence` equivocation proof that verifies for this identity (verify); two valid, conflicting copies of one log (`diff`); mismatch (`bind`) | `verify`, `diff`, `bind` |
 | `40` | INVALID: a check failed: checkpoint signature, identity (including a wrong `--identity`), leaf structure, key bindings or revocations, or Merkle continuity, as for tampered, reordered, dropped or appended leaves (verify); either copy is invalid or tampered (`diff`); a supplied key did not verify or none did (`c2sp verify`); nothing to export (`c2sp export`); the file does not prove equivocation (`witness verify-evidence`) | `verify`, `diff`, `c2sp verify`, `c2sp export`, `witness verify-evidence`, `submit --allow-partial` |
@@ -41,9 +41,9 @@ a typo is never mistaken for a verdict.
 Before 0.5.0 every failed check exited 30, and `11` was reachable only
 with `verify --strict`. Since 0.5.0 strict is the default: a script that
 gates on `== 0` also rejects a sub-majority WITNESSED (11) unless it
-passes `--allow-sub-majority`. `--no-strict` restores the 0.4 reading
-of a sub-majority WITNESSED (exit 0) for one release; it does not turn
-40 back into 30. `--strict` is still accepted and does nothing.
+passes `--allow-sub-majority`. `--no-strict`, which restored the 0.4
+reading for 0.5.x, was removed in 0.6.0 and is a usage error (exit 2).
+`--strict` is still accepted and does nothing.
 
 ---
 
@@ -51,7 +51,7 @@ of a sub-majority WITNESSED (exit 0) for one release; it does not turn
 
 ```
 witness-log verify <dossier.json> [--identity <hex>] [--directory <trusted.json>]
-                   [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
+                   [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority]
                    [--revocations <path>] [--known-head <size>:<root hex>] [--evidence <file>]
                    [--subject-org <org>] [--accept-fleet-anchor] [--json] [--explain]
 ```
@@ -71,7 +71,6 @@ INVALID wins over DIVERGED, and DIVERGED over every other verdict.
 | `--threshold f` | count gate as a fraction of the directory (default 0.66) |
 | `--min-witnesses N` | count gate as an absolute number; use for large directories. A gate at or below half the directory is allowed; a WITNESSED result that is not a strict majority exits 11 |
 | `--allow-sub-majority` | accept WITNESSED from fewer than a strict majority of the directory as exit 0 (the split-view warning is still printed) |
-| `--no-strict` | the 0.4 reading: no exit 11, a sub-majority WITNESSED exits 0. Kept for one release; INVALID still exits 40 |
 | `--strict` | accepted for 0.4 scripts; strict has been the default since 0.5.0, so it does nothing |
 | `--revocations <path>` | revocations you know of (one statement or an array); applied whether or not the dossier carries them |
 | `--known-head <size>:<root hex>` | a head you already trust for this identity (a checkpoint you kept, a cosignature you saw). If the dossier's first `<size>` leaves give a different root: DIVERGED. A head larger than the dossier cannot be checked and is listed in `report.known_heads_unchecked`, not an error. Repeatable |

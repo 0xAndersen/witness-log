@@ -615,7 +615,6 @@ fn help_lists_every_command_and_exit_code() {
         "directory add",
         "c2sp export",
         "--allow-sub-majority",
-        "--no-strict",
         "11  WITNESSED by fewer than a",
         "40  INVALID",
         "20  UNANCHORED; submit",

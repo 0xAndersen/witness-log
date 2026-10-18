@@ -295,8 +295,11 @@ fn install_to_witnessed_with_the_cli_alone() {
     // directory the verdict is UNANCHORED and the exit code is 20 either way.
     let v = wl(&root, &["verify", "dossier.json", "--strict"]);
     assert_eq!(code(&v), 20, "{}", stdout(&v));
+    // --no-strict was kept for one release (0.5.x) and is gone in 0.6.0: a
+    // usage error that names the replacement.
     let v = wl(&root, &["verify", "dossier.json", "--no-strict"]);
-    assert_eq!(code(&v), 20);
+    assert_eq!(code(&v), 2);
+    assert!(String::from_utf8_lossy(&v.stderr).contains("--allow-sub-majority"));
 
     // C2SP export: the cosignatures travel as a signed note that `c2sp
     // verify` accepts against the witnesses' keys alone.
@@ -549,7 +552,7 @@ fn submit_fails_closed_by_default() {
             &identity,
             "--directory",
             &net.trusted,
-            "--no-strict",
+            "--allow-sub-majority",
         ],
     );
     assert_eq!(code(&v), 10);

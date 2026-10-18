@@ -85,7 +85,7 @@ Other entry points:
 ```
 witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
                    [--threshold 0.0-1.0 | --min-witnesses N]
-                   [--allow-sub-majority | --no-strict] [--revocations <file>]
+                   [--allow-sub-majority] [--revocations <file>]
                    [--known-head <size>:<root>] [--evidence <file>] [--json]
 witness-log-verify bind <a.json> <b.json> [--json]
 ```
@@ -93,7 +93,7 @@ witness-log-verify bind <a.json> <b.json> [--json]
 The exit code is the verdict, as above: 0, 11, 10, 20, 30, 40; 2 means
 unreadable input. `--known-head` and `--evidence` are repeatable and mean
 what they mean to `witness-log verify`; `--allow-sub-majority` accepts a
-sub-majority WITNESSED as 0, and `--no-strict` drops 11 for one release.
+sub-majority WITNESSED as 0; `--no-strict` is a usage error since 0.6.0.
 
 ## Conformance
 

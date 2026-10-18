@@ -36,8 +36,8 @@ pub(crate) mod exit {
     /// `verify` (strict, the default since 0.5.0): the verdict is
     /// WITNESSED but the cosigning witnesses are not a strict majority of
     /// the trusted directory, so a conflicting history could have been
-    /// cosigned by the rest. `--allow-sub-majority` or `--no-strict`
-    /// accept it as 0. RFC-0002.
+    /// cosigned by the rest. `--allow-sub-majority` accepts it as 0.
+    /// RFC-0002.
     pub const SPLIT_VIEW_UNSAFE: u8 = 11;
     pub const UNANCHORED: u8 = 20;
     /// `submit`: a witness refused the history (422), or fewer than
@@ -92,7 +92,7 @@ struct Options {
     /// about out of band (`--revocations`); applied whether or not the
     /// dossier carries them.
     revocations_path: Option<String>,
-    /// On by default since 0.5.0 (`--no-strict` turns it off): a
+    /// Always on since 0.6.0 (`--no-strict`, kept for 0.5.x, is gone): a
     /// WITNESSED verdict whose cosigners are not a strict majority of the
     /// directory exits 11 instead of 0. RFC-0002.
     strict: bool,
@@ -140,7 +140,7 @@ USAGE:
       --tamper   build a convincing forgery instead, and watch it get caught.
 
   witness-log verify <dossier.json> [--identity <hex-pubkey>] [--directory <path.json>]
-                     [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict]
+                     [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority]
                      [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>]
                      [--subject-org ORG] [--json] [--explain]
       Verify a dossier fully offline: checkpoint signature, identity
@@ -156,7 +156,6 @@ USAGE:
       --directory  path to a witness directory YOU trust, obtained out-of-band
       --allow-sub-majority  accept WITNESSED from fewer than a majority of the
                    directory as exit 0 (strict, the default, exits 11 for it)
-      --no-strict  the 0.4 exit codes (no 11); kept for one release
       --revocations <path>  revocations you know of; applied even if the dossier omits them
       --known-head <size>:<root>  a head you already trust for this identity; a dossier
                    whose leaves do not reproduce it is DIVERGED (repeatable)
@@ -714,7 +713,13 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut
     }
 }
 
-const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority | --no-strict] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--subject-org ORG] [--accept-fleet-anchor] [--json] [--explain]
+/// RFC-0002 kept `--no-strict` for one release (0.5.x).
+const NO_STRICT_REMOVED: &str =
+    "--no-strict was removed in 0.6.0 (RFC-0002 kept it for one release). \
+     A WITNESSED verdict from fewer than a strict majority of the directory exits 11; \
+     --allow-sub-majority accepts it as exit 0.";
+
+const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity <hex>] [--directory <path>] [--threshold 0.0-1.0 | --min-witnesses N] [--allow-sub-majority] [--revocations <path>] [--known-head <size>:<root>] [--evidence <file>] [--subject-org ORG] [--accept-fleet-anchor] [--json] [--explain]
   --identity   the identity pubkey you expect (64 hex), obtained out-of-band
   --directory  a witness directory YOU trust: {\"witnesses\": [...]} or a bare [...] of entries
   --revocations <path>  revocation statements you know of (one statement or a JSON array); applied even if the
@@ -725,7 +730,6 @@ const VERIFY_USAGE: &str = "usage: witness-log verify <dossier.json> [--identity
                instead of --threshold when the directory is large (a registry)
   --allow-sub-majority  accept WITNESSED from fewer than a strict majority of the directory
                (exit 0 with a warning); strict, the default, exits 11 for it
-  --no-strict  the 0.4 exit codes, without 11 (for one release)
   --known-head <size>:<root hex>  a head you already trust; not reproduced -> DIVERGED
   --evidence <file>  a witness equivocation proof for this identity -> DIVERGED
   --subject-org ORG  who operates this log; witnesses of that operator_org never count as independent
@@ -955,8 +959,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
             }
             "--no-strict" => {
-                strict = false;
-                i += 1;
+                return Err(NO_STRICT_REMOVED.to_string());
             }
             "--allow-sub-majority" => {
                 allow_sub_majority = true;
@@ -1317,12 +1320,7 @@ fn run_verify(opts: &Options) -> ExitCode {
             );
         } else {
             println!(
-                "Accepted as exit 0 under {}; the split-view warning above still applies.",
-                if opts.strict {
-                    "--allow-sub-majority"
-                } else {
-                    "--no-strict"
-                }
+                "Accepted as exit 0 under --allow-sub-majority; the split-view warning above still applies."
             );
         }
     }

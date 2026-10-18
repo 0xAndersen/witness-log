@@ -620,23 +620,21 @@ fn split_view_below_a_majority_is_reported_not_hidden() {
         // possible split view, exit 11 (RFC-0002).
         assert_eq!(out.status.code(), Some(11), "{stdout}");
         assert!(stdout.contains("Split view possible: 2 of 4"), "{stdout}");
-        for accept in ["--allow-sub-majority", "--no-strict"] {
-            let ok = Command::new(BIN)
-                .args([
-                    "verify",
-                    d.to_str().unwrap(),
-                    "--identity",
-                    &identity,
-                    "--directory",
-                    &dir_s,
-                    "--min-witnesses",
-                    "2",
-                    accept,
-                ])
-                .output()
-                .unwrap();
-            assert_eq!(ok.status.code(), Some(0), "{accept}");
-        }
+        let ok = Command::new(BIN)
+            .args([
+                "verify",
+                d.to_str().unwrap(),
+                "--identity",
+                &identity,
+                "--directory",
+                &dir_s,
+                "--min-witnesses",
+                "2",
+                "--allow-sub-majority",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(ok.status.code(), Some(0));
         let json = Command::new(BIN)
             .args([
                 "verify",

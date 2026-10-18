@@ -85,8 +85,8 @@ for d in "$fleet"/*.dossier.json; do
 done
 # Argument parsing (security review of 0.5.0, F6): every flag is known or
 # the run is a usage error; a value flag takes the next argument; a repeated
-# single-value flag keeps its last value; the last of --strict/--no-strict
-# wins. (compare appends --json, so a value flag given last consumes it.)
+# single-value flag keeps its last value; --no-strict (removed in 0.6.0)
+# is a usage error wherever it stands. (compare appends --json, so a value flag given last consumes it.)
 native_id="$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['identity_pubkey'])" native/dossier.json)"
 args() { compare "args: $*" "$@" || fail=1; }
 args native/dossier.json --known-heads "1:$wrong_identity"

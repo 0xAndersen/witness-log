@@ -7,7 +7,7 @@
 //
 //	witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
 //	                   [--threshold 0.0-1.0 | --min-witnesses N]
-//	                   [--allow-sub-majority | --no-strict] [--revocations <file>]
+//	                   [--allow-sub-majority] [--revocations <file>]
 //	                   [--known-head <size>:<root>] [--evidence <file>]
 //	                   [--subject-org ORG] [--accept-fleet-anchor] [--json]
 //	witness-log-verify bind <a.json> <b.json> [--json]
@@ -34,7 +34,7 @@ const usage = `witness-log-verify — offline dossier verification in Go
 USAGE:
   witness-log-verify <dossier.json> [--identity <hex>] [--directory <dir.json>]
                      [--threshold 0.0-1.0 | --min-witnesses N]
-                     [--allow-sub-majority | --no-strict] [--revocations <file>]
+                     [--allow-sub-majority] [--revocations <file>]
                      [--known-head <size>:<root>] [--evidence <file>]
                      [--subject-org ORG] [--accept-fleet-anchor] [--json]
       --identity   the identity pubkey you expect, obtained out-of-band
@@ -45,7 +45,6 @@ USAGE:
       --min-witnesses N  quorum gate as an absolute receipt count
       --allow-sub-majority  accept WITNESSED from fewer than a strict majority
                    of the directory as exit 0 instead of 11
-      --no-strict  the 0.4 exit codes, without 11 (kept for one release)
       --known-head <size>:<root hex>  a head you already trust for this
                    identity (repeatable); not reproduced -> DIVERGED
       --evidence <file>  a witness equivocation proof (repeatable); if it
@@ -58,8 +57,8 @@ USAGE:
       --explain    accepted, as witness-log verify accepts it; prints nothing extra here
 
     Flags are parsed as witness-log verify parses them: an unknown flag is
-    a usage error (exit 2), a repeated flag keeps its last value, and the
-    last of --strict / --no-strict wins.
+    a usage error (exit 2) and a repeated flag keeps its last value.
+    --no-strict, kept for one release after 0.5.0, is gone: a usage error.
 
   witness-log-verify bind <a.json> <b.json> [--json]
       Two different agents' dossiers: match their HandoffAttestation and
@@ -140,7 +139,7 @@ func readEvidence(path string) (witnesslog.EquivocationProof, error) {
 // reference CLI's parse_options parses it (crates/witness-log-cli): every
 // flag is known or the run is a usage error (exit 2); a value flag takes
 // the next argument whatever it looks like; a repeated single-value flag
-// keeps its last value; --strict and --no-strict, the last one given.
+// keeps its last value. --no-strict is a usage error since 0.6.0.
 // Before this, unknown flags were skipped with the argument after them
 // and the first of a repeated flag won, so a typo such as --evidance or
 // --known-heads ran without the evidence the caller supplied (security
@@ -161,6 +160,12 @@ type verifyArgs struct {
 	subjectOrg      string
 	acceptFleet     bool
 }
+
+// noStrictRemoved is the reference CLI's message: RFC-0002 kept
+// --no-strict for one release (0.5.x).
+const noStrictRemoved = "--no-strict was removed in 0.6.0 (RFC-0002 kept it for one release). " +
+	"A WITNESSED verdict from fewer than a strict majority of the directory exits 11; " +
+	"--allow-sub-majority accepts it as exit 0."
 
 // rustFloat is the grammar of Rust's f64::from_str for finite decimal
 // values (the only ones --threshold accepts): no hex floats, underscores
@@ -233,7 +238,7 @@ func parseVerifyArgs(args []string) (*verifyArgs, error) {
 		case "--strict":
 			a.strict = true
 		case "--no-strict":
-			a.strict = false
+			return nil, errors.New(noStrictRemoved)
 		case "--allow-sub-majority":
 			a.allowSub = true
 		case "--accept-fleet-anchor":
@@ -425,11 +430,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		if code == witnesslog.ExitSplitViewUnsafe {
 			fmt.Fprintln(stdout, "Exit 11: WITNESSED, but not by a strict majority of your directory (strict is the default since 0.5.0). --allow-sub-majority accepts this as exit 0.")
 		} else {
-			flag := "--no-strict"
-			if strict {
-				flag = "--allow-sub-majority"
-			}
-			fmt.Fprintf(stdout, "Accepted as exit 0 under %s; a conflicting history could still have been cosigned by the rest of the directory.\n", flag)
+			fmt.Fprintln(stdout, "Accepted as exit 0 under --allow-sub-majority; a conflicting history could still have been cosigned by the rest of the directory.")
 		}
 	}
 	return code

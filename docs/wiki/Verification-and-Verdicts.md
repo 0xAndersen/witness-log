@@ -97,7 +97,7 @@ WITNESSED, because the receipts did verify. A gate that accepts a
 sub-majority says so with `--allow-sub-majority` (exit 0, warning still
 printed). `--min-witnesses N` with 2N at or below the directory size is
 allowed, not a usage error; a sub-majority result simply exits 11.
-`--no-strict` restores the 0.4 reading (exit 0) for one release, and
+`--no-strict`, kept for 0.5.x, is a usage error since 0.6.0, and
 `--strict` is accepted and does nothing.
 
 The verifier cannot see the other dossier; `witness-log diff` is how two

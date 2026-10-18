@@ -2,11 +2,13 @@
 
 ## 0.6.0 — UNRELEASED
 
-No wire-format, leaf-encoding or verdict-rule change for existing callers:
-every dossier verifies as it did under 0.5.0 unless the caller passes one
-of the new inputs below. Two behaviour changes for operators: the CLI now
-speaks `https://`, and a witness with a damaged record keeps serving its
-other logs instead of refusing to start.
+No wire-format, leaf-encoding or verdict-rule change: every dossier
+verifies as it did under 0.5.0 unless the caller passes one of the new
+inputs below. One removal: `--no-strict` (announced in 0.5.0). Two
+behaviour changes for operators: the CLI now speaks `https://`, and a
+witness with a damaged record keeps serving its other logs instead of
+refusing to start. Malformed `--evidence` items, which some verifiers
+ignored, are now a usage error everywhere.
 
 ### Verification
 
@@ -31,6 +33,15 @@ other logs instead of refusing to start.
   the stability rule written down (fields only added, consumers ignore
   unknown ones, failure wording not part of the contract). CI validates
   the reference CLI's output and the bindings' report against it.
+
+### Breaking
+
+- **`--no-strict` is removed**, as RFC-0002 announced (it restored the 0.4
+  exit codes for one release, 0.5.x). `witness-log verify --no-strict` and
+  `witness-log-verify --no-strict` are now a usage error (exit 2) that names
+  the replacement: `--allow-sub-majority` accepts a sub-majority WITNESSED
+  (exit 11) as 0. `--strict` is still accepted and does nothing. The
+  `strict` field of `verify --json` stays, always `true`.
 
 ### Security review of 0.5.0 (round 3)
 
