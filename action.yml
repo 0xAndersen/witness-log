@@ -1,6 +1,6 @@
 # witness-log verify, as a GitHub Action:
 #
-#   - uses: 0xAndersen/witness-log@v0.6.0
+#   - uses: 0xAndersen/witness-log@v0.6.1
 #     with:
 #       dossier: dossier.json
 #       identity: ${{ vars.AGENT_IDENTITY }}
@@ -71,7 +71,7 @@ inputs:
     required: false
     default: not-witnessed
   version:
-    description: "witness-log release to run: `v0.5.0` or later, or `latest`. Empty: the action's own tag when it is a version (`uses: 0xAndersen/witness-log@v0.6.0`), otherwise the latest release."
+    description: "witness-log release to run: `v0.5.0` or later, or `latest`. Empty: the action's own tag when it is a version (`uses: 0xAndersen/witness-log@v0.6.1`), otherwise the latest release."
     required: false
     default: ""
   token:

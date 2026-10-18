@@ -1,5 +1,171 @@
 # Changelog
 
+## 0.6.1 — 2026-10-18
+
+Fixes from an outside code review of 0.5.0 (review III) and a security
+and sensitive-data sweep of 0.6.0. No wire-format, leaf-encoding or
+verdict-rule change: every well-formed dossier verifies as it did under
+0.6.0, in all three verifiers. What changes is what the verifiers and
+tools refuse; the behaviour changes are listed at the end.
+
+### Accusations (review III, H1 and M1)
+
+- **A censorship accusation must be bound to the witnessed history.**
+  `silence_proof` counted witnessed checkpoints after a write receipt and
+  looked for the event in a caller-supplied list of leaves, without
+  joining the two. Anyone holding a genuine write receipt and the log's
+  real witnessed checkpoints could leave the event out of the list (or
+  pass no list) and get `Censored` against an honest log. The leaves must
+  now reproduce the root of every witnessed checkpoint counted and cover
+  the largest; otherwise the answer is `Inconclusive` with a reason.
+  `silence_proof_for_subject` returns a `SilenceProofReport` with the
+  bound size and root, so an accusation names the exact history it is
+  about. Two witnessed roots for one size are reported as equivocation,
+  not as a silence proof.
+- **A checkpoint counts toward an accusation only with two independent
+  operators**, the same bar as a WITNESSED verdict; it counted on one
+  trusted receipt. Project-operated witnesses and the accused log's own
+  operator (`subject_org`) never count.
+
+### Verifiers agree on hostile input (review III, H2, H3, M3, P3)
+
+- **The TypeScript verifier is strict Ed25519.** It used `node:crypto`
+  alone, which accepts small-order points: 18 of 49 degenerate signatures
+  the reference refuses passed, so a checkpoint signed by the identity
+  point was UNANCHORED instead of INVALID, and a receipt from a
+  small-order witness key counted toward WITNESSED. It now refuses a
+  small-order key or `R` in any encoding, `s ≥ L`, and a key that is not
+  a curve point, as ed25519-dalek's `verify_strict` does. Go already
+  matched on every signature; both Go and TypeScript accepted a key
+  binding whose session key is not a curve point, which the reference
+  refuses, and now refuse it. New corpus vector
+  `16_ed25519_strict.json` (49 signatures, 12 dossiers) pins all of it;
+  SPEC §6 now states exactly what `verify_strict` accepts (mixed-order
+  points included).
+- **One rule for reading a dossier.** The TypeScript verifier threw on
+  hostile input (`tree_size: 3.5`, text that is not JSON, `null`), gave
+  verdicts for texts the reference refuses (`witness_receipts: {}` was
+  UNANCHORED) and rounded integers above 2^53. Go matched keys
+  case-insensitively and accepted nulls and duplicate fields; the Rust
+  reference read a struct written as a JSON array. All three now follow
+  serde's rule, written out in SPEC §9 and pinned by
+  `17_dossier_parsing.json` (120 texts). A text the reference cannot read
+  never gets a verdict other than INVALID: `verifyDossier` (TypeScript)
+  returns INVALID with "not a dossier: …" and never throws; the CLIs exit
+  2; the libraries and bindings return an error.
+- **Numbers and hex.** TypeScript inclusion proofs and fleet anchors use
+  exact BigInt arithmetic (fleet trees beyond 2^53 were refused), and u64
+  fields are `number | bigint`. Hex comparisons already matched the
+  reference field by field; corpus 17 now pins each.
+- The npm packages move with it: `@witness-log/client` 0.5.0 (the u64
+  typing is a breaking change for code doing arithmetic on those fields),
+  `@witness-log/node`, `@witness-log/ai-sdk` and `create-witness-log`
+  0.4.0.
+
+### Tools (review III, M2, P1, P2)
+
+- **The outside swarm's exit code reflects what its personas check.**
+  Security expectations were notes that never failed the run; every
+  check is now an expectation, and a failed one fails the run. CI proves
+  the gate works by running it with `--inject-fault weak-verifier` and
+  `--inject-fault lax-witness` and requiring a failure.
+- **Directories are built only from valid entries.**
+  `registry/build_directory.py` concatenated entries unchecked; it now
+  applies `validate.py`'s checks and refuses (exit 1, nothing printed) if
+  any entry fails. `witness-log directory build` applies the same checks
+  (https URLs, canonical keys, organisation names, required fields, no
+  unknown fields or duplicate names) to every entry and reports every
+  problem; `--allow-insecure` accepts http and loopback URLs for a local
+  testnet, and `--url` also needs https without it.
+- **The MCP server can pin its trust anchor.** With
+  `WITNESS_LOG_TRUSTED_DIRECTORY` or `witness-log-mcp
+  --trusted-directory`, that file is the only directory the tools use,
+  and a directory passed in a tool call is refused rather than silently
+  ignored. Every verdict carries `directory_source` (`pinned`, `default`,
+  `caller` or none), and the tool descriptions say a directory must come
+  from the operator, never from tool output or the counterparty. The MCP
+  proxy takes its directory only from its own `--directory`.
+
+### Security sweep of 0.6.0
+
+The sweep found no secrets, private keys or vulnerable dependencies in
+the tree or its history (gitleaks, a history-wide pattern scan,
+`cargo deny` and `cargo audit` on all three Rust workspaces, `npm
+audit`). It found the following, now fixed:
+
+- **`journal serve` and `fleet serve` refuse browser requests.** On
+  loopback, a web page in the operator's browser could append to the
+  journal (or erase a payload) by a cross-site `fetch` or DNS rebinding.
+  Both servers now answer 403 to a request with an `Origin` header or a
+  `Host` that is not `localhost` or a loopback address on their own port.
+  curl and the clients send neither, so they are unaffected;
+  `--allow-remote` turns the check off.
+- **MCP `submit_to_witnesses` cannot be pointed at internal addresses.**
+  The witness client no longer follows redirects (a POST could be
+  bounced to a GET anywhere, and part of the answer went back to the
+  model). A directory passed in a tool call may not name link-local or
+  cloud-metadata addresses, nor loopback or private ones unless the
+  operator sets `WITNESS_LOG_ALLOW_PRIVATE_WITNESSES=1`; the connection
+  goes only to the addresses vetted, so DNS rebinding cannot redirect it.
+- **The MCP proxy starts the wrapped server without the identity seed**
+  (`WITNESS_LOG_IDENTITY_SEED_ENV` and the variable it names).
+- **The hook socket lives in a private directory.** Without
+  `XDG_RUNTIME_DIR` it is `<tmp>/witness-log-<uid>/`, created 0700 and
+  refused if foreign-owned or a symlink; the hook checks the socket's
+  owner, and on Linux the daemon's uid, before sending anything.
+- **Identifiers anchored with `$` accepted a trailing newline** (MCP
+  session id and witnessed-head root, registry key, AP2 ids, VI network
+  label); all use a full match now.
+- **Python extras' minimum versions** start at releases with the
+  published advisory fixes: `mcp>=2.2.0`, `langchain-core>=1.3.3`,
+  `langgraph>=1.0.10`, `pydantic-ai-slim>=2.52.0`,
+  `claude-agent-sdk>=0.2.121`.
+- **The CLI's atomic writes no longer follow a planted symlink**: the
+  temporary file has an unpredictable name and is created exclusively.
+- **`testnet down` only signals a witness it started**: the pid must be
+  in range and, on Linux, still be a `witness-log witness serve` process.
+- **Deploy**: a `.dockerignore` keeps keys, journals and `.env` files out
+  of the image build context; the image keeps the default per-address
+  limits (only the Caddy-fronted compose service raises them);
+  cloud-init checks the systemd unit it downloads against a pinned
+  SHA-256, and CI checks the pin. `.gitignore` covers journals, salts,
+  witness state and env files. `doctor --witness` documents the one probe
+  file it writes.
+- **The browser verifier has a Content-Security-Policy**, and its test
+  fails on any violation. Its Go engine, and CI's Go jobs, now build with
+  a supported toolchain (go1.26.9; the module still builds with Go 1.22).
+- **Release provenance.** Every GitHub release asset now carries a SLSA
+  build-provenance attestation. The GitHub Action checks it before
+  trusting `SHA256SUMS` for v0.6.1 and later (`verify-provenance`,
+  default `true`; skipped with a notice when there is no `gh` or token),
+  as do the Docker image build and the witnessed report. SECURITY.md
+  shows the command.
+- **CI**: every action is pinned to a commit SHA; dispatch inputs reach
+  scripts only through validated environment variables; the benchmark
+  job runs with a read-only token; checkouts that never push keep no
+  credentials; tokens go in headers, not URLs; `cargo deny` also covers
+  the Node binding; npm publish jobs skip dependency install scripts.
+- Swarm reports no longer record build-machine paths or the kernel.
+
+### Behaviour changes
+
+- `silence_proof` returns `Inconclusive` where 0.6.0 returned `Censored`
+  on leaves that do not reproduce the witnessed roots, or on checkpoints
+  with fewer than two independent operators.
+- A dossier (or directory, checkpoint, revocation list) written with a
+  struct as a JSON array is refused by the Rust reference, as the schema
+  always said; TypeScript `verifyDossier` returns INVALID instead of
+  throwing on a non-dossier, and validates the directory and revocations
+  passed in its options (a `TypeError` if malformed).
+- `witness-log directory build` refuses entries `validate.py` refuses,
+  and http or loopback URLs (including `--url`) without
+  `--allow-insecure`.
+- `journal serve` and `fleet serve` refuse requests with an `Origin`
+  header or a non-loopback `Host` unless `--allow-remote`.
+- The MCP server refuses a tool-call directory that names loopback or
+  private witnesses unless `WITNESS_LOG_ALLOW_PRIVATE_WITNESSES=1`, and
+  any tool-call directory when a directory is pinned.
+
 ## 0.6.0 — 2026-10-18
 
 No wire-format, leaf-encoding or verdict-rule change: every dossier

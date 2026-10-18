@@ -165,7 +165,7 @@ witness-log testnet down
 or a witness and prints the fix for each problem. Every subcommand and exit code:
 [CLI reference](docs/wiki/CLI-Reference.md).
 
-**CI.** `uses: 0xAndersen/witness-log@v0.6.0` verifies a dossier in a GitHub workflow and fails the job unless
+**CI.** `uses: 0xAndersen/witness-log@v0.6.1` verifies a dossier in a GitHub workflow and fails the job unless
 it is WITNESSED. [GitHub Action](docs/wiki/GitHub-Action.md).
 
 **Rust.** `witness-log-core` (log, journal, redaction, C2SP encoding) and `witness-log-network` (witnesses,

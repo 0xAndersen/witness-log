@@ -1047,7 +1047,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "witness-log-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64ct",
  "ed25519-dalek",
@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "witness-log-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64ct",
  "ed25519-dalek",
@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "witness-log-network"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64ct",
  "curve25519-dalek",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "witness-log-wasm"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",
