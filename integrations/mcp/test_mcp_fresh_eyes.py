@@ -153,6 +153,39 @@ async def test_witnessed_dossier_is_kept_and_state_is_cli_compatible(tmp_path):
             h.shutdown()
 
 
+@pytest.mark.anyio
+async def test_witnessed_verdicts_say_whether_they_resist_a_split_view(tmp_path):
+    """Security review 3, F11: submit_to_witnesses and
+    verify_chain_integrity reported "witnessed" without saying whether the
+    cosigners were a strict majority of the directory (the verifier's
+    `split_view_unsafe`, the CLI's exit 11). Two cosignatures out of a
+    four-witness directory reach the default gate of two, but the other
+    two could have cosigned a conflicting history."""
+    ws = [_witness(i) for i in range(2)]
+    dead = [
+        json.loads(wl.witness_entry_independent(f"dead{i}.test/fe", f"Dead Org {i}", f"http://127.0.0.1:1/{i}", "%064x" % (i + 1)))
+        for i in range(2)
+    ]
+    live = {"witnesses": [e for _, e in ws]}
+    wide = {"witnesses": live["witnesses"] + dead}
+    try:
+        async with Client(_params(tmp_path / "home")) as c:
+            await c.call_tool("initialize_witness_chain", {"session_id": "a"})
+            await c.call_tool("append_audit_step", {"session_id": "a", "intent": "i", "tool_name": "t"})
+            sub = _data(await c.call_tool("submit_to_witnesses", {"session_id": "a", "directory": wide}))
+            assert sub["verdict"] == "witnessed" and sub["split_view_unsafe"] is True, sub
+            v = _data(
+                await c.call_tool("verify_chain_integrity", {"session_id": "a", "trusted_directory": wide, "min_witnesses": 2})
+            )
+            assert v["verdict"] == "witnessed" and v["split_view_unsafe"] is True
+            assert v["witnessed_verdict"] == "witnessed" and v["witnessed_split_view_unsafe"] is True
+            v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "a", "trusted_directory": live}))
+            assert v["verdict"] == "witnessed" and v["split_view_unsafe"] is False
+    finally:
+        for h, _ in ws:
+            h.shutdown()
+
+
 def _rewrite_journal(journal, n: int) -> None:
     """What an operator holding the identity seed can do (an unsealed
     journal keeps it in its header): replace the journal with `n` leaves of

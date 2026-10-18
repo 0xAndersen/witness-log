@@ -54,8 +54,10 @@ Injected tools, appended to every ``tools/list`` response and answered
 by the proxy: ``audit__status`` -> ``{leaf_count, root, identity,
 journal, calls, restarts, witnessed, last_verdict}``; ``audit__export``
 -> writes ``<journal>.dossier.json`` and returns ``{path, sha256,
-bytes, verdict, tamper_alerts}`` (the verdict is ``unanchored`` unless a
-directory was given, since a verifier needs a directory it trusts; the
+bytes, verdict, split_view_unsafe, tamper_alerts}`` (the verdict is
+``unanchored`` unless a directory was given, since a verifier needs a
+directory it trusts; ``split_view_unsafe`` is true for a ``witnessed``
+verdict whose cosigners are not a strict majority of the directory; the
 head witnesses last cosigned is checked as a known head, so a journal
 rewritten after witnessing is ``diverged`` and one truncated below it is
 a tamper alert).
@@ -375,6 +377,9 @@ class Proxy:
             "sha256": _sha256(data),
             "bytes": len(data),
             "verdict": report.get("verdict"),
+            # Witnessed, but not by a strict majority of the directory (the
+            # CLI's exit 11): the verdict string alone does not say so.
+            "split_view_unsafe": bool(report.get("split_view_unsafe")),
             "tamper_alerts": alerts,
         }
 
