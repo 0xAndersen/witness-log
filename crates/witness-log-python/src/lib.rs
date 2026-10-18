@@ -447,8 +447,7 @@ fn verify_dossier_json_detached(
             ));
         }
     }
-    let dossier: witness_log_network::Dossier =
-        serde_json::from_str(dossier_json).map_err(malformed_err)?;
+    let dossier = witness_log_network::Dossier::from_json(dossier_json).map_err(malformed_err)?;
     let trusted_directory: Option<witness_log_network::WitnessDirectory> =
         match &trusted_directory_json {
             // `{"witnesses": [...]}` or a bare array of entries.

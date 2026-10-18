@@ -313,10 +313,10 @@ func (l *Leaf) Validate(expectedIndex uint64) error {
 		return fmt.Errorf("unrecognized leaf_type tag: 0x%02x", l.LeafType)
 	}
 	if !isHex64Lower(l.SessionPubkey) {
-		return fmt.Errorf("field `session_pubkey` must be exactly 64 lowercase hex characters, got %q", l.SessionPubkey)
+		return fmt.Errorf("field `session_pubkey` must be exactly 64 lowercase hex characters, got %s", echo(l.SessionPubkey))
 	}
 	if !isHex64Lower(l.PayloadHash) {
-		return fmt.Errorf("field `payload_hash` must be exactly 64 lowercase hex characters, got %q", l.PayloadHash)
+		return fmt.Errorf("field `payload_hash` must be exactly 64 lowercase hex characters, got %s", echo(l.PayloadHash))
 	}
 	require := func(present bool, field string) error {
 		if present {
@@ -357,7 +357,7 @@ func (l *Leaf) Validate(expectedIndex uint64) error {
 		}
 	}
 	if (t == LeafRedaction || t == LeafKeyRevocation) && l.PayloadHash != ZeroHashHex {
-		return fmt.Errorf("field `payload_hash` is invalid: markers commit the all-zero hash, got %q", l.PayloadHash)
+		return fmt.Errorf("field `payload_hash` is invalid: markers commit the all-zero hash, got %s", echo(l.PayloadHash))
 	}
 	if t == LeafRedaction && l.RedactedIndex != nil && *l.RedactedIndex >= expectedIndex {
 		return fmt.Errorf("field `redacted_index` is invalid: must name an earlier leaf, got %d", *l.RedactedIndex)
@@ -400,11 +400,11 @@ func (l *Leaf) Validate(expectedIndex uint64) error {
 			sum := sha256.Sum256([]byte(*l.AnchorProofJSON))
 			actual := hex.EncodeToString(sum[:])
 			if actual != *l.AnchorProofHash {
-				return fmt.Errorf("anchor_proof_json does not hash to the committed anchor_proof_hash (committed %s, actual %s); the anchor proof was swapped after the leaf was committed", *l.AnchorProofHash, actual)
+				return fmt.Errorf("anchor_proof_json does not hash to the committed anchor_proof_hash (committed %s, actual %s); the anchor proof was swapped after the leaf was committed", boundMessage(*l.AnchorProofHash), actual)
 			}
 		}
 		if !IsValidAnchorURL(*l.AnchorURL) {
-			return fmt.Errorf("field `anchor_url` must be an http:// or https:// URL, got %q", *l.AnchorURL)
+			return fmt.Errorf("field `anchor_url` must be an http:// or https:// URL, got %s", echo(*l.AnchorURL))
 		}
 	}
 	return nil

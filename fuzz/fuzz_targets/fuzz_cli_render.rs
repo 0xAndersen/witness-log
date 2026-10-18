@@ -25,7 +25,7 @@ fn short(hexstr: &str) -> String {
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
-        if let Ok(dossier) = serde_json::from_str::<Dossier>(s) {
+        if let Ok(dossier) = Dossier::from_json(s) {
             let report = dossier.verify(0.66, &VerifyContext::default());
             // Exercise every render-path string operation a real CLI run
             // would touch over this dossier's attacker-controlled fields.

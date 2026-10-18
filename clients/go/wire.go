@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"unicode/utf8"
 )
 
 // The reference reads a dossier with serde (crates/witness-log-network's
@@ -181,6 +182,105 @@ func hasUnpairedSurrogate(raw []byte) bool {
 	return false
 }
 
+// MaxDossierDepth is how deep a dossier text may nest (SPEC.md §9,
+// "Reading a dossier"): arrays and objects, counted outside strings, the
+// dossier object being depth 1. A deeper text is not a dossier, wherever
+// the nesting is, an ignored key's value included. It is the reference's
+// MAX_DOSSIER_DEPTH. Before it, encoding/json's own limit decided: a text
+// 10,000 levels deep was refused here and read by the reference
+// (outside audit of 0.6.1); now that limit is never reached.
+const MaxDossierDepth = 1000
+
+// nestingExceeds returns the byte offset of the first '[' or '{' outside a
+// string at which raw nests deeper than max, and whether there is one. It
+// is exact for JSON; a text that is not JSON is refused either way. One
+// pass, no allocation.
+func nestingExceeds(raw []byte, max int) (int, bool) {
+	depth := 0
+	inString, escaped := false, false
+	for i, b := range raw {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case b == '\\':
+				escaped = true
+			case b == '"':
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '[', '{':
+			depth++
+			if depth > max {
+				return i, true
+			}
+		case ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return 0, false
+}
+
+// Messages quote a bounded part of untrusted input: a dossier field, or an
+// encoding/json or strconv error that quotes one, can be megabytes long
+// (outside audit of 0.6.1: a 10-million-digit literal came back whole).
+// The reference and the TypeScript verifier bound theirs the same way; the
+// wording of a failure is not normative.
+const (
+	maxEchoRunes    = 64
+	maxMessageRunes = 320
+	messageHead     = 128
+	messageTail     = 160
+)
+
+// echo is s quoted (%q) when it has at most 64 runes; otherwise its first
+// 64 runes quoted, then "…" and its length in bytes.
+func echo(s string) string {
+	n := 0
+	for i := range s {
+		if n == maxEchoRunes {
+			return fmt.Sprintf("%q… (%d bytes)", s[:i], len(s))
+		}
+		n++
+	}
+	return strconv.Quote(s)
+}
+
+// boundMessage is msg unchanged up to 320 runes; otherwise its first 128
+// and last 160 runes around a note of how many bytes were left out (the
+// end of an encoding/json error says what it expected).
+func boundMessage(msg string) string {
+	n := utf8.RuneCountInString(msg)
+	if n <= maxMessageRunes {
+		return msg
+	}
+	headEnd, tailStart, r := 0, 0, 0
+	for i := range msg {
+		if r == messageHead {
+			headEnd = i
+		}
+		if r == n-messageTail {
+			tailStart = i
+			break
+		}
+		r++
+	}
+	return fmt.Sprintf("%s … [%d bytes elided] … %s", msg[:headEnd], tailStart-headEnd, msg[tailStart:])
+}
+
+// boundedError is err with its message bounded (boundMessage); errors.Is
+// and errors.As still see err.
+type boundedError struct{ err error }
+
+func (e boundedError) Error() string { return boundMessage(e.err.Error()) }
+func (e boundedError) Unwrap() error { return e.err }
+
 // maxValueDepth is serde_json's nesting limit (128) less the dossier object
 // and the field itself: how deep a value read as a serde_json::Value inside
 // a dossier field may nest.
@@ -260,7 +360,7 @@ func unitVariant(raw []byte, what string, names []string) (string, error) {
 			return s, nil
 		}
 	}
-	return "", fmt.Errorf("%s: unknown variant %q", what, s)
+	return "", fmt.Errorf("%s: unknown variant %s", what, echo(s))
 }
 
 var (

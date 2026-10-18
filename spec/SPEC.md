@@ -803,7 +803,15 @@ reference verifier for this format.
 **Reading a dossier (normative).** A verifier reads a dossier exactly as
 the reference deserialises one, or two verifiers can reach different
 verdicts on the same bytes. The text is RFC 8259 JSON in UTF-8, without a
-byte order mark. The dossier and every struct in it (checkpoint, leaf,
+byte order mark. It nests at most 1000 arrays and objects deep: counting
+only `[` and `{` outside strings, with the dossier object at depth 1, no
+array or object anywhere in the text, an ignored key's value included, is
+deeper than 1000, and a verifier stops reading at the 1001st level rather
+than building anything deeper. (A dossier any implementation writes nests
+at most 5 deep, and the deepest value the reference reads, a
+`fleet_anchor`, 127 in all; the limit is an order of magnitude below the
+10,000 of Go's `encoding/json`, so no JSON library's own limit decides.)
+The dossier and every struct in it (checkpoint, leaf,
 receipt, directory and directory entry, key binding, revocation, custody
 threshold) is a JSON object, never an array. A key that names one of the
 struct's fields appears at most once and matches the field name exactly
@@ -820,7 +828,10 @@ string and every key of a struct contain no unpaired UTF-16 surrogate
 escape. A text that breaks any of these is not a dossier: the CLI exits
 `2`, and no verifier returns any verdict other than `Invalid` for it.
 `/corpus/17_dossier_parsing.json` pins the cases, including u64 values
-above 2^53 and the case of hex in each field the verdict compares.
+above 2^53, the case of hex in each field the verdict compares, the depth
+limit at 1000 and 1001, and numbers at the edge of binary64. A message
+saying why a text is not a dossier, or why a check failed, quotes at most a
+bounded part of the input.
 
 **JSON Schema.** `spec/dossier.schema.json` (JSON Schema 2020-12) states
 the exact shape of a dossier and of every object in it: field names,
@@ -834,7 +845,13 @@ The schema also lists `fleet_anchor`, an optional field of the
 experimental RFC-0001 prototype (0.6.0). It is not part of this
 specification: a verifier MUST NOT let it change a verdict unless the
 caller explicitly opts in, and a verifier that does not implement RFC-0001
-ignores it like any unknown field.
+ignores it like any unknown field, except that the reference reads its
+value as a JSON value: when present and not `null`, a text whose
+`fleet_anchor` holds a string with an unpaired surrogate escape, a number
+that is infinite once rounded to the nearest binary64 (ties to even:
+`1.7976931348623158e308` is finite, `1.7976931348623159e308` and `1e309`
+are not), or nesting more than 126 levels below the dossier object is not a
+dossier (corpus 17).
 
 ### 9.1 The trust boundary: what a verifier must supply itself
 

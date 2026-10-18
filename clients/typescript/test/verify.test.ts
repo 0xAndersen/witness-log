@@ -31,6 +31,7 @@ import {
   type Leaf,
   type WitnessDirectory,
 } from "../src/index.js";
+import { IGNORED, MAX_DOSSIER_DEPTH, parseJsonExact } from "../src/dossier-json.js";
 
 const here = dirname(fileURLToPath(import.meta.url)); // clients/typescript/dist/test
 const repo = resolve(here, "..", "..", "..", "..");
@@ -555,5 +556,114 @@ describe("corpus 17: reading a dossier (outside review III, H2 and P3)", () => {
     // Number arithmetic would have read 2^53 + 1 as 2^53.
     assert.equal(verifyInclusion(leaf, n, n + 2n, [sibling, left], root), false);
     assert.equal(verifyInclusion(leaf, 1.5, 4, [], root), false);
+  });
+});
+
+describe("hostile dossier text (outside audit of 0.6.1)", { skip: existsSync(join(repo, "corpus")) ? false : "no corpus directory" }, () => {
+  const minimal = (): string =>
+    corpus("17_dossier_parsing.json")
+      .cases.find((c: { name: string }) => c.name === "whitespace around the object")
+      .dossier_json.trim();
+  const withField = (text: string, field: string) => `${text.slice(0, -1)},${field}}`;
+  const nested = (n: number) => "[".repeat(n) + "]".repeat(n);
+  const fast = (t0: number, what: string) => {
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1500, `${what} took ${Math.round(ms)} ms`);
+  };
+
+  it("a text nests at most 1000 deep, and reading stops at the 1001st level however deep it goes", () => {
+    const min = minimal();
+    assert.equal(verifyDossier(withField(min, `"zz":${nested(999)}`)).verdict, "UNANCHORED");
+    // 5 million deep is the audit's 10 MB text: 1.3 GB and seconds before, or
+    // a fatal out-of-memory on a smaller heap.
+    for (const n of [1000, 9999, 5_000_000]) {
+      const t0 = performance.now();
+      const r = verifyDossier(withField(min, `"zz":${nested(n)}`));
+      assert.equal(r.verdict, "INVALID", `${n} deep`);
+      assert.match(r.failures[0], /^not a dossier: nested deeper than 1000 arrays and objects/);
+      fast(t0, `${n} deep`);
+    }
+  });
+
+  it("a parsed value nests at most 1000 deep too; a cycle is refused, a shared value measured once", () => {
+    const min = minimal();
+    assert.equal(verifyDossier(JSON.parse(withField(min, `"zz":${nested(999)}`))).verdict, "UNANCHORED");
+    const over = verifyDossier(JSON.parse(withField(min, `"zz":${nested(1000)}`)));
+    assert.equal(over.verdict, "INVALID");
+    assert.match(over.failures[0], /^not a dossier: dossier: nested deeper than 1000/);
+    const cyclic = JSON.parse(min);
+    cyclic.zz = { a: [] };
+    cyclic.zz.a.push(cyclic.zz);
+    assert.equal(verifyDossier(cyclic).verdict, "INVALID");
+    // 60 levels, 2^60 paths through them.
+    let shared: unknown = [];
+    for (let i = 0; i < 60; i++) shared = [shared, shared];
+    const wide = JSON.parse(min);
+    wide.zz = shared;
+    const t0 = performance.now();
+    assert.equal(verifyDossier(wide).verdict, "UNANCHORED");
+    fast(t0, "a shared value");
+  });
+
+  it("a 10-million-digit literal is refused in linear time and quoted only in part", () => {
+    const min = minimal();
+    const digits = "1" + "0".repeat(10_000_000);
+    for (const [what, text] of [
+      ["tree_size", min.replace('"tree_size":0', `"tree_size":${digits}`)],
+      ["a string field", min.replace('"sig_alg":"ed25519"', `"sig_alg":${digits}`)],
+      ["fleet_anchor", withField(min, `"fleet_anchor":{"x":${digits}}`)],
+    ]) {
+      const t0 = performance.now();
+      const r = verifyDossier(text);
+      assert.equal(r.verdict, "INVALID", what);
+      assert.ok(r.failures[0].length < 300, `${what}: a ${r.failures[0].length}-character failure`);
+      fast(t0, what);
+    }
+    // In an ignored key it costs one scan and is read as nothing.
+    const t0 = performance.now();
+    assert.equal(verifyDossier(withField(min, `"zz":${digits}`)).verdict, "UNANCHORED");
+    fast(t0, "an ignored literal");
+  });
+
+  it("a huge string is quoted only in part", () => {
+    const min = minimal();
+    const huge = "S".repeat(10_000_000);
+    for (const text of [
+      min.replace('"tree_size":0', `"tree_size":"${huge}"`),
+      min.replace(
+        '"witness_directory":{"witnesses":[]}',
+        `"witness_directory":{"witnesses":[{"name":"n","operator_org":"o","url":"u","pubkey":"p","runtime":"${huge}"}]}`,
+      ),
+    ]) {
+      const r = verifyDossier(text);
+      assert.equal(r.verdict, "INVALID");
+      assert.match(r.failures[0], /^not a dossier: /);
+      assert.ok(r.failures[0].length < 300, `a ${r.failures[0].length}-character failure`);
+    }
+    assert.throws(
+      () => parseKnownHead(huge),
+      (e: Error) => e instanceof TypeError && e.message.length < 300,
+    );
+  });
+});
+
+describe("parseJsonExact builds only what a dossier reads", () => {
+  it("an ignored key's value is checked as JSON and not built", () => {
+    const shape = { fields: { a: "all" as const } };
+    const v = parseJsonExact('{"a":[1,{"b":2}],"zz":[[1,2],{"c":"\\u00e9"}],"zz2":"x","zz3":-1.5e3}', shape) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(v), ["a", "zz", "zz2", "zz3"]);
+    assert.equal((v.a as unknown[]).length, 2);
+    for (const k of ["zz", "zz2", "zz3"]) assert.equal(v[k], IGNORED, k);
+    for (const text of ['{"zz":[1,]}', '{"zz":"\\x"}', '{"zz":[1}', '{"zz":01}', '{"zz":"\u0001"}', '{"zz":{"a" 1}}', '{"zz":"\\u12"}', '{"zz":tru}']) {
+      assert.throws(() => parseJsonExact(text, shape), SyntaxError, text);
+    }
+  });
+
+  it("nesting is counted outside strings, the outer value being depth 1", () => {
+    assert.deepEqual(parseJsonExact("[[]]", "all", 2), [[]]);
+    assert.throws(() => parseJsonExact("[[[]]]", "all", 2), /nested deeper than 2/);
+    assert.throws(() => parseJsonExact('{"a":{"b":{}}}', { fields: {} }, 2), /nested deeper than 2/);
+    assert.deepEqual(parseJsonExact('["\\"[[[["]', "all", 1), ['"[[[[']);
+    assert.equal(MAX_DOSSIER_DEPTH, 1000);
   });
 });

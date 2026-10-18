@@ -213,9 +213,11 @@ fn binding_message(
 /// different question from "is the signature cryptographically valid?"
 /// Verifiers MUST surface custody alongside any signature-verification
 /// result; they are not the same thing.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(remote = "Self")]
-#[serde(rename_all = "snake_case")]
+///
+/// Serialized in snake_case (`"self_held"`, `{"threshold": {"k": "2", "n":
+/// "3"}}`); the threshold variant's content is read only from an object,
+/// never from an array of `k` and `n`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum KeyCustody {
     /// Agent process holds the key in memory. Any runtime compromise exposes it.
     SelfHeld,
@@ -235,10 +237,30 @@ pub enum KeyCustody {
     Undisclosed,
 }
 
-crate::object_only_serde!(KeyCustody);
+/// The serde shape of [`KeyCustody`]; see `object_only` for why it is a
+/// separate, private type.
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "KeyCustody",
+    rename = "KeyCustody",
+    rename_all = "snake_case"
+)]
+enum KeyCustodyDef {
+    SelfHeld,
+    PlatformHeld,
+    Hsm,
+    Kms,
+    Threshold { k: String, n: String },
+    SessionDelegated,
+    Undisclosed,
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+crate::object_only_serde!(KeyCustody, KeyCustodyDef);
+
+/// A session key binding (SPEC.md §5). Serialized as a JSON object with
+/// these fields in this order, and read only from an object, never from an
+/// array of the field values.
+#[derive(Debug, Clone)]
 pub struct KeyBindingStatement {
     pub identity_pubkey: String,
     pub session_pubkey: String,
@@ -246,19 +268,32 @@ pub struct KeyBindingStatement {
     pub timestamp_ms: u64,
     /// How the session key is held. Surfaced by verifiers alongside the
     /// signature result -- a cryptographically valid signature means
-    /// different things depending on custody. Default: Undisclosed.
-    #[serde(default)]
+    /// different things depending on custody. Default (absent from the
+    /// JSON): Undisclosed.
     pub custody: KeyCustody,
     /// Unix millis after which this binding should be treated as expired.
-    /// `None` (the default, via `#[serde(default)]` for backward
-    /// compatibility with bindings issued before this field existed) means
-    /// no expiry.
-    #[serde(default)]
+    /// `None` (also when absent from the JSON, for backward compatibility
+    /// with bindings issued before this field existed) means no expiry.
     pub not_after_ms: Option<u64>,
     pub signature: String,
 }
 
-crate::object_only_serde!(KeyBindingStatement);
+/// The serde shape of [`KeyBindingStatement`]; see `object_only`.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "KeyBindingStatement", rename = "KeyBindingStatement")]
+struct KeyBindingStatementDef {
+    identity_pubkey: String,
+    session_pubkey: String,
+    session_number: u64,
+    timestamp_ms: u64,
+    #[serde(default)]
+    custody: KeyCustody,
+    #[serde(default)]
+    not_after_ms: Option<u64>,
+    signature: String,
+}
+
+crate::object_only_serde!(KeyBindingStatement, KeyBindingStatementDef);
 
 impl KeyBindingStatement {
     /// Signature validity only — does NOT check expiry. Use `verify_valid_at`
@@ -310,21 +345,34 @@ impl KeyBindingStatement {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+/// A revocation statement (SPEC.md §5). Serialized as a JSON object with
+/// these fields in this order, and read only from an object, never from an
+/// array of the field values.
+#[derive(Debug, Clone)]
 pub struct RevocationStatement {
     pub identity_pubkey: String,
     pub as_of_ms: u64,
     /// RFC-0005 (experimental): the tree size at which the revocation
     /// takes effect. Absent in v1 statements, which keep the timestamp
-    /// rule alone.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// rule alone; not serialized when `None`.
     pub as_of_index: Option<u64>,
     pub reason: String,
     pub signature: String,
 }
 
-crate::object_only_serde!(RevocationStatement);
+/// The serde shape of [`RevocationStatement`]; see `object_only`.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "RevocationStatement", rename = "RevocationStatement")]
+struct RevocationStatementDef {
+    identity_pubkey: String,
+    as_of_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    as_of_index: Option<u64>,
+    reason: String,
+    signature: String,
+}
+
+crate::object_only_serde!(RevocationStatement, RevocationStatementDef);
 
 impl RevocationStatement {
     pub fn verify(&self) -> Result<(), IdentityError> {

@@ -25,8 +25,10 @@ pub enum SthError {
     Malformed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+/// A signed checkpoint (SPEC.md §6). Serialized as a JSON object with these
+/// fields in this order, and read only from an object, never from an array
+/// of the field values.
+#[derive(Debug, Clone)]
 pub struct SignedTreeHead {
     pub tree_size: u64,
     pub root_hash: String, // hex
@@ -36,7 +38,20 @@ pub struct SignedTreeHead {
     pub signature: String,     // hex
 }
 
-crate::object_only_serde!(SignedTreeHead);
+/// The serde shape of [`SignedTreeHead`]; see `object_only` for why it is a
+/// separate, private type.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "SignedTreeHead", rename = "SignedTreeHead")]
+struct SignedTreeHeadDef {
+    tree_size: u64,
+    root_hash: String,
+    timestamp_ms: u64,
+    sig_alg: String,
+    signer_pubkey: String,
+    signature: String,
+}
+
+crate::object_only_serde!(SignedTreeHead, SignedTreeHeadDef);
 
 impl SignedTreeHead {
     pub fn sign(

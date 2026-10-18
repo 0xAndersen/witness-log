@@ -52,7 +52,7 @@ pub fn run_show(dossier_path: &str, origin: &str, opts: &ShowOptions) -> ExitCod
             return ExitCode::from(EXIT_USAGE);
         }
     };
-    let dossier: Dossier = match serde_json::from_str(&raw) {
+    let dossier = match Dossier::from_json(&raw) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("could not parse dossier: {e}");
@@ -419,7 +419,7 @@ pub fn run_export(args: &[String]) -> ExitCode {
     };
     let dossier: Dossier = match crate::read_input(dossier_path)
         .map_err(|e| e.to_string())
-        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| e.to_string()))
+        .and_then(|raw| Dossier::from_json(&raw).map_err(|e| e.to_string()))
     {
         Ok(d) => d,
         Err(e) => {

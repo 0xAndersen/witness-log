@@ -22,6 +22,13 @@ base64ct = { version = "1", features = ["alloc"] }
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: read every JSON number correctly rounded, as Go's
+# strconv.ParseFloat and JavaScript's Number do. Without it serde_json's
+# faster parser can be off by one unit in the last place and turned some
+# finite literals near f64::MAX (1.7976931348623158e308) into "number out of
+# range", so a dossier the Go and TypeScript verifiers read was refused here
+# (SPEC.md §9; corpus/17_dossier_parsing.json). It only changes how numbers
+# are read, and the bindings get it through witness-log-network.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 hex = "0.4"
 thiserror = "1"

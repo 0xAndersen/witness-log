@@ -158,10 +158,22 @@ func (c Custody) String() string {
 // required; witness_receipts, witness_directory, key_bindings and
 // revocations default to empty when absent. Anything else is a parse error
 // (VerifyDossier: Invalid with the error), as corpus/17_dossier_parsing.json
-// pins.
+// pins. A text nested deeper than MaxDossierDepth is refused before any of
+// it is decoded. The error quotes a bounded part of the text.
 func ParseDossier(dossierJSON []byte) (*Dossier, error) {
+	d, err := parseDossier(dossierJSON)
+	if err != nil {
+		return nil, boundedError{err}
+	}
+	return d, nil
+}
+
+func parseDossier(dossierJSON []byte) (*Dossier, error) {
 	if !utf8.Valid(dossierJSON) {
 		return nil, fmt.Errorf("dossier: not valid UTF-8")
+	}
+	if at, deep := nestingExceeds(dossierJSON, MaxDossierDepth); deep {
+		return nil, fmt.Errorf("dossier: nested deeper than %d arrays and objects (at byte %d)", MaxDossierDepth, at)
 	}
 	if !json.Valid(dossierJSON) {
 		var probe any

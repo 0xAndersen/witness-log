@@ -63,9 +63,10 @@ pub const MAX_FLEET_NOTE_SIGNATURES: usize = 64;
 pub const MAX_INCLUSION_PROOF_HASHES: usize = 64;
 
 /// The dossier field (RFC-0001): where this dossier's checkpoint sits in a
-/// fleet checkpoint log, and that log's cosigned checkpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+/// fleet checkpoint log, and that log's cosigned checkpoint. Serialized as a
+/// JSON object with these fields in this order, and read only from an
+/// object, never from an array of the field values.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FleetAnchor {
     /// The fleet log's C2SP origin, e.g. `example.com/witness-log/fleet`.
     pub origin: String,
@@ -82,7 +83,19 @@ pub struct FleetAnchor {
     pub fleet_checkpoint_note: String,
 }
 
-witness_log_core::object_only_serde!(FleetAnchor);
+/// The serde shape of [`FleetAnchor`]; see `witness_log_core::object_only`
+/// for why it is a separate, private type.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "FleetAnchor", rename = "FleetAnchor")]
+struct FleetAnchorDef {
+    origin: String,
+    entry_index: u64,
+    entry_bytes_b64: String,
+    inclusion_proof: Vec<String>,
+    fleet_checkpoint_note: String,
+}
+
+witness_log_core::object_only_serde!(FleetAnchor, FleetAnchorDef);
 
 /// `Dossier::fleet_anchor` as read from JSON: the field parsed, or, when it
 /// does not have the [`FleetAnchor`] shape, the raw value kept as it was.
@@ -270,8 +283,8 @@ pub fn verify_fleet_anchor(
     let fail = |m: String| Err(vec![m]);
     if !valid_fleet_origin(&anchor.origin) {
         return fail(format!(
-            "fleet origin {:?} is not a fleet log origin (a C2SP origin that is not witness-log/...)",
-            anchor.origin
+            "fleet origin {} is not a fleet log origin (a C2SP origin that is not witness-log/...)",
+            witness_log_core::echo::quoted(&anchor.origin)
         ));
     }
 
@@ -329,8 +342,9 @@ pub fn verify_fleet_anchor(
     };
     if fleet.origin != anchor.origin {
         return fail(format!(
-            "the fleet checkpoint is for origin {:?}, not {:?}",
-            fleet.origin, anchor.origin
+            "the fleet checkpoint is for origin {}, not {}",
+            witness_log_core::echo::quoted(&fleet.origin),
+            witness_log_core::echo::quoted(&anchor.origin)
         ));
     }
     if anchor.inclusion_proof.len() > MAX_INCLUSION_PROOF_HASHES {
@@ -604,6 +618,18 @@ mod tests {
         // A checkpoint the entry does not match (size).
         let other = SignedTreeHead::sign(&f.identity, 6, &[7; 32], 1_000);
         check(&good, &other, "not this checkpoint");
+    }
+
+    /// The failure quotes a bounded part of a hostile origin, not all of it
+    /// (outside audit of 0.6.1).
+    #[test]
+    fn a_huge_origin_is_not_echoed_whole() {
+        let f = fixture();
+        let mut a = f.anchor(&[0]);
+        a.origin = " ".repeat(10_000_000);
+        let e = verify_fleet_anchor(&a, &f.checkpoint, Some(&f.directory)).unwrap_err();
+        assert!(e[0].contains("not a fleet log origin"), "{e:?}");
+        assert!(e[0].len() < 300, "{} bytes", e[0].len());
     }
 
     #[test]

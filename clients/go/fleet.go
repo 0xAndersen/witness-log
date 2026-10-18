@@ -204,7 +204,7 @@ func verifyFleetAnchor(a *FleetAnchor, sth *SignedTreeHead, directory *Directory
 		return nil, 0, []string{fmt.Sprintf(format, args...)}
 	}
 	if !ValidFleetOrigin(a.Origin) {
-		return fail("fleet origin %q is not a fleet log origin (a C2SP origin that is not witness-log/...)", a.Origin)
+		return fail("fleet origin %s is not a fleet log origin (a C2SP origin that is not witness-log/...)", echo(a.Origin))
 	}
 	identity, ok := hexN(sth.SignerPubkey, 32)
 	if !ok {
@@ -238,7 +238,7 @@ func verifyFleetAnchor(a *FleetAnchor, sth *SignedTreeHead, directory *Directory
 		return fail("fleet_checkpoint_note is not a checkpoint: %v", err)
 	}
 	if fleet.Origin != a.Origin {
-		return fail("the fleet checkpoint is for origin %q, not %q", fleet.Origin, a.Origin)
+		return fail("the fleet checkpoint is for origin %s, not %s", echo(fleet.Origin), echo(a.Origin))
 	}
 	if len(a.InclusionProof) > MaxInclusionProofHashes {
 		return fail("inclusion_proof is longer than any tree needs")
@@ -303,7 +303,7 @@ func (d *Dossier) evaluateFleetAnchor(directory *Directory, opts Options) (*Flee
 	}
 	report.Status = fleetAnchorStatusFailed
 	if perr != nil {
-		report.Failures = append(report.Failures, "fleet_anchor is not well-formed: "+perr.Error())
+		report.Failures = append(report.Failures, "fleet_anchor is not well-formed: "+boundMessage(perr.Error()))
 		return report, nil, false
 	}
 	if normalizeLabel(opts.SubjectOrg) == "" {

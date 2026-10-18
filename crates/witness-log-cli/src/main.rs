@@ -1101,7 +1101,7 @@ fn run_verify(opts: &Options) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    let dossier: Dossier = match serde_json::from_str(&raw) {
+    let dossier = match Dossier::from_json(&raw) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("could not parse dossier: {e}");

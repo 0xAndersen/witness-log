@@ -23,7 +23,7 @@ use crate::exit;
 
 fn load(path: &str) -> Result<Dossier, String> {
     let text = crate::read_input(path).map_err(|e| format!("{path}: {e}"))?;
-    serde_json::from_str(&text).map_err(|e| format!("{path}: not a dossier: {e}"))
+    Dossier::from_json(&text).map_err(|e| format!("{path}: not a dossier: {e}"))
 }
 
 /// The same snake_case names the Python and MCP surfaces accept

@@ -80,10 +80,13 @@ cases, and the TypeScript, Go and Rust verifiers agree on every one.
 Pass the dossier as JSON text where you can. It is then read exactly as
 the reference reads it (corpus 17): integers above 2^53 stay exact
 (`u64` fields are `number | bigint`), and duplicate keys, `3.0` for an
-integer, a struct written as an array, or a value of the wrong type make
-the dossier INVALID ("not a dossier: …"). An already-parsed object holding
-a plain number above 2^53 − 1 is INVALID too, since `JSON.parse` has
-already rounded it.
+integer, a struct written as an array, a value of the wrong type, or
+nesting deeper than 1000 arrays and objects make the dossier INVALID
+("not a dossier: …"). Reading hostile text is bounded: it stops at the
+1001st level, and the values of keys a dossier does not have are checked
+as JSON but never built. An already-parsed object holding a plain number
+above 2^53 − 1 is INVALID too, since `JSON.parse` has already rounded it,
+and so is one nested deeper than 1000.
 
 ## Verify with the CLI
 

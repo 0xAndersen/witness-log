@@ -151,6 +151,7 @@
 // #![cfg_attr(not(test), deny(clippy::arithmetic_side_effects))]
 
 pub mod c2sp;
+pub mod echo;
 pub mod errors;
 pub mod identity;
 pub mod journal;

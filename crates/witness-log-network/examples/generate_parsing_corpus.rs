@@ -1,8 +1,9 @@
 //! Generates `corpus/17_dossier_parsing.json`: dossiers as JSON text, at
 //! the edges where the three verifiers once read the same file
 //! differently (outside review III, H2 and P3). Each case is either
-//! a text the reference cannot deserialise as a `Dossier` (`not_a_dossier`)
-//! or one it can, with the verdict, exit code and report fields:
+//! a text the reference cannot read as a dossier (`Dossier::from_json`;
+//! `not_a_dossier`) or one it can, with the verdict, exit code and report
+//! fields:
 //!
 //! - not JSON, not an object, wrong types, `null` where a list or struct
 //!   belongs, missing fields, a struct written as an array, duplicate
@@ -12,7 +13,13 @@
 //!   rounds them; the reference and Go read them exactly);
 //! - keys that differ from a field name only by case (Go's encoding/json
 //!   matched them case-insensitively);
-//! - hex case in each field the verdict compares.
+//! - hex case in each field the verdict compares;
+//! - nesting depth, at most `MAX_DOSSIER_DEPTH` (1000) wherever it is
+//!   (outside audit of 0.6.1: the reference and TypeScript read an ignored
+//!   key of any depth, Go refused 10,000 levels and more);
+//! - `fleet_anchor` numbers at the edge of binary64 (the same audit: the
+//!   reference's serde_json, without `float_roundtrip`, refused finite
+//!   literals near f64::MAX that Go and TypeScript read).
 //!
 //! The text is the input, byte for byte, so it is stored as a string.
 //!
@@ -265,6 +272,37 @@ fn add_field(s: &str, field: &str) -> String {
     format!("{},{field}}}", &s[..end])
 }
 
+/// `m * 2^e` in decimal.
+fn decimal_times_pow2(m: u64, e: u32) -> String {
+    let mut digits: Vec<u8> = m.to_string().bytes().rev().map(|b| b - b'0').collect();
+    for _ in 0..e {
+        let mut carry = 0;
+        for d in digits.iter_mut() {
+            let x = *d * 2 + carry;
+            *d = x % 10;
+            carry = x / 10;
+        }
+        if carry > 0 {
+            digits.push(carry);
+        }
+    }
+    digits.iter().rev().map(|d| char::from(b'0' + d)).collect()
+}
+
+/// A positive decimal integer minus one.
+fn decimal_minus_one(s: &str) -> String {
+    let mut digits: Vec<u8> = s.bytes().map(|b| b - b'0').collect();
+    for d in digits.iter_mut().rev() {
+        if *d > 0 {
+            *d -= 1;
+            break;
+        }
+        *d = 9;
+    }
+    let s: String = digits.iter().map(|d| char::from(b'0' + d)).collect();
+    s.trim_start_matches('0').to_string()
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Outcome {
     NotADossier,
@@ -437,6 +475,35 @@ fn main() {
     let ck_base = ck("3");
     let ck_min = ck("0");
     let nested = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+    let objects = |n: usize| format!("{}1{}", "{\"a\":".repeat(n), "}".repeat(n));
+    // The edge of binary64. Literals round to nearest, ties to even: f64::MAX
+    // is (2^53 - 1) * 2^971, and the point halfway to 2^1024,
+    // (2^54 - 1) * 2^970, rounds up, to infinity. Checked here against
+    // Rust's own correctly rounded parser.
+    let halfway = decimal_times_pow2((1 << 54) - 1, 970);
+    let below_halfway = decimal_minus_one(&halfway);
+    let max_digits = format!("17976931348623157{}", "0".repeat(292));
+    assert_eq!(halfway.len(), 309);
+    assert_eq!(halfway.parse::<f64>().unwrap(), f64::INFINITY);
+    for finite in [
+        below_halfway.as_str(),
+        max_digits.as_str(),
+        "1.7976931348623158e308",
+    ] {
+        assert_eq!(finite.parse::<f64>().unwrap(), f64::MAX, "{finite}");
+    }
+    assert_eq!(
+        "1.7976931348623159e308".parse::<f64>().unwrap(),
+        f64::INFINITY
+    );
+    let fleet_x = |x: &str| add_field(&min_t, &format!("\"fleet_anchor\":{{\"x\":{x}}}"));
+    let leaf_zz = |n: usize| {
+        sub(
+            &base_t,
+            "{\"index\":0,",
+            &format!("{{\"zz\":{},\"index\":0,", nested(n)),
+        )
+    };
 
     let mut cases = vec![
         // ---- JSON text and the top-level value
@@ -577,6 +644,20 @@ fn main() {
         case("an unknown field holding 1e400", add_field(&min_t, "\"zz\":1e400"), Exit(20)),
         case("an unknown field holding a 400-digit integer", add_field(&min_t, &format!("\"zz\":1{}", "0".repeat(400))), Exit(20)),
         case("an unknown field nested 200 deep", add_field(&min_t, &format!("\"zz\":{}", nested(200))), Exit(20)),
+        // ---- nesting depth: at most 1000, counted outside strings, the dossier object being depth 1
+        case("an unknown field nested to depth 1000, the limit", add_field(&min_t, &format!("\"zz\":{}", nested(999))), Exit(20)),
+        case("an unknown field nested to depth 1001", add_field(&min_t, &format!("\"zz\":{}", nested(1000))), Refused),
+        case("an unknown field of objects nested to depth 1000", add_field(&min_t, &format!("\"zz\":{}", objects(999))), Exit(20)),
+        case("an unknown field of objects nested to depth 1001", add_field(&min_t, &format!("\"zz\":{}", objects(1000))), Refused),
+        case("an unknown field of a leaf nested to depth 1000", leaf_zz(997), Exit(20)),
+        case("an unknown field of a leaf nested to depth 1001", leaf_zz(998), Refused),
+        case("an unknown field nested 100000 deep", add_field(&min_t, &format!("\"zz\":{}", nested(100_000))), Refused),
+        case(
+            "1001 brackets in a string after an escaped quote do not nest",
+            add_field(&min_t, &format!("\"zz\":\"\\\"{}\"", "[".repeat(1001))),
+            Exit(20),
+        ),
+        case("tree_size a 100000-digit integer", sub(&base_t, &ck_base, &ck(&format!("1{}", "0".repeat(100_000)))), Refused),
         // ---- fleet_anchor (RFC-0001, experimental): any value, read as a JSON value
         case("fleet_anchor null", add_field(&min_t, "\"fleet_anchor\":null"), Exit(20)),
         case("fleet_anchor an array (malformed, ignored)", add_field(&min_t, "\"fleet_anchor\":[1,2]"), Exit(20)),
@@ -585,6 +666,14 @@ fn main() {
         case("fleet_anchor holding a 400-digit integer", add_field(&min_t, &format!("\"fleet_anchor\":{{\"x\":1{}}}", "0".repeat(400))), Refused),
         case("fleet_anchor nested 126 deep", add_field(&min_t, &format!("\"fleet_anchor\":{}", nested(126))), Exit(20)),
         case("fleet_anchor nested 127 deep", add_field(&min_t, &format!("\"fleet_anchor\":{}", nested(127))), Refused),
+        // binary64's edge: refused only when the literal rounds to infinity
+        case("fleet_anchor holding 1.7976931348623158e308, which rounds to f64::MAX", fleet_x("1.7976931348623158e308"), Exit(20)),
+        case("fleet_anchor holding -1.7976931348623158e308", fleet_x("-1.7976931348623158e308"), Exit(20)),
+        case("fleet_anchor holding 17976931348623157 and 292 zeros, which rounds to f64::MAX", fleet_x(&max_digits), Exit(20)),
+        case("fleet_anchor holding 2^1024 - 2^970 - 1, the largest integer that rounds to f64::MAX", fleet_x(&below_halfway), Exit(20)),
+        case("fleet_anchor holding 2^1024 - 2^970, halfway to 2^1024, which rounds to infinity", fleet_x(&halfway), Refused),
+        case("fleet_anchor holding 1.7976931348623159e308, which rounds to infinity", fleet_x("1.7976931348623159e308"), Refused),
+        case("fleet_anchor holding 1e309", fleet_x("1e309"), Refused),
         // ---- hex case (P3)
         case("checkpoint root_hash in uppercase, signed over its bytes", text(&upper_root), Exit(40)),
         case("receipt root_hash in uppercase, signed as written, does not count", text(&upper_receipt_root), Exit(10)).dir("corpus", 2),
@@ -616,7 +705,7 @@ fn main() {
             "duplicate case name {}",
             c.name
         );
-        let expect = match serde_json::from_str::<Dossier>(&c.text) {
+        let expect = match Dossier::from_json(&c.text) {
             Err(_) => {
                 assert_eq!(c.intended, Refused, "{}: the reference reads it", c.name);
                 json!({
@@ -693,8 +782,11 @@ fn main() {
     let doc = json!({
         "description": "Reading a dossier (outside review III, H2 and P3). Each case's \
             `dossier_json` is the input text, byte for byte; give it to your verifier as text. \
-            The rule is the reference's: the text is RFC 8259 JSON (no byte order mark, no \
-            trailing characters); the dossier and every struct in it (checkpoint, leaf, receipt, \
+            The rule is the reference's (SPEC.md §9, \"Reading a dossier\"): the text is RFC 8259 \
+            JSON (no byte order mark, no trailing characters) and nests at most 1000 arrays and \
+            objects deep, counted outside strings with the dossier object at depth 1, wherever \
+            the nesting is (an ignored key's value included); a deeper text is not a dossier, and \
+            a verifier stops reading at the 1001st level; the dossier and every struct in it (checkpoint, leaf, receipt, \
             directory and entry, key binding, revocation, custody threshold) is an object, never \
             an array; a key that names a field appears once, is matched exactly (case-sensitive, \
             after unescaping) and any other key is ignored, its value only checked as JSON \
@@ -705,9 +797,11 @@ fn main() {
             runtime, is_project_operated, custody) absent but not null; a unit enum variant is \
             its name or {\"name\": null}; a field's string and every key of a struct have no \
             unpaired surrogate escape; fleet_anchor is any JSON value whose strings have no \
-            unpaired surrogate, whose numbers are finite as binary64 and which nests at most \
-            126 deep. `not_a_dossier` true: the reference cannot deserialise the text; a CLI \
-            exits 2, a library refuses it (Rust deserialisation fails; wasm, Node and Python \
+            unpaired surrogate, whose numbers are finite as binary64 once rounded to nearest, \
+            ties to even (1.7976931348623158e308 and 2^1024 - 2^970 - 1 are; \
+            1.7976931348623159e308 and 2^1024 - 2^970 are not) and which nests at most 126 deep \
+            below the dossier object. `not_a_dossier` true: the reference cannot deserialise the text; a CLI \
+            exits 2, a library refuses it (Rust's Dossier::from_json fails; wasm, Node and Python \
             raise; Go's VerifyDossier returns Invalid with the error and no report; \
             TypeScript's verifyDossier returns INVALID, exit 40, with the reason in failures) \
             and no verifier returns any other verdict. Otherwise run the case as in \
