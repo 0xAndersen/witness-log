@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -315,11 +316,61 @@ func checkJSONValue(raw []byte, what string) error {
 				depth--
 			}
 		case json.Number:
-			if f, _ := strconv.ParseFloat(string(t), 64); math.IsInf(f, 0) {
+			if !finiteBinary64(string(t)) {
 				return fmt.Errorf("%s: number out of range", what)
 			}
 		}
 	}
+}
+
+// finiteBinary64 reports whether the JSON number literal lit rounds to a
+// finite binary64, as serde_json (float_roundtrip) and JavaScript's Number
+// round it. strconv.ParseFloat keeps at most 800 mantissa digits and, for
+// a literal with more than 800 digits before the decimal point, places the
+// point after the digits it kept: "1" + 800 zeros + "e-491" (1e309) read
+// as 1e308, a finite number the other two verifiers refuse as infinite.
+// Rewriting the literal as 0.<significant digits>e<exponent> keeps the
+// point where it belongs.
+func finiteBinary64(lit string) bool {
+	s := strings.TrimPrefix(lit, "-")
+	mant, exp := s, ""
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mant, exp = s[:i], s[i+1:]
+	}
+	intPart, frac := mant, ""
+	if i := strings.IndexByte(mant, '.'); i >= 0 {
+		intPart, frac = mant[:i], mant[i+1:]
+	}
+	digits := intPart + frac
+	point := len(intPart)
+	trimmed := strings.TrimLeft(digits, "0")
+	point -= len(digits) - len(trimmed)
+	trimmed = strings.TrimRight(trimmed, "0")
+	if trimmed == "" {
+		return true // zero
+	}
+	var e int64
+	if exp != "" {
+		neg := strings.HasPrefix(exp, "-")
+		exp = strings.TrimLeft(strings.TrimLeft(exp, "+-"), "0")
+		if len(exp) > 18 { // |exponent| >= 10^18: no literal's digits can offset it
+			return neg
+		}
+		e, _ = strconv.ParseInt(exp, 10, 64)
+		if neg {
+			e = -e
+		}
+	}
+	// The value is 0.<trimmed> x 10^scale, with 0.1 <= 0.<trimmed> < 1.
+	scale := int64(point) + e
+	switch {
+	case scale > 400:
+		return false // at least 10^399
+	case scale < -400:
+		return true // rounds to zero
+	}
+	f, _ := strconv.ParseFloat("0."+trimmed+"e"+strconv.FormatInt(scale, 10), 64)
+	return !math.IsInf(f, 0)
 }
 
 // singleKeyObject returns the one member of raw when raw is a JSON object
