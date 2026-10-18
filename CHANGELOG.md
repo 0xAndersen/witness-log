@@ -32,6 +32,47 @@ other logs instead of refusing to start.
   unknown ones, failure wording not part of the contract). CI validates
   the reference CLI's output and the bindings' report against it.
 
+### Security review of 0.5.0 (round 3)
+
+An internal review against the released 0.5.0 found no way to forge an
+equivocation accusation against an honest identity; it found verdict
+divergences, a fail-open and concurrency regressions. Fixed, each with a
+regression test:
+
+- **The TypeScript verifier ignored evidence in the format `witness
+  serve` writes** (`{"kind":"equivocation","proof":{...}}`): `verifyDossier`
+  returned WITNESSED where the Rust verifier returned DIVERGED for the same
+  inputs. One rule now applies in Rust, Go and TypeScript: an evidence item
+  is a JSON object, the proof itself or the proof under `"proof"`, with
+  string `origin`, `log_vkey`, `earlier_note` and `conflicting_note`;
+  anything else is a usage error (exit 2, or an exception).
+- **Equivocation proofs are parsed alike.** Rust took the key ID from the
+  file's `log_vkey`; it is now derived from the origin and the file's must
+  equal it (THREAT_MODEL: nothing about the key comes from the file). All
+  three cap a note at 64 signature lines, refuse a signature line whose key
+  name is empty or contains `+` or Unicode White_Space (as
+  `golang.org/x/mod/sumdb/note` does), validate the 8-hex key ID, and
+  decode base64 strictly; Rust no longer reads a JSON array as a proof.
+- **Go CLI flags** are parsed exactly as the Rust CLI's: an unknown flag
+  (`--known-heads`, `--evidance`) exits 2 instead of being skipped with the
+  argument after it, the last of a repeated flag wins, the last of
+  `--strict`/`--no-strict` wins, and `--min-witnesses 0`, a non-hex
+  `--identity` and Go-only number forms exit 2. `--threshold 0` now means
+  zero. Go `Options.ThresholdSet`.
+- **Known heads** above 2^53 are accepted by TypeScript and reported
+  unchecked, as in Rust and Go; a byte-order mark around one is refused
+  everywhere.
+- **Operator labels** normalise alike: TypeScript splits on exactly
+  Unicode White_Space (it treated U+FEFF as whitespace and U+0085 as not),
+  and Go applies the Final_Sigma and U+0130 lowercase rules. SPEC §7 states
+  the normalisation.
+- **The browser verifier** ticked "consistent with your known heads" for an
+  INVALID dossier and for heads it never compared; it now shows those rows
+  only when the heads were compared.
+- **Corpus vector 15** (`15_evidence_and_args.json`, 51 cases) pins all of
+  the above, including which inputs a verifier must refuse, for every
+  verifier's test suite.
+
 ### CLI
 
 - **`https://` witnesses.** The built-in client refused every `https://`
