@@ -117,6 +117,30 @@ def _pinned_connection(base: type, addresses: List[Tuple[Any, ...]]) -> type:
 ALLOW_PRIVATE_ENV = "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES"
 
 
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052
+_IPV4_COMPATIBLE = ipaddress.ip_network("::/96")  # RFC 4291, deprecated
+_IPV4_TRANSLATED = ipaddress.ip_network("::ffff:0:0:0/96")  # RFC 2765 (SIIT)
+
+
+def _embedded_ipv4(ip: Any) -> List[Any]:
+    """The IPv4 addresses an IPv6 address carries and a translator or
+    tunnel would deliver to: IPv4-mapped, IPv4-compatible, SIIT-translated,
+    NAT64 (64:ff9b::/96), 6to4 and both Teredo addresses."""
+    if ip.version != 6:
+        return []
+    out: List[Any] = []
+    low32 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.ipv4_mapped is not None:
+        out.append(ip.ipv4_mapped)
+    if ip in _NAT64_WELL_KNOWN or ip in _IPV4_TRANSLATED or (ip in _IPV4_COMPATIBLE and int(ip) > 1):
+        out.append(low32)
+    if ip.sixtofour is not None:
+        out.append(ip.sixtofour)
+    if ip.teredo is not None:
+        out.extend(ip.teredo)
+    return out
+
+
 def witness_address_guard(allow_private: bool = False) -> Guard:
     """A guard for witness URLs from a directory nobody vetted (one an MCP
     caller passed). Resolves the host and refuses it if ANY address is
@@ -132,17 +156,19 @@ def witness_address_guard(allow_private: bool = False) -> Guard:
         except OSError as e:
             raise ValueError(f"witness host {host!r} does not resolve: {e}") from e
         for info in infos:
-            ip = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
-            mapped = getattr(ip, "ipv4_mapped", None)
-            ip = mapped or ip
-            if ip in METADATA_ADDRESSES or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+            resolved = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+            # An IPv6 address can carry an IPv4 one (mapped, compatible,
+            # NAT64, 6to4, Teredo): a NAT64 gateway turns 64:ff9b::a9fe:a9fe
+            # into 169.254.169.254. Every address it names must pass.
+            named = [resolved, *_embedded_ipv4(resolved)]
+            if any(ip in METADATA_ADDRESSES or ip.is_link_local or ip.is_unspecified or ip.is_multicast for ip in named):
                 raise ValueError(
-                    f"witness host {host!r} resolves to {ip}, a link-local, metadata or otherwise "
+                    f"witness host {host!r} resolves to {resolved}, a link-local, metadata or otherwise "
                     "non-routable address; refused for a directory passed in a tool call"
                 )
-            if not ip.is_global and not allow_private:
+            if not allow_private and not all(ip.is_global for ip in named):
                 raise ValueError(
-                    f"witness host {host!r} resolves to {ip}, a loopback or private address; refused for "
+                    f"witness host {host!r} resolves to {resolved}, a loopback or private address; refused for "
                     f"a directory passed in a tool call (pin the directory with WITNESS_LOG_TRUSTED_DIRECTORY, "
                     f"or set {ALLOW_PRIVATE_ENV}=1 for a local testnet)"
                 )
