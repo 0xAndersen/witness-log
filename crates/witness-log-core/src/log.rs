@@ -968,15 +968,27 @@ impl WitnessLog {
         // it behind (it contains the raw identity seed).
         let write_result = (|| -> std::io::Result<()> {
             use std::io::Write;
-            let mut f = std::fs::File::create(&tmp_path)?;
+            // create_new: never open a file that already exists at the temp
+            // name, and never follow a symlink planted there (O_EXCL), so
+            // the seed cannot be written through a link into a file someone
+            // else chose (re-audit of the 0.6.1 fixes, as F11 for the CLI).
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
             // 0600: this file contains identity_bytes_hex, the raw Ed25519
             // seed. Default create() permissions are 0644 on Unix -- world-
             // readable. Any local user could read the seed and sign
-            // checkpoints as this agent indefinitely. Set BEFORE writing
-            // any content, closing the window where the file briefly
-            // exists with default permissions. See finding 09.
+            // checkpoints as this agent indefinitely. The mode is given at
+            // creation, so the file never exists with default permissions.
+            // See finding 09.
             #[cfg(unix)]
             {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(&tmp_path)?;
+            #[cfg(unix)]
+            {
+                // In case a umask or ACL widened it.
                 use std::os::unix::fs::PermissionsExt;
                 f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
             }
@@ -990,8 +1002,12 @@ impl WitnessLog {
         }
 
         // Atomic on the same filesystem: readers see either the old file
-        // or the new one in full, never a partial write.
-        std::fs::rename(&tmp_path, target)?;
+        // or the new one in full, never a partial write. If the rename
+        // fails, the temp file (the seed) is removed, not left behind.
+        if let Err(e) = std::fs::rename(&tmp_path, target) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
 
         // fsync the parent directory too. Without this, the rename itself
         // is not guaranteed durable across a power loss: a crash right
@@ -1276,6 +1292,30 @@ mod tests {
         let identity = IdentityKeypair::generate();
         let log = WitnessLog::resume(identity, 0);
         assert!(log.current_binding().verify_valid_at(u64::MAX).is_ok());
+    }
+
+    /// Re-audit of the 0.6.1 fixes: a failed rename used to leave the temp
+    /// file, which holds the raw identity seed, next to the target.
+    #[test]
+    fn a_failed_snapshot_rename_leaves_no_seed_behind() {
+        let mut log = WitnessLog::resume(IdentityKeypair::generate(), 0);
+        log.append_intent(b"x");
+        let dir = std::env::temp_dir().join(format!(
+            "witness-log-snapshot-rename-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        // The target is a non-empty directory: rename() onto it fails.
+        let target = dir.join("snap.json");
+        std::fs::create_dir_all(target.join("occupied")).unwrap();
+        assert!(log.save_snapshot(target.to_str().unwrap()).is_err());
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp-"))
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(left.is_empty(), "temp files left: {left:?}");
     }
 
     #[test]
