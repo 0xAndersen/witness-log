@@ -437,9 +437,10 @@ fn cmd_down(dir: &Path) -> ExitCode {
 
 /// Whether `pid`, read from testnet.json, may be signalled: a real
 /// process id (never 0, 1 or a value that becomes negative as pid_t, which
-/// would signal a process group or every process the user owns) and, on
-/// Linux, still a witness-log witness, not an unrelated process that
-/// reused the id after a reboot (security sweep of 0.6.0, F12).
+/// would signal a process group or every process the user owns) and still a
+/// witness-log witness, not an unrelated process that reused the id after
+/// a reboot (security sweep of 0.6.0, F12). Linux reads /proc; other Unix
+/// systems ask `ps`; Windows asks `tasklist` for the image name.
 fn signalable(pid: u32) -> bool {
     if pid < 2 || pid > i32::MAX as u32 {
         return false;
@@ -458,8 +459,35 @@ fn signalable(pid: u32) -> bool {
             Err(_) => false,
         }
     }
-    #[cfg(not(target_os = "linux"))]
-    true
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        match Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let c = String::from_utf8_lossy(&o.stdout);
+                c.contains("witness-log") && c.contains(" witness serve ")
+            }
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l.to_ascii_lowercase().starts_with("\"witness-log")),
+            _ => false,
+        }
+    }
 }
 
 /// Stop every member: terminate, wait up to 5s for /health to stop
@@ -531,8 +559,11 @@ mod pid_tests {
         for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
             assert!(!signalable(pid), "{pid}");
         }
-        // This test process is not a `witness-log witness serve`.
-        #[cfg(target_os = "linux")]
+        // This test process is not a `witness-log witness serve`, on any
+        // system (its path may well contain "witness-log").
         assert!(!signalable(std::process::id()));
     }
+
+    // That a real witness IS recognised, on Linux, macOS and Windows, is
+    // tests/no_code_path.rs: `testnet down` must leave no witness answering.
 }
