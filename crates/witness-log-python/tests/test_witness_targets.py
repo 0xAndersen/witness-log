@@ -93,8 +93,14 @@ def test_a_redirecting_witness_is_a_failed_outcome(tmp_path):
 
 
 ALWAYS_REFUSED = ["169.254.169.254", "169.254.170.2", "169.254.1.1", "fe80::1", "fd00:ec2::254", "100.100.100.200",
-                  "::ffff:169.254.169.254", "0.0.0.0", "224.0.0.1"]
-PRIVATE = ["127.0.0.1", "10.0.0.5", "172.16.1.1", "192.168.1.1", "100.64.0.1", "::1", "fc00::1", "localhost"]
+                  "::ffff:169.254.169.254", "0.0.0.0", "224.0.0.1",
+                  # IPv6 forms that carry 169.254.169.254 to a translator or
+                  # tunnel (re-audit of the 0.6.1 fixes): NAT64, IPv4-compatible,
+                  # SIIT, 6to4, Teredo (client address is stored inverted).
+                  "64:ff9b::a9fe:a9fe", "::a9fe:a9fe", "::ffff:0:a9fe:a9fe", "2002:a9fe:a9fe::1",
+                  "2001:0:4136:e378:8000:63bf:5601:5601"]
+PRIVATE = ["127.0.0.1", "10.0.0.5", "172.16.1.1", "192.168.1.1", "100.64.0.1", "::1", "fc00::1", "localhost",
+           "64:ff9b::7f00:1", "64:ff9b::a00:5", "::7f00:1", "2002:a00:5::1"]
 
 
 @pytest.mark.parametrize("host", ALWAYS_REFUSED)
