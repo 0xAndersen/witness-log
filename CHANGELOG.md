@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — UNRELEASED
+## 0.6.0 — 2026-10-18
 
 No wire-format, leaf-encoding or verdict-rule change: every dossier
 verifies as it did under 0.5.0 unless the caller passes one of the new
@@ -83,6 +83,33 @@ regression test:
 - **Corpus vector 15** (`15_evidence_and_args.json`, 51 cases) pins all of
   the above, including which inputs a verifier must refuse, for every
   verifier's test suite.
+- **Python `WitnessService` could deadlock the process** (regression in
+  0.5.0): `add_log` waited for the service's lock while holding the GIL,
+  and `log_count` retook the GIL while holding that lock; a witness serving
+  `GET /` and POSTs while `add_log` ran froze within a second. The binding
+  now never waits for one of its locks with the GIL held and never holds
+  one while retaking the GIL (`lock_py` and its blanket `unsafe impl Send`
+  are gone).
+- **`forget()` could return True while the payload survived** in
+  `.payloads` (regression in 0.5.0): a concurrent append's payload record
+  could land after the forget. Appends and forgets now take the payload and
+  journal locks in one order, the store refuses a record for a forgotten
+  index, and `payload(i)` returns None for a redacted leaf.
+- **MCP `verify_chain_integrity` could never report a rewritten journal**:
+  the witnessed head was passed as a known head only when the journal still
+  reproduced it. It is now always passed (with the cosigned head from
+  `.witnesses.json`), a journal shorter than its witnessed head is a tamper
+  alert, and `witnessed_size` always comes from the file. The proxy's
+  `audit__export` had the same blind spot and now returns `tamper_alerts`.
+- **MCP proxy: a call sent during a server restart ran on the new server
+  but was reported and journaled as failed** (regression in 0.5.0), so a
+  host retry ran it twice. Pending calls now record which server process
+  they were written to, and only calls written to the dead one are failed;
+  `initialize` reaches the new server before any call.
+- **MCP proxy: a failed respawn wedged the proxy.** It now counts against
+  `--max-restarts`, fails pending calls, and exits non-zero with the reason.
+- The MCP tools and `audit__export` report `split_view_unsafe` next to every
+  witnessed verdict.
 
 ### CLI
 
@@ -157,6 +184,15 @@ docs/outreach ask it.
   every member's logs reach WITNESSED without anyone else.
   docs/outreach/founding-operators.md is the one-page ask and three email
   drafts for recruiting the first two outside operators.
+
+### Packages
+
+crates `witness-log-core`, `-network`, `-cli` 0.6.0; PyPI `witness-log`
+0.6.0; Go module `clients/go/v0.6.0`; npm `@witness-log/client` 0.4.0,
+`@witness-log/node` 0.3.0, `@witness-log/ai-sdk` 0.3.0,
+`create-witness-log` 0.3.0 (versioned; publishing to npm still needs the
+owner's token). TypeScript: `KnownHead.tree_size` is `number | bigint`
+(sizes above 2^53), and `parseEvidence` is exported.
 
 ### Docs and contributing
 
