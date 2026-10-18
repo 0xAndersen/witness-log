@@ -225,3 +225,46 @@ def test_pubkey_with_a_trailing_newline_refused(tmp_path):
     build_directory.py)."""
     _, problems, _ = run(tmp_path, entry(pubkey=KEY + "\n"), offline=True)
     assert any("64 hex" in p for p in problems), problems
+
+
+# ---- re-audit of the 0.6.1 fixes ------------------------------------------
+
+
+@pytest.mark.parametrize("field,value", [("operator_org", ["Org A"]), ("name", 7), ("url", None),
+                                         ("pubkey", 1), ("compute_provider", 123)])
+def test_fields_must_have_their_json_type(tmp_path, field, value):
+    # str() used to turn these into text that passed, and the directory
+    # built from them could not be loaded by the verifiers.
+    _, problems, _ = run(tmp_path, entry(**{field: value}), offline=True)
+    assert any(f"{field} must be a string" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("org", ["Org​A", "Org A‍", "﻿Org A", "Org­A", "Org⁦A⁩",
+                                 "OrgㅤA", "Org A️", "Org\x07A", "OrgA"])
+def test_invisible_characters_in_a_label_are_refused(tmp_path, org):
+    # The verifier compares labels exactly: "Org​A" and "OrgA" look
+    # the same and would count as two independent operators.
+    _, problems, _ = run(tmp_path, entry(operator_org=org), offline=True)
+    assert any("invisible or control characters" in p for p in problems), problems
+
+
+def test_international_labels_are_fine(tmp_path):
+    files, problems, _ = run(tmp_path, entry(operator_org="株式会社 Ejemplo Ñandú"), offline=True)
+    assert problems == []
+
+
+@pytest.mark.parametrize("url", ["https://169.254.169.254/", "https://2130706433/", "https://0x7f.1/",
+                                 "https://127.1/", "https://[::ffff:127.0.0.1]/", "https://[64:ff9b::a9fe:a9fe]/",
+                                 "https://10.0.0.5/", "https://100.64.0.1/", "https://[fe80::1]/",
+                                 "https://[fc00::1]/", "https://169.254.169.254./", "https://01.2.3.4/"])
+def test_non_public_or_disguised_ip_literals_are_refused(tmp_path, url):
+    _, problems, _ = run(tmp_path, entry(url=url), offline=True)
+    assert any("url" in p for p in problems), problems
+    _, problems, _ = run(tmp_path, entry(url=url), offline=True, allow_insecure=True)
+    assert problems == []
+
+
+@pytest.mark.parametrize("url", ["https://93.184.216.34/", "https://[2606:4700::1]:8443/", "https://deadbeef.example/"])
+def test_public_ip_literals_are_fine(tmp_path, url):
+    _, problems, _ = run(tmp_path, entry(url=url), offline=True)
+    assert problems == [], problems

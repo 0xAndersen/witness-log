@@ -23,7 +23,8 @@ witness init` printed it (or `GET /` returns under `directory_entry`):
 2. Open a pull request adding `witnesses/<org>-<name>.json`. CI runs
    `registry/validate.py`: well-formed, 64 lowercase hex key, a real
    `operator_org` (not `unspecified`), an `https://` URL that is not a
-   loopback address, no duplicate key or name, and, when the URL is
+   loopback or other non-public address, no invisible or control
+   characters in the name or organisation, no duplicate key or name, and, when the URL is
    reachable, that `GET /` serves the same `pubkey_hex` **and** the same
    `directory_entry.operator_org`. The live check is skipped with a note
    when the URL cannot be reached from CI (`--offline` skips it entirely;
@@ -66,8 +67,15 @@ so both builders refuse to write one unless every entry passes the offline
 checks of `validate.py`: only the known fields, all required ones present,
 a 64 lowercase hex `pubkey`, a real `operator_org` with no leading,
 trailing or repeated whitespace, `runtime` `human` or `agent`,
-`is_project_operated` a boolean, an `https://` URL that is not a loopback
-address, a C2SP key name, and no duplicate key or name. A failing build
+`is_project_operated` a boolean, every text field a JSON string, an
+`https://` URL that is not a loopback address (an IP-address host must be
+a public address written in ordinary dotted or IPv6 notation, so
+`2130706433`, `127.1`, `[::ffff:127.0.0.1]` and `169.254.169.254` are
+refused), a C2SP key name, no invisible or control characters (zero-width
+spaces, bidi controls, fillers, variation selectors, private use) in
+`name`, `operator_org` or `compute_provider`, since labels are compared
+exactly and two that look the same must be the same, and no duplicate
+key or name. A failing build
 prints every problem on stderr, writes nothing (`build_directory.py`
 prints nothing on stdout) and exits 1. `--allow-insecure` accepts
 `http://` and loopback URLs, for tests and local fleets.
