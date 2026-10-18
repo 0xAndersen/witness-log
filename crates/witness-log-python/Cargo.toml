@@ -1,6 +1,6 @@
 [package]
 name = "witness-log-python"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/0xAndersen/witness-log"
@@ -12,8 +12,8 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-witness-log-core = { version = "0.6.0", path = "../witness-log-core" }
-witness-log-network = { version = "0.6.0", path = "../witness-log-network" }
+witness-log-core = { version = "0.6.1", path = "../witness-log-core" }
+witness-log-network = { version = "0.6.1", path = "../witness-log-network" }
 ed25519-dalek = "2.1.1"
 serde_json = "1"
 hex = "0.4"
