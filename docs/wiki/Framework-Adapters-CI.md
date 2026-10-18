@@ -109,7 +109,7 @@ pip install --upgrade openai-agents          # or any of the packages in the tab
 pytest -q -rs tests/test_openai_agents_live.py
 ```
 
-`crewai` wants its own virtual environment (it pins `mcp<2`; the `mcp`
-extra needs `mcp>=2`).
+`crewai` and `claude-agent-sdk` want their own virtual environment (both
+pin `mcp<2`; the `mcp` extra needs `mcp>=2.2.0`).
 
 Next: [Framework guides](Framework-Guides) · [Testing and evidence](Testing-and-Evidence)

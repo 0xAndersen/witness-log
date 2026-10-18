@@ -184,7 +184,7 @@ jobs:
         # support 3.9, which the other steps cover.
         if: matrix.python != '3.9'
         run: |
-          pip install "mcp>=2" anyio
+          pip install "mcp>=2.2.0" anyio
           pytest -q integrations/mcp -p anyio
       - name: Docs that run (README, quickstarts, Getting witnessed)
         # Every code block marked <!-- doctest --> runs as written; a
@@ -200,7 +200,7 @@ jobs:
         # The full 1,000-agent run is ~4 minutes on two cores; CI runs a
         # fifth of it so a regression in any persona still shows up.
         run: |
-          pip install "mcp>=2" anyio jsonschema
+          pip install "mcp>=2.2.0" anyio jsonschema
           export WL_BIN=target/release/witness-log
           python deploy/witness/fleet.py init fleet-a --count 20 --org "CI Operator A" --name-base a.witness.test/w --url-base http://127.0.0.1 --base-port 20000
           python deploy/witness/fleet.py init fleet-b --count 20 --org "CI Operator B" --name-base b.witness.test/w --url-base http://127.0.0.1 --base-port 20020
