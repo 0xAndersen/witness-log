@@ -77,11 +77,22 @@ them itself; the server never sees them.
 
 | tool | returns |
 |---|---|
-| `audit__status` | `{server, journal, leaf_count, root, identity, calls, restarts, witnessed, last_verdict}` |
-| `audit__export` | writes `<journal>.dossier.json` and returns `{path, sha256, bytes, verdict, split_view_unsafe, tamper_alerts}`; the verdict is `unanchored` unless `--directory` was given (a verifier needs a directory it trusts). The head witnesses last cosigned (`<journal>.witnesses.json`) is checked as a known head: a journal rewritten after witnessing is `diverged`, one truncated below it a tamper alert. `split_view_unsafe` is true for a `witnessed` verdict whose cosigners are not a strict majority of the directory |
+| `audit__status` | `{server, journal, leaf_count, root, identity, calls, restarts, witnessed, last_verdict, directory_source}` |
+| `audit__export` | writes `<journal>.dossier.json` and returns `{path, sha256, bytes, verdict, directory_source, split_view_unsafe, tamper_alerts}`; the verdict is `unanchored` unless `--directory` was given (a verifier needs a directory it trusts). The head witnesses last cosigned (`<journal>.witnesses.json`) is checked as a known head: a journal rewritten after witnessing is `diverged`, one truncated below it a tamper alert. `split_view_unsafe` is true for a `witnessed` verdict whose cosigners are not a strict majority of the directory |
 
 A model can call them like any other tool; so can an operator with
 `witness-log verify <journal>.dossier.json --identity <identity> --directory trusted.json`.
+
+The trust anchor is the operator's. The only witness directory the proxy
+uses is `--directory`, on its own command line in the host's
+configuration; nothing the model sends can change it. The injected tools
+take no arguments, and a call that passes any (a `directory` lifted from
+a document or a tool result, say) is refused with an error rather than
+answered as if it had been used. `directory_source` on `audit__export`
+and on `audit__status.last_verdict` is `"pinned"` when the verdict was
+scored against `--directory` and `null` when there was none, the same
+field the [MCP server](MCP-Integration#pin-the-trust-anchor)'s verdicts
+carry.
 
 ## Supervision and limits
 

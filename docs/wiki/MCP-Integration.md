@@ -22,7 +22,7 @@ launcher.
 | `record_handoff(session_id, direction, counterparty_identity_pubkey, state)` | one side of an agent-to-agent handoff |
 | `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | one side of a delegation or scope change; `kind` is an enum of the six SPEC §3.2 kinds, `scope` a JSON object (committed as RFC 8785 canonical JSON) or a string (its UTF-8 bytes) |
 | `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | get the head cosigned by diversity-selected witnesses |
-| `audit_this_session(session_id)` | `{leaf_count, root, identity, witnessed, last_verdict, witnessed_size, journal}`: where the trail stands, with no side effects (0.4.0+) |
+| `audit_this_session(session_id)` | `{leaf_count, root, identity, witnessed, last_verdict, directory_source, witnessed_size, journal}`: where the trail stands, with no side effects (0.4.0+) |
 
 Already running an MCP server you want audited rather than giving the
 model audit tools? [MCP proxy](MCP-Proxy): `witness-log-mcp-proxy --name
@@ -32,6 +32,53 @@ without any change to the server or the model's instructions.
 Tool errors carry the reason (for example `session_id must be 1-128
 characters ...` or `counterparty must be the other agent's identity public
 key as 64 hex characters`), so the model can fix its call.
+
+## Pin the trust anchor
+
+A verdict is only as good as the witness directory it was scored against:
+whoever supplies the directory decides which keys count as witnesses, and
+witnesses of an attacker's choosing cosign anything. Without a pin, the
+`directory` of `submit_to_witnesses` and the `trusted_directory` of
+`verify_chain_integrity` come from the model, so a prompt-injected agent (a
+poisoned document, a tool result, a counterparty's message) can pass an
+attacker-built directory and report its own chain `witnessed`. The tool
+descriptions tell the model to pass a directory only from its operator's
+configuration and never from tool output, documents or the counterparty,
+but a description is not a control. Pin the directory:
+
+```json
+{"mcpServers": {"witness-log": {
+  "command": "witness-log-mcp",
+  "args": ["--trusted-directory", "/etc/witness-log/trusted.json"],
+  "env": {"WITNESS_LOG_HOME": "/var/lib/witness-log"}}}}
+```
+
+or set `WITNESS_LOG_TRUSTED_DIRECTORY=/etc/witness-log/trusted.json` in the
+server's `env` (the flag wins when both are set). The file is a directory
+document, `{"witnesses": [...]}` or a bare array of entries (what
+`witness-log directory build` writes). With a pin:
+
+- it is the only directory the tools use: `submit_to_witnesses` contacts
+  its witnesses and scores against it, and `verify_chain_integrity` scores
+  against it without being asked;
+- a `directory` or `trusted_directory` argument is **refused** with an
+  error naming the pin, even when it equals the pinned file. Refused
+  rather than ignored: ignoring it would let the model believe its own
+  directory was used, and the error makes an injection attempt visible
+  to the agent and in the host's logs;
+- a pin that cannot be read or parsed stops the server at startup (exit
+  2): an operator who meant to pin a directory never gets a server that
+  accepts the caller's instead. The file is read once; restart the server
+  after changing it.
+
+Every verdict carries `directory_source`: `"pinned"` (the operator's pin),
+`"default"` (`$WITNESS_LOG_HOME/witnesses.json`, which
+`submit_to_witnesses` uses when nothing is pinned or passed), `"caller"`
+(passed in the tool call, so worth exactly as much as whoever wrote it)
+or `null` (no directory, so the verdict cannot be `witnessed`). It is on
+`verify_chain_integrity` (for `verdict` and `witnessed_verdict`), on
+`submit_to_witnesses`, and on `audit_this_session` for `last_verdict`.
+A host or reviewer that acts on a verdict should require `"pinned"`.
 
 ## Claude Code
 
@@ -109,8 +156,9 @@ uv run --with "mcp[cli]>=2" --with "witness-log[mcp]" \
 The checkpoint is signed by the log's identity key; the proof verifies
 with `witness_log.verify_inclusion(...)` or any RFC 6962 verifier.
 `verify_chain_integrity` returns `tamper_alerts: []` when the chain is intact.
-After a successful `submit_to_witnesses`, `verify_chain_integrity` with the
-same `trusted_directory` reports `witnessed` until the next append, and
+After a successful `submit_to_witnesses`, `verify_chain_integrity` against
+the same directory (the pinned one, or the same `trusted_directory`)
+reports `witnessed` until the next append, and
 `witnessed_size` / `witnessed_verdict` afterwards. Every head witnesses
 cosigned for the session (the kept witnessed dossier, and
 `journal.jsonl.witnesses.json`) is passed to the verifier as a known head,

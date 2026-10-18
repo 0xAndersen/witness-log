@@ -110,7 +110,9 @@ def test_passthrough_records_intent_and_result_leaves(tmp_path):
         assert rpc["error"]["code"] == -32602
         st = c.call("tools/call", {"name": "audit__status"})["result"]["structuredContent"]
         assert st["calls"] == 3 and st["leaf_count"] == 6 and st["restarts"] == 0 and st["witnessed"] is False
+        assert st["last_verdict"] is None and st["directory_source"] is None
         ex = c.call("tools/call", {"name": "audit__export"})["result"]["structuredContent"]
+        assert ex["directory_source"] is None  # no --directory: nothing to score against
         data = pathlib.Path(ex["path"]).read_bytes()
         assert ex["sha256"] == hashlib.sha256(data).hexdigest() and ex["bytes"] == len(data)
         assert ex["verdict"] == "unanchored" and ex["path"] == c.journal + ".dossier.json"
@@ -430,13 +432,14 @@ def test_periodic_witnessing(tmp_path):
                 break
             time.sleep(0.05)
         assert st["last_verdict"] == "witnessed", st
-        assert st["witnessed"] is True
+        assert st["witnessed"] is True and st["directory_source"] == "pinned"
         c.call("tools/call", {"name": "echo", "arguments": {"n": 3}})  # one more, not yet witnessed
         # The export is what gets handed on, so it witnesses the current head
         # first (a 100,000-agent run exported CONSISTENT-UNWITNESSED heads
         # whenever the call count was not a multiple of --submit-every).
         ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
         assert ex["verdict"] == "witnessed", ex
+        assert ex["directory_source"] == "pinned"  # the operator's --directory
         # Two of eight is not a strict majority: another two could have
         # cosigned a conflicting history (security review 3, F11).
         assert ex["split_view_unsafe"] is True
@@ -534,6 +537,35 @@ def test_export_flags_a_journal_rewritten_or_truncated_after_witnessing(tmp_path
             c.close()
     finally:
         for httpd, _ in ws:
+            httpd.shutdown()
+
+
+def test_the_injected_tools_refuse_arguments(tmp_path):
+    """Review III, P2: the proxy's trust anchor is the operator's --directory.
+    Its injected tools ignored any arguments, so a model that passed a
+    directory of its own (from a document, a tool result, the counterparty)
+    got a verdict back with nothing to say its directory was not the one
+    used. Arguments are refused now; the verdicts name their source."""
+    ws = [_witness(i) for i in range(2)]
+    attacker = [_witness(10 + i) for i in range(2)]
+    dpath = tmp_path / "trusted.json"
+    dpath.write_text(json.dumps({"witnesses": [e for _, e in ws]}))
+    c = ProxyClient(tmp_path, "--directory", str(dpath))
+    try:
+        c.handshake()
+        c.call("tools/call", {"name": "echo", "arguments": {"n": 1}})
+        for tool in ("audit__export", "audit__status"):
+            r = c.call("tools/call", {"name": tool, "arguments": {"directory": {"witnesses": [e for _, e in attacker]}}}, timeout=30)
+            assert r["result"]["isError"] is True, r
+            text = r["result"]["content"][0]["text"]
+            assert "takes no arguments" in text and "--directory" in text, text
+        ex = c.call("tools/call", {"name": "audit__export", "arguments": {}}, timeout=30)["result"]["structuredContent"]
+        assert ex["verdict"] == "witnessed" and ex["directory_source"] == "pinned", ex
+        receipts = json.loads(pathlib.Path(ex["path"]).read_text())["witness_receipts"]
+        assert {r["witness_pubkey"] for r in receipts} == {e["pubkey"] for _, e in ws}
+    finally:
+        assert c.close() == 0
+        for httpd, _ in ws + attacker:
             httpd.shutdown()
 
 
