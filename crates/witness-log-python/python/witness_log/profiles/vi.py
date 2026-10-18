@@ -39,7 +39,7 @@ _NET = re.compile(r"^[a-z0-9][-a-z0-9]{0,31}$")
 def offchain_chain_id(network: str) -> str:
     """``offchain:<network>``: a CAIP-2-shaped id for a non-chain rail."""
     n = str(network).lower()
-    if not _NET.match(n):
+    if not _NET.fullmatch(n):
         raise ValueError(f"network must be a short lowercase label like 'card' or 'ach', got {network!r}")
     return f"offchain:{n}"
 

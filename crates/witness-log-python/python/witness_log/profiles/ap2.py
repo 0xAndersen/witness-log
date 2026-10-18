@@ -144,10 +144,10 @@ def record_grant(
 
 
 def _check_caip(chain_id: str, account: Optional[str]) -> None:
-    if not _CAIP2.match(chain_id):
+    if not _CAIP2.fullmatch(chain_id):
         raise ValueError(f"chain_id must be a CAIP-2 id like 'eip155:8453', got {chain_id!r}")
     if account is not None:
-        if not _CAIP10.match(account):
+        if not _CAIP10.fullmatch(account):
             raise ValueError(f"account must be a CAIP-10 id like 'eip155:8453:0xabc', got {account!r}")
         if not account.startswith(chain_id + ":"):
             raise ValueError(f"account {account!r} is not on chain {chain_id!r}")

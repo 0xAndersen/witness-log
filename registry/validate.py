@@ -55,7 +55,7 @@ def check_entry(e, rel, allow_insecure=False):
     if extra:
         problems.append(f"{rel}: unknown fields {sorted(extra)}")
     pubkey = str(e["pubkey"])
-    if not HEX32.match(pubkey.lower()):
+    if not HEX32.fullmatch(pubkey.lower()):
         problems.append(f"{rel}: pubkey must be 64 hex")
     elif pubkey.lower() != pubkey:
         problems.append(f"{rel}: pubkey must be lowercase")
