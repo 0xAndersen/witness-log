@@ -66,6 +66,7 @@ fn corpus_vector_15_evidence_and_args() {
             known_heads: &known_heads,
             evidence: &evidence,
             subject_org: c["subject_org"].as_str(),
+            accept_fleet_anchor: false,
         };
         let r = dossier.verify(c["threshold"].as_f64().unwrap(), &ctx);
         assert_eq!(

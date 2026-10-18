@@ -253,6 +253,7 @@ fn main() {
         witness_directory: WitnessDirectory::default(),
         key_bindings: vec![],
         revocations: vec![],
+        fleet_anchor: None,
     };
     let mut tampered = dossier(4);
     tampered.leaves[1].payload_hash = hex::encode([0xee; 32]);
@@ -526,6 +527,7 @@ fn main() {
                     known_heads: &known,
                     evidence: &proofs,
                     subject_org: c.subject_org.as_deref(),
+                    accept_fleet_anchor: false,
                 };
                 let r = by_name(c.dossier).verify(0.66, &ctx);
                 let exit_code = if r.split_view_unsafe {
