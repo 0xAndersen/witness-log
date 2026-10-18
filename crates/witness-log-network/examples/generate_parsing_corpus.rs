@@ -674,6 +674,11 @@ fn main() {
         case("fleet_anchor holding 2^1024 - 2^970, halfway to 2^1024, which rounds to infinity", fleet_x(&halfway), Refused),
         case("fleet_anchor holding 1.7976931348623159e308, which rounds to infinity", fleet_x("1.7976931348623159e308"), Refused),
         case("fleet_anchor holding 1e309", fleet_x("1e309"), Refused),
+        // More than 800 digits before the point: Go's strconv.ParseFloat
+        // keeps 800 and once read 1 + 800 zeros + e-491 (1e309) as 1e308.
+        case("fleet_anchor holding 1, 800 zeros, e-491 (1e309)", fleet_x(&format!("1{}e-491", "0".repeat(800))), Refused),
+        case("fleet_anchor holding 1, 900 zeros, .0e-591 (1e309)", fleet_x(&format!("1{}.0e-591", "0".repeat(900))), Refused),
+        case("fleet_anchor holding 1, 800 zeros, e-493 (1e307)", fleet_x(&format!("1{}e-493", "0".repeat(800))), Exit(20)),
         // ---- hex case (P3)
         case("checkpoint root_hash in uppercase, signed over its bytes", text(&upper_root), Exit(40)),
         case("receipt root_hash in uppercase, signed as written, does not count", text(&upper_receipt_root), Exit(10)).dir("corpus", 2),
