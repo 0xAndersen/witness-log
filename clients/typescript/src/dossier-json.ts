@@ -1,6 +1,6 @@
 /**
  * Reading a dossier the way the reference verifier's serde types read it
- * (outside review of 0.6.0, H2). `JSON.parse` loses what the reference
+ * (outside review III, H2). `JSON.parse` loses what the reference
  * sees: it rounds integers above 2^53, reads `3.0` as `3`, keeps the last
  * of two equal keys without saying so, and accepts unpaired surrogates.
  * `parseJsonExact` keeps all of it, and `readDossier` applies the rule

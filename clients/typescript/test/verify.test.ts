@@ -440,7 +440,7 @@ function assertCase(
   return r;
 }
 
-describe("corpus 16: strict Ed25519 (outside review of 0.6.0, H3/M3)", () => {
+describe("corpus 16: strict Ed25519 (outside review III, H3/M3)", () => {
   it("every signature: ed25519Verify answers what the reference's verify_strict answers", () => {
     const v = corpus("16_ed25519_strict.json");
     assert.ok(v.signatures.length >= 45);
@@ -473,7 +473,7 @@ describe("corpus 16: strict Ed25519 (outside review of 0.6.0, H3/M3)", () => {
   });
 });
 
-describe("corpus 17: reading a dossier (outside review of 0.6.0, H2 and P3)", () => {
+describe("corpus 17: reading a dossier (outside review III, H2 and P3)", () => {
   it("every text: not a dossier (INVALID, never a throw) or the reference's verdict", () => {
     const v = corpus("17_dossier_parsing.json");
     assert.ok(v.cases.length >= 100);

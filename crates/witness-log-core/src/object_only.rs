@@ -6,7 +6,7 @@
 //! `{"threshold": ["2", "3"]}` as a threshold custody. The Go and
 //! TypeScript verifiers never read those forms, so the same file was
 //! verified by the reference and refused by the other two (outside review
-//! of 0.6.0, H2; corpus/17_dossier_parsing.json). The wire types derive
+//! III, H2; corpus/17_dossier_parsing.json). The wire types derive
 //! their serde impls with `#[serde(remote = "Self")]` and deserialise
 //! through [`ObjectOnly`], which reads a struct, and a struct variant, only
 //! from a map. Nothing else changes: field names, defaults, duplicate-field

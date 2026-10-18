@@ -4,7 +4,7 @@
 //! answer of the check every signature in a dossier goes through in the
 //! reference verifier: `VerifyingKey::from_bytes` then
 //! `VerifyingKey::verify_strict` (ed25519-dalek 2). SPEC.md §6 makes that
-//! check normative; the outside review of 0.6.0 (Review III, H3/M3) found
+//! check normative; outside review III (H3/M3) found
 //! the TypeScript verifier did not apply it and asked for differential
 //! vectors that every verifier runs.
 //!
@@ -1063,7 +1063,7 @@ fn main() {
     }
 
     let doc = json!({
-        "description": "Strict Ed25519 (SPEC.md §6; outside review of 0.6.0, H3/M3). \
+        "description": "Strict Ed25519 (SPEC.md §6; outside review III, H3/M3). \
             `signatures`: run every entry through the Ed25519 check your verifier uses for \
             checkpoint, key binding, revocation, receipt and signed-note signatures, with the \
             hex public_key (32 bytes), message and signature (64 bytes); the result must equal \
