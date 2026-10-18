@@ -10,12 +10,14 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
 import witness_log as wl
 from witness_log.mcp_proxy import PROFILE
 
@@ -24,11 +26,11 @@ FAKE = [sys.executable, str(HERE / "fake_mcp_server.py")]
 
 
 class ProxyClient:
-    def __init__(self, tmp_path, *extra, env=None, name="fake"):
+    def __init__(self, tmp_path, *extra, env=None, name="fake", command=None):
         self.journal = str(tmp_path / "proxy.jsonl")
         self.pidfile = str(tmp_path / "pids")
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "witness_log.mcp_proxy", "--name", name, "--journal", self.journal, *extra, "--", *FAKE],
+            [sys.executable, "-m", "witness_log.mcp_proxy", "--name", name, "--journal", self.journal, *extra, "--", *(command or FAKE)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -341,6 +343,43 @@ def test_a_call_sent_during_a_restart_runs_once_with_its_real_result_journaled(t
     assert len(journaled(0, {"error": responses[2]["error"]}, True)) == 1  # the call the dead server had
     assert len(journaled(1, responses[3]["result"], False)) == 1  # the real result of the call that ran
     log.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="starts the server through a shell script")
+def test_a_server_that_cannot_be_started_again_fails_its_calls_and_the_proxy_exits(tmp_path):
+    """0.5.0 (security review 3, F8): the respawn after a crash was
+    unguarded. When the server's command could no longer be started
+    (Popen raised: the binary was upgraded away, a permission changed) the
+    supervisor thread died with the proxy marked not ready: the crashed
+    call was answered only by the per-call timeout, every later message
+    waited 10 s and failed, and the proxy never exited. A failed start now
+    counts against --max-restarts; once they are used up the pending calls
+    are failed at once and the proxy exits non-zero."""
+    wrapper = tmp_path / "server.sh"
+    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(HERE / 'fake_mcp_server.py'))}\n")
+    wrapper.chmod(0o755)
+    c = ProxyClient(
+        tmp_path,
+        "--timeout",
+        "60",
+        "--max-restarts",
+        "2",
+        command=[str(wrapper)],
+        env={"FAKE_MCP_REMOVE_ON_CRASH": str(wrapper)},
+    )
+    try:
+        c.handshake()
+        t0 = time.monotonic()
+        r = c.call("tools/call", {"name": "echo", "arguments": {"crash": True}}, timeout=20)
+        assert "exited with code 3" in r["error"]["message"], r
+        assert time.monotonic() - t0 < 15, "answered by the per-call timeout, not by the supervisor"
+        code = c.proc.wait(20)
+    finally:
+        err = c.stderr_tail()
+    assert code == 3, err
+    assert "could not start the server" in err and "restart limit (2) reached" in err, err
+    leaves = json.loads(wl.open(c.journal).leaves_json())
+    assert [leaf["leaf_type"] for leaf in leaves] == [1, 2]  # the crashed call's intent and its error
 
 
 def _witness(i, delay=0.0):

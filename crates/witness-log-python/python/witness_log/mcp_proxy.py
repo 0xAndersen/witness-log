@@ -39,11 +39,14 @@ handed to an auditor without handing over the data; the host keeps its
 own transcript and the hashes bind it. Payloads are salted per leaf
 (SPEC §8) and ``forget(i)`` erases one.
 
-Supervision: if the server exits, in-flight calls get a JSON-RPC error,
-the server is restarted (at most ``--max-restarts`` times) and the host's
-``initialize`` request and ``notifications/initialized`` are replayed to
-it; the new server's ``initialize`` response is not forwarded (the host
-already has one). ``--timeout`` bounds each call. With ``--directory``
+Supervision: if the server exits, the calls it had been sent get a
+JSON-RPC error, the server is restarted (at most ``--max-restarts``
+times; an attempt whose command cannot be started counts too) and the
+host's ``initialize`` request and ``notifications/initialized`` are
+replayed to it; the new server's ``initialize`` response is not
+forwarded (the host already has one). Calls that arrive meanwhile go to
+the new server. Once the restarts are used up, every pending call gets an
+error and the proxy exits non-zero. ``--timeout`` bounds each call. With ``--directory``
 the journal is submitted to those witnesses every ``--submit-every``
 completed calls and once more when the host closes stdin.
 
@@ -528,19 +531,11 @@ class Proxy:
                 with self._state:
                     dead = {k: p for k, p in self._pending.items() if p.child is child}
                 self.child = None
-                if self.restarts < self.max_restarts:
-                    self.restarts += 1
-                    sys.stderr.write(
-                        f"witness-log-mcp-proxy: server exited with code {code}; restarting ({self.restarts}/{self.max_restarts})\n"
-                    )
-                    self._spawn()
-                    self._replay_init_locked()
-                    restarted = True
-                else:
-                    restarted = False
+                restarted, start_error = self._restart_locked(code)
             if not restarted:
+                last = f"; the last start failed: {start_error}" if start_error else ""
                 sys.stderr.write(
-                    f"witness-log-mcp-proxy: server exited with code {code}; restart limit ({self.max_restarts}) reached\n"
+                    f"witness-log-mcp-proxy: server exited with code {code}; restart limit ({self.max_restarts}) reached{last}\n"
                 )
                 self._give_up(code, fail)
             # Only now tell the host its in-flight calls failed: it usually
@@ -549,6 +544,33 @@ class Proxy:
             # went out before the replacement was running.
             self._ready.set()
             fail(dead)
+
+    def _restart_locked(self, code: Any) -> "tuple[bool, Optional[BaseException]]":
+        """Start a replacement server and replay the host's initialize to
+        it; the caller holds ``_child_lock``. Every attempt counts against
+        ``--max-restarts``, including one whose command cannot be started
+        at all. In 0.5.0 that case raised out of the supervisor thread
+        after ``_ready`` was cleared: the crashed calls were answered only
+        by the per-call timeout, every later message waited 10 s and failed,
+        and the proxy never exited (security review 3, F8). Returns whether
+        a server is running, and the last start error."""
+        error: Optional[BaseException] = None
+        while self.restarts < self.max_restarts:
+            self.restarts += 1
+            sys.stderr.write(
+                f"witness-log-mcp-proxy: server exited with code {code}; restarting ({self.restarts}/{self.max_restarts})\n"
+            )
+            try:
+                self._spawn()
+            except Exception as e:  # noqa: BLE001 -- the supervisor thread must survive this
+                self.child = None
+                error = e
+                sys.stderr.write(f"witness-log-mcp-proxy: could not start the server: {type(e).__name__}: {e}\n")
+                time.sleep(min(0.2 * self.restarts, 1.0))
+                continue
+            self._replay_init_locked()
+            return True, None
+        return False, error
 
     def _replay_init_locked(self) -> None:
         """Replay the host's ``initialize`` and ``notifications/initialized``
@@ -586,10 +608,9 @@ class Proxy:
             self.log.sync()
         except OSError:
             pass
-        try:
-            self._in.close()
-        except (OSError, ValueError):
-            pass
+        # Exit now. 0.5.0 closed stdin first, which waits for the main
+        # thread's blocked read, i.e. until the host wrote or closed stdin:
+        # a proxy that had given up kept running until then.
         os._exit(self._exit_code)
 
     def _watch_timeouts(self) -> None:
