@@ -203,6 +203,41 @@ serve`) and found six low-severity gaps, and a few hardening points, now closed:
   through its environment; the release image's build context is only its
   binaries and entrypoint.
 
+### A third check
+
+A third reviewer re-checked the second round (0 disagreements over 348
+depth texts and the regenerated corpora) and found one more verifier
+divergence and some loose ends, now fixed:
+
+- **Go read some huge `fleet_anchor` literals as finite.** `strconv.ParseFloat`
+  keeps 800 mantissa digits and misplaced the decimal point of a literal
+  with more digits than that before the point: `1` + 800 zeros + `e-491`
+  (1e309) was 1e308 in Go and infinite in Rust and TypeScript, so Go
+  returned UNANCHORED where the others refused the text. Go now reads the
+  literal as `0.<digits>e<exponent>`. Three corpus 17 cases (139 texts).
+- **Registry URLs are read by one strict rule in both validators**:
+  printable ASCII, no backslash; the host a DNS name (an IDN in its xn--
+  form) or a bracketed IPv6 address; no user info or percent-encoding.
+  Hosts like `10.0.0.%31`, fullwidth digits, `10.0.0.1\@evil.example` or
+  a tab inside an address, which clients decode to a private address,
+  were accepted; `3fff::/20` is refused too. A differential run of 3,351
+  generated entries: validate.py and `directory build` now agree on every
+  one (348 disagreed before), and validate.py no longer crashes on a
+  list-valued name.
+- **The address guard**, with `WITNESS_LOG_ALLOW_PRIVATE_WITNESSES=1`,
+  still refuses the local-use NAT64 prefix, GCP's IPv6 metadata address
+  and Azure's WireServer; site-local `fec0::/10` counts as private.
+- **`testnet down`** signals only the process serving that member's own
+  state directory, not any witness.
+- **The witnessed report** runs in a read-only job; a separate job, which
+  runs none of the downloaded code, commits the report.
+
+Known and left as is: the TypeScript reader can still use 20 to 40 times
+a hostile dossier's size in memory for some shapes (Rust and Go are in the
+same range); verifiers that read untrusted dossiers should cap the input
+size. Report fields (not failure messages) still echo a dossier's
+`identity_pubkey` and a fleet anchor's `origin` whole.
+
 ### Behaviour changes
 
 - `silence_proof` returns `Inconclusive` where 0.6.0 returned `Censored`

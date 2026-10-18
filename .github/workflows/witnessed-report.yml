@@ -25,24 +25,28 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # Runs the release, the PyPI package and registered witnesses with a
+  # read-only token; only the commit job below can write, and it runs none
+  # of that code.
   report:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      claimed: ${{ steps.report.outputs.claimed }}
     env:
       OUT: examples/swarm/reports/first-independent-witnessed.md
     steps:
-      # No credentials in the checkout: this job runs the PyPI package and
-      # talks to registered witnesses; only the commit step gets the token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - name: release CLI and Python package
+      - name: release CLI (provenance and SHA-256 checked)
+        id: cli
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,12 +71,17 @@ jobs:
           grep " $asset\$" SHA256SUMS | sha256sum -c -
           tar xzf "$asset" ./witness-log
           ./witness-log --version
-          pip install -q "witness-log==${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Python package
+        env:
+          TAG: ${{ steps.cli.outputs.tag }}
+        run: pip install -q "witness-log==${TAG#v}"
       - name: registry
         run: |
           python3 registry/validate.py
           python3 registry/build_directory.py --exclude-project | tee directory.json
       - name: report
+        id: report
         shell: bash
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -87,6 +96,9 @@ jobs:
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           if [ -f "$OUT" ]; then cat "$OUT" >> "$GITHUB_STEP_SUMMARY"; else
             echo "Fewer than 2 independent operators are registered; nothing claimed." >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$OUT" = examples/swarm/reports/first-independent-witnessed.md ] && [ -f "$OUT" ]; then
+            echo "claimed=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
@@ -97,15 +109,33 @@ jobs:
             work/agent.jsonl
             ${{ env.OUT }}
           if-no-files-found: ignore
+
+  commit:
+    needs: report
+    if: needs.report.outputs.claimed == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      OUT: examples/swarm/reports/first-independent-witnessed.md
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: witnessed-report
+          path: ${{ runner.temp }}/report
       - name: commit the report
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "$OUT" != examples/swarm/reports/first-independent-witnessed.md ] || [ ! -f "$OUT" ]; then
-            echo "nothing to commit"; exit 0
-          fi
+          [ ! -e "$OUT" ] || { echo "$OUT already exists; never overwritten"; exit 0; }
+          src="$RUNNER_TEMP/report/$OUT"
+          [ -f "$src" ] || src="$RUNNER_TEMP/report/$(basename "$OUT")"
+          install -D -m 0644 "$src" "$OUT"
           git config user.name "0xAndersen"
           git config user.email "321999970+0xAndersen@users.noreply.github.com"
           git add "$OUT"
@@ -115,4 +145,4 @@ jobs:
           # The header reaches git through its environment: not in argv,
           # not in any config file.
           GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
-            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git push
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git push origin "HEAD:$GITHUB_REF"

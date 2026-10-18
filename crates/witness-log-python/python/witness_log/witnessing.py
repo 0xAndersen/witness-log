@@ -66,9 +66,17 @@ METADATA_ADDRESSES = frozenset(
         "169.254.169.254",  # AWS, GCP, Azure, OpenStack, ...
         "169.254.170.2",  # AWS ECS task metadata
         "fd00:ec2::254",  # AWS IPv6
+        "fd20:ce::254",  # GCP IPv6
         "100.100.100.200",  # Alibaba Cloud
+        "168.63.129.16",  # Azure WireServer (a public address, reachable only from inside Azure)
     )
 )
+# Never a witness, whatever the operator allows: the local-use NAT64 prefix
+# (RFC 8215) carries an IPv4 address at a position this host cannot know,
+# so it could be link-local or metadata; site-local (fec0::/10) is
+# deprecated, and Python counts it as global.
+NEVER_WITNESS_NETWORKS = (ipaddress.ip_network("64:ff9b:1::/48"),)
+NOT_PUBLIC_NETWORKS = (ipaddress.ip_network("fec0::/10"),)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -161,12 +169,21 @@ def witness_address_guard(allow_private: bool = False) -> Guard:
             # NAT64, 6to4, Teredo): a NAT64 gateway turns 64:ff9b::a9fe:a9fe
             # into 169.254.169.254. Every address it names must pass.
             named = [resolved, *_embedded_ipv4(resolved)]
-            if any(ip in METADATA_ADDRESSES or ip.is_link_local or ip.is_unspecified or ip.is_multicast for ip in named):
+            if any(
+                ip in METADATA_ADDRESSES
+                or ip.is_link_local
+                or ip.is_unspecified
+                or ip.is_multicast
+                or any(ip in n for n in NEVER_WITNESS_NETWORKS if n.version == ip.version)
+                for ip in named
+            ):
                 raise ValueError(
                     f"witness host {host!r} resolves to {resolved}, a link-local, metadata or otherwise "
                     "non-routable address; refused for a directory passed in a tool call"
                 )
-            if not allow_private and not all(ip.is_global for ip in named):
+            if not allow_private and not all(
+                ip.is_global and not any(ip in n for n in NOT_PUBLIC_NETWORKS if n.version == ip.version) for ip in named
+            ):
                 raise ValueError(
                     f"witness host {host!r} resolves to {resolved}, a loopback or private address; refused for "
                     f"a directory passed in a tool call (pin the directory with WITNESS_LOG_TRUSTED_DIRECTORY, "

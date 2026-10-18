@@ -439,9 +439,11 @@ fn cmd_down(dir: &Path) -> ExitCode {
 /// process id (never 0, 1 or a value that becomes negative as pid_t, which
 /// would signal a process group or every process the user owns) and still a
 /// witness-log witness, not an unrelated process that reused the id after
-/// a reboot (security sweep of 0.6.0, F12). Linux reads /proc; other Unix
-/// systems ask `ps`; Windows asks `tasklist` for the image name.
-fn signalable(pid: u32) -> bool {
+/// a reboot (security sweep of 0.6.0, F12): on Linux and other Unix
+/// systems, the `witness-log witness serve <dir>` this testnet started for
+/// that member's state directory (Linux reads /proc, others ask `ps`); on
+/// Windows, which shows no arguments, a `witness-log` image (`tasklist`).
+fn signalable(pid: u32, dir: &str) -> bool {
     if pid < 2 || pid > i32::MAX as u32 {
         return false;
     }
@@ -450,11 +452,11 @@ fn signalable(pid: u32) -> bool {
         match std::fs::read(format!("/proc/{pid}/cmdline")) {
             Ok(c) => {
                 let args: Vec<&[u8]> = c.split(|b| *b == 0).collect();
-                let has = |w: &[u8]| args.contains(&w);
                 args.first()
                     .is_some_and(|a| String::from_utf8_lossy(a).contains("witness-log"))
-                    && has(b"witness")
-                    && has(b"serve")
+                    && args
+                        .windows(3)
+                        .any(|w| w[0] == b"witness" && w[1] == b"serve" && w[2] == dir.as_bytes())
             }
             Err(_) => false,
         }
@@ -469,13 +471,14 @@ fn signalable(pid: u32) -> bool {
         {
             Ok(o) if o.status.success() => {
                 let c = String::from_utf8_lossy(&o.stdout);
-                c.contains("witness-log") && c.contains(" witness serve ")
+                c.contains("witness-log") && c.contains(&format!(" witness serve {dir} "))
             }
             _ => false,
         }
     }
     #[cfg(not(unix))]
     {
+        let _ = dir; // tasklist shows no arguments to match it against
         match Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
             .stdin(Stdio::null())
@@ -493,7 +496,10 @@ fn signalable(pid: u32) -> bool {
 /// Stop every member: terminate, wait up to 5s for /health to stop
 /// answering, then kill.
 fn stop_all(members: &[Member]) {
-    let members: Vec<&Member> = members.iter().filter(|m| signalable(m.pid)).collect();
+    let members: Vec<&Member> = members
+        .iter()
+        .filter(|m| signalable(m.pid, &m.dir))
+        .collect();
     for m in &members {
         terminate(m.pid);
     }
@@ -557,11 +563,11 @@ mod pid_tests {
     #[test]
     fn only_a_running_witness_is_signalled() {
         for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
-            assert!(!signalable(pid), "{pid}");
+            assert!(!signalable(pid, "tn/testnet-a"), "{pid}");
         }
         // This test process is not a `witness-log witness serve`, on any
         // system (its path may well contain "witness-log").
-        assert!(!signalable(std::process::id()));
+        assert!(!signalable(std::process::id(), "tn/testnet-a"));
     }
 
     // That a real witness IS recognised, on Linux, macOS and Windows, is
