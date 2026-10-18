@@ -648,7 +648,7 @@ def _corpus_case(v, c, dossier_json):
 
 
 def test_corpus_16_strict_ed25519_and_17_dossier_parsing():
-    """Outside review of 0.6.0 (H2, H3/M3, P3) through the binding:
+    """Outside review III (H2, H3/M3, P3) through the binding:
     degenerate Ed25519 signatures in dossiers (16), and texts that are or
     are not dossiers, integers above 2^53 and hex case (17). A text the
     reference cannot read raises MalformedError, never a verdict."""

@@ -11,7 +11,7 @@
  * what the reference's ed25519-dalek `verify_strict` decides (mixed-order
  * points are accepted, as there). Up to 0.6.0 the small-order check was
  * missing here, so degenerate signatures the reference refuses verified
- * (outside review of 0.6.0, H3); corpus/16_ed25519_strict.json pins every
+ * (outside review III, H3); corpus/16_ed25519_strict.json pins every
  * edge case for all three verifiers.
  *
  * Dossiers are read as the reference's serde types read them: a value

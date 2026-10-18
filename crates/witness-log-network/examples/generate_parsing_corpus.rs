@@ -1,6 +1,6 @@
 //! Generates `corpus/17_dossier_parsing.json`: dossiers as JSON text, at
 //! the edges where the three verifiers once read the same file
-//! differently (outside review of 0.6.0, H2 and P3). Each case is either
+//! differently (outside review III, H2 and P3). Each case is either
 //! a text the reference cannot deserialise as a `Dossier` (`not_a_dossier`)
 //! or one it can, with the verdict, exit code and report fields:
 //!
@@ -691,7 +691,7 @@ fn main() {
     }
 
     let doc = json!({
-        "description": "Reading a dossier (outside review of 0.6.0, H2 and P3). Each case's \
+        "description": "Reading a dossier (outside review III, H2 and P3). Each case's \
             `dossier_json` is the input text, byte for byte; give it to your verifier as text. \
             The rule is the reference's: the text is RFC 8259 JSON (no byte order mark, no \
             trailing characters); the dossier and every struct in it (checkpoint, leaf, receipt, \

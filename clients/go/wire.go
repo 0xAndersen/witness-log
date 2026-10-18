@@ -13,7 +13,7 @@ import (
 
 // The reference reads a dossier with serde (crates/witness-log-network's
 // Dossier and the types in it), and encoding/json reads JSON differently
-// in ways that changed verdicts (outside review of 0.6.0, H2; corpus
+// in ways that changed verdicts (outside review III, H2; corpus
 // vector 17): it matches keys case-insensitively, so "TREE_SIZE" beside
 // "tree_size" overwrote it; it keeps the last of two equal keys, where
 // serde refuses a repeated field; it reads null into any field as "leave

@@ -388,7 +388,7 @@ describe("corpus 14: both verifiers agree on every fleet anchor case (RFC-0001, 
   });
 });
 
-describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers (outside review of 0.6.0)", () => {
+describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers (outside review III)", () => {
   const dir = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus");
   const optsOf = (v: any, c: any) => ({
     directory: c.directory === null ? undefined : v.directories[c.directory],

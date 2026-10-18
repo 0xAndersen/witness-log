@@ -1,7 +1,7 @@
 //! Corpus vector 17 (`corpus/17_dossier_parsing.json`): which texts are
 //! dossiers and what they verify to, at the edges where the Go and
 //! TypeScript verifiers once read JSON differently from serde (outside
-//! review of 0.6.0, H2 and P3). The Go and TypeScript verifiers, the wasm
+//! review III, H2 and P3). The Go and TypeScript verifiers, the wasm
 //! build, Node and Python run the same file.
 //! `examples/generate_parsing_corpus.rs` writes it; CI fails if the
 //! committed copy drifts from what the generator produces.

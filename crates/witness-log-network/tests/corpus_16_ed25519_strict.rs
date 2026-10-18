@@ -1,7 +1,7 @@
 //! Corpus vector 16 (`corpus/16_ed25519_strict.json`): strict Ed25519
 //! (SPEC.md §6) at the edges where implementations disagree, for the raw
 //! check and inside dossiers. The Go and TypeScript verifiers, the wasm
-//! build, Node and Python run the same file (outside review of 0.6.0,
+//! build, Node and Python run the same file (outside review III,
 //! H3/M3). `examples/generate_ed25519_corpus.rs` writes it; CI fails if the
 //! committed copy drifts from what the generator produces.
 
