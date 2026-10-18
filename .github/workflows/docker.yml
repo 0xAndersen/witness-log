@@ -72,7 +72,7 @@ jobs:
                 curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/SHA256SUMS"
                 if attested "$TAG"; then
                   gh attestation verify SHA256SUMS --repo "$GITHUB_REPOSITORY" \
-                    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+                    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --deny-self-hosted-runners
                 fi
                 grep " ${asset}\$" SHA256SUMS | sha256sum -c -
                 tar xzf "$asset" ./witness-log

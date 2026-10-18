@@ -273,7 +273,7 @@ runs:
                 echo "::notice title=witness-log::build provenance of witness-log $WL_VERSION not checked: it needs the gh CLI and a token; relying on SHA256SUMS"
               else
                 out=$(gh attestation verify "$work/SHA256SUMS" --repo "$repo" \
-                        --signer-workflow "$repo/.github/workflows/release.yml" 2>&1) \
+                        --signer-workflow "$repo/.github/workflows/release.yml" --deny-self-hosted-runners 2>&1) \
                   || die "SHA256SUMS of witness-log $WL_VERSION has no valid build-provenance attestation from $repo's release workflow: $(printf '%s' "$out" | tail -3). Refusing to run it. (Set verify-provenance: false only if this runner cannot reach GitHub's attestation API or Sigstore.)"
                 provenance="build provenance verified (release.yml)"
               fi ;;

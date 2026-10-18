@@ -30,7 +30,8 @@ jobs:
           COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
-          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::tag must look like v1.2.3"; exit 1 ;; esac
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::tag must look like v1.2.3"; exit 1; }
+          [[ -z "$COMMIT" || "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::commit must be a full 40-character SHA"; exit 1; }
           if [ -z "$COMMIT" ]; then
             COMMIT="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)"
           fi

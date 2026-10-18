@@ -1,0 +1,7 @@
+# Build context for Dockerfile.release (context: deploy/witness). It needs
+# only the binaries under bin/ and the entrypoint; nothing else in this
+# directory (an operator's witness state, keys or .env files kept here)
+# should reach the build, even its first stage.
+*
+!bin/
+!docker-entrypoint.sh
