@@ -52,13 +52,14 @@ def is_loopback(host: str) -> bool:
 # "independent" ones. Kept as an explicit list, not unicodedata, so this
 # script and `witness-log directory build` refuse exactly the same text:
 # C0 and C1 controls, format characters (Cf), invisible fillers and
-# variation selectors, private use and noncharacters.
+# variation selectors, lone surrogates (JSON can escape them; Rust's JSON
+# reader refuses them), private use and noncharacters.
 INVISIBLE = (
     (0x0000, 0x001F), (0x007F, 0x009F), (0x00AD, 0x00AD), (0x034F, 0x034F),
     (0x0600, 0x0605), (0x061C, 0x061C), (0x06DD, 0x06DD), (0x070F, 0x070F),
     (0x0890, 0x0891), (0x08E2, 0x08E2), (0x115F, 0x1160), (0x17B4, 0x17B5),
     (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),
-    (0x2800, 0x2800), (0x3164, 0x3164), (0xE000, 0xF8FF), (0xFDD0, 0xFDEF),
+    (0x2800, 0x2800), (0x3164, 0x3164), (0xD800, 0xDFFF), (0xE000, 0xF8FF), (0xFDD0, 0xFDEF),
     (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFFB),
     (0x110BD, 0x110BD), (0x110CD, 0x110CD), (0x13430, 0x1343F),
     (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
@@ -112,8 +113,41 @@ BLOCKED_V4 = ((0x00000000, 8), (0x0A000000, 8), (0x64400000, 10), (0x7F000000, 8
               (0xC0586300, 24), (0xC0A80000, 16), (0xC6120000, 15), (0xC6336400, 24),
               (0xCB007100, 24), (0xE0000000, 4), (0xF0000000, 4))
 BLOCKED_V6 = (("::", 96), ("::ffff:0:0", 96), ("64:ff9b::", 96), ("64:ff9b:1::", 48),
-              ("100::", 64), ("2001::", 23), ("2001:db8::", 32), ("2002::", 16),
+              ("100::", 64), ("2001::", 23), ("2001:db8::", 32), ("2002::", 16), ("3fff::", 20),
               ("fc00::", 7), ("fe80::", 10), ("fec0::", 10), ("ff00::", 8))
+
+
+# A registry URL's authority: a DNS name (ASCII letters, digits, '.', '-';
+# an internationalised name in its xn-- form) or a bracketed IPv6 address,
+# and an optional port. No user info, no percent-encoding: clients decode
+# those differently (urllib unquotes %31 to "1"; IDNA folds fullwidth
+# digits to ASCII ones), so a host that looks public here could connect to
+# a private address there.
+AUTHORITY = re.compile(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::([0-9]{1,5}))?")
+
+
+def url_scheme_and_host(url: str):
+    """(scheme, lowercased host) of a registry URL, or (None, why not).
+    The same reading as `url_scheme_and_host` in `witness-log directory
+    build`, so both refuse the same URLs."""
+    if not all(0x21 <= ord(c) <= 0x7E for c in url) or "\\" in url:
+        return None, (f"url {url!r} must be printable ASCII without spaces, control characters "
+                      "or backslashes")
+    for scheme in ("https", "http"):
+        if url.startswith(scheme + "://"):
+            break
+    else:
+        return None, "url must be http(s)"
+    authority = re.split(r"[/?#]", url[len(scheme) + 3:], maxsplit=1)[0]
+    m = AUTHORITY.fullmatch(authority)
+    if not m or (m.group(1) is not None and int(m.group(1)) > 65535):
+        return None, (f"url {url}: the host must be a DNS name (letters, digits, '.', '-'; an "
+                      "internationalised name in its xn-- form) or an IP address, with an optional "
+                      "port; no user info or percent-encoding")
+    host = authority[1:authority.index("]")] if authority.startswith("[") else authority.split(":", 1)[0]
+    if not host:
+        return None, f"url {url} has no host"
+    return scheme, host.lower()
 
 
 def ip_literal_problem(host: str):
@@ -186,12 +220,11 @@ def check_entry(e, rel, allow_insecure=False):
     if not isinstance(e["is_project_operated"], bool):
         problems.append(f"{rel}: is_project_operated must be a boolean")
     url = str(e["url"])
-    parts = urllib.parse.urlsplit(url)
-    if parts.scheme not in ("http", "https"):
-        problems.append(f"{rel}: url must be http(s)")
+    scheme, host = url_scheme_and_host(url)
+    if scheme is None:
+        problems.append(f"{rel}: {host}")
     else:
-        host = parts.hostname or ""
-        if parts.scheme == "http" and not allow_insecure:
+        if scheme == "http" and not allow_insecure:
             problems.append(
                 f"{rel}: url {url} is plain http; a registry entry must be https "
                 "(http is accepted only with --allow-insecure, for tests)"
@@ -268,9 +301,10 @@ def validate(registry_dir, offline=False, require_live=False, allow_insecure=Fal
         if key in seen_keys:
             problems.append(f"{rel}: duplicate pubkey, also in {seen_keys[key]}")
         seen_keys[key] = rel
-        if e["name"] in seen_names:
-            problems.append(f"{rel}: duplicate name, also in {seen_names[e['name']]}")
-        seen_names[e["name"]] = rel
+        name = e["name"] if isinstance(e["name"], str) else repr(e["name"])
+        if name in seen_names:
+            problems.append(f"{rel}: duplicate name, also in {seen_names[name]}")
+        seen_names[name] = rel
         if not offline and not entry_problems:
             p, n = check_live(e, rel, timeout=timeout, require_live=require_live, fetch=fetch)
             problems.extend(p)

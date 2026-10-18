@@ -99,21 +99,72 @@ const REQUIRED_FIELDS: [&str; 6] = [
 ];
 const OPTIONAL_FIELDS: [&str; 1] = ["compute_provider"];
 
-/// The host of an `http(s)://` URL, lowercased, without port, userinfo or
-/// IPv6 brackets (what Python's `urlsplit(url).hostname` returns).
-fn url_host(url: &str) -> String {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .unwrap_or("");
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = if let Some(v6) = hostport.strip_prefix('[') {
-        v6.split(']').next().unwrap_or("")
+/// The scheme and lowercased host of a registry URL, or why it is refused:
+/// `url_scheme_and_host` in `registry/validate.py`, so both refuse the same
+/// URLs. The URL is printable ASCII with no backslash; its authority is a
+/// DNS name (letters, digits, `.`, `-`; an internationalised name in its
+/// `xn--` form) or a bracketed IPv6 address, with an optional port. No user
+/// info and no percent-encoding: clients decode those differently, so a
+/// host that looks public here could connect to a private address there.
+fn url_scheme_and_host(url: &str) -> Result<(&'static str, String), String> {
+    if !url.bytes().all(|b| (0x21..=0x7E).contains(&b)) || url.contains('\\') {
+        return Err(format!(
+            "url {url:?} must be printable ASCII without spaces, control characters or backslashes"
+        ));
+    }
+    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
+        ("https", r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        ("http", r)
     } else {
-        hostport.rsplit_once(':').map_or(hostport, |(h, _)| h)
+        return Err("url must be http(s)".into());
     };
-    host.to_ascii_lowercase()
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let refuse = || {
+        format!(
+            "url {url}: the host must be a DNS name (letters, digits, '.', '-'; an \
+             internationalised name in its xn-- form) or an IP address, with an optional \
+             port; no user info or percent-encoding"
+        )
+    };
+    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+        let (h, after) = v6.split_once(']').ok_or_else(refuse)?;
+        if h.is_empty()
+            || !h
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
+        {
+            return Err(refuse());
+        }
+        let port = match after {
+            "" => None,
+            p => Some(p.strip_prefix(':').ok_or_else(refuse)?),
+        };
+        (h, port)
+    } else {
+        let (h, port) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        if h.is_empty()
+            || !h
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        {
+            return Err(refuse());
+        }
+        (h, port)
+    };
+    if let Some(p) = port {
+        if p.is_empty()
+            || p.len() > 5
+            || !p.bytes().all(|b| b.is_ascii_digit())
+            || p.parse::<u32>().map_or(true, |n| n > 65535)
+        {
+            return Err(refuse());
+        }
+    }
+    Ok((scheme, host.to_ascii_lowercase()))
 }
 
 /// `is_loopback` in `registry/validate.py`.
@@ -129,7 +180,7 @@ fn is_loopback(host: &str) -> bool {
 /// `registry/validate.py` (controls, format characters, invisible fillers,
 /// variation selectors, private use, noncharacters), so both refuse exactly
 /// the same text.
-const INVISIBLE: [(u32, u32); 31] = [
+const INVISIBLE: [(u32, u32); 32] = [
     (0x0000, 0x001F),
     (0x007F, 0x009F),
     (0x00AD, 0x00AD),
@@ -148,6 +199,7 @@ const INVISIBLE: [(u32, u32); 31] = [
     (0x2060, 0x206F),
     (0x2800, 0x2800),
     (0x3164, 0x3164),
+    (0xD800, 0xDFFF), // never in a Rust str; kept so the lists match
     (0xE000, 0xF8FF),
     (0xFDD0, 0xFDEF),
     (0xFE00, 0xFE0F),
@@ -188,6 +240,9 @@ fn numeric_ipv4(host: &str) -> Option<u32> {
         let v = if let Some(hex) = p.strip_prefix("0x").or_else(|| p.strip_prefix("0X")) {
             if hex.is_empty() {
                 0
+            } else if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                // from_str_radix would also take a leading '+'.
+                return None;
             } else {
                 u64::from_str_radix(hex, 16).ok()?
             }
@@ -234,7 +289,7 @@ fn ip_literal_problem(host: &str) -> Option<String> {
         (0xE000_0000, 4),
         (0xF000_0000, 4),
     ];
-    const BLOCKED_V6: [(&str, u32); 12] = [
+    const BLOCKED_V6: [(&str, u32); 13] = [
         ("::", 96),
         ("::ffff:0:0", 96),
         ("64:ff9b::", 96),
@@ -243,6 +298,7 @@ fn ip_literal_problem(host: &str) -> Option<String> {
         ("2001::", 23),
         ("2001:db8::", 32),
         ("2002::", 16),
+        ("3fff::", 20),
         ("fc00::", 7),
         ("fe80::", 10),
         ("fec0::", 10),
@@ -348,18 +404,16 @@ fn registry_entry_problems(v: &serde_json::Value, allow_insecure: bool) -> Vec<S
     if !obj["is_project_operated"].is_boolean() {
         problems.push("is_project_operated must be a boolean".into());
     }
-    match text("url") {
-        Some(url) if url.starts_with("https://") || url.starts_with("http://") => {
-            let host = url_host(url);
-            if host.is_empty() {
-                problems.push(format!("url {url} has no host"));
-            }
-            if url.starts_with("http://") && !allow_insecure {
+    match text("url").map(url_scheme_and_host) {
+        Some(Ok((scheme, host))) => {
+            if scheme == "http" && !allow_insecure {
                 problems.push(format!(
-                    "url {url} is plain http; a registry entry must be https \
-                     (http is accepted only with --allow-insecure, for tests)"
+                    "url {} is plain http; a registry entry must be https \
+                     (http is accepted only with --allow-insecure, for tests)",
+                    text("url").unwrap_or("")
                 ));
             }
+            let url = text("url").unwrap_or("");
             if is_loopback(&host) && !allow_insecure {
                 problems.push(format!(
                     "url {url} is a loopback address; give the public URL clients reach"
@@ -370,7 +424,8 @@ fn registry_entry_problems(v: &serde_json::Value, allow_insecure: bool) -> Vec<S
                 }
             }
         }
-        _ => problems.push("url must be http(s)".into()),
+        Some(Err(why)) => problems.push(why),
+        None => problems.push("url must be http(s)".into()),
     }
     match text("name") {
         Some(n) if !n.is_empty() && !n.contains('+') && !n.chars().any(char::is_whitespace) => {}
@@ -729,6 +784,45 @@ mod registry_check_tests {
             "https://93.184.216.34/",
             "https://[2606:4700::1]:8443/",
             "https://deadbeef.example/",
+        ] {
+            let p = registry_entry_problems(&entry("url", url.into()), false);
+            assert!(p.is_empty(), "{url}: {p:?}");
+        }
+    }
+
+    /// Hosts that clients decode differently from the text: the same list
+    /// as DISGUISED_URLS in registry/tests/test_validate.py.
+    #[test]
+    fn urls_clients_would_read_differently_are_refused() {
+        for url in [
+            "https://10.\t0.0.1/",
+            "https://10.0.0.1\n/",
+            "https://1\r0.0.0.1/",
+            "https://10.0.0.%31/",
+            "https://\u{ff11}\u{ff10}.\u{ff10}.\u{ff10}.\u{ff11}/",
+            "https://10\u{ff0e}0\u{ff0e}0\u{ff0e}1/",
+            "https://10\u{3002}0\u{3002}0\u{3002}1/",
+            "https://10.0.0.1\\@evil.example/",
+            "https://a@b.example/",
+            "https://[2606:4700::1%25eth0]/",
+            "https://:443/",
+            "https:///x",
+            "https://x.example:99999/",
+            "https://x.example:/",
+            "HTTPS://x.example/",
+            " https://x.example/",
+            "https://0x+a.0.0.1/",
+            "https://[3fff::1]/",
+            "https://[::1]x/",
+            "https://1.2.3.4:5:6/",
+        ] {
+            let p = registry_entry_problems(&entry("url", url.into()), false);
+            assert!(p.iter().any(|p| p.contains("url")), "{url:?}: {p:?}");
+        }
+        for url in [
+            "https://xn--mller-kva.example/",
+            "https://1.2.3.4.sslip.io/",
+            "https://W1.Example.org:8443/x?y#z",
         ] {
             let p = registry_entry_problems(&entry("url", url.into()), false);
             assert!(p.is_empty(), "{url}: {p:?}");
