@@ -57,6 +57,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::tag must look like v1.2.3"; exit 1; }
+          attested() { # v0.6.1 and later carry build provenance from release.yml
+            local c=${1#v}; c=${c%%-*}; local a b p; IFS=. read -r a b p <<< "$c"
+            [ "$a" -gt 0 ] || [ "$b" -gt 6 ] || { [ "$b" -eq 6 ] && [ "$p" -ge 1 ]; }
+          }
           asset="witness-log-${TAG}-${TRIPLE}.tar.gz"
           mkdir -p out dl
           for i in $(seq 1 60); do
@@ -66,6 +70,10 @@ jobs:
                 cd dl
                 curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
                 curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/SHA256SUMS"
+                if attested "$TAG"; then
+                  gh attestation verify SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+                    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+                fi
                 grep " ${asset}\$" SHA256SUMS | sha256sum -c -
                 tar xzf "$asset" ./witness-log
                 install -m 0755 witness-log ../out/witness-log
