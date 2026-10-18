@@ -65,6 +65,21 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
+
+def display_path(path: str) -> str:
+    """How a report names a file: relative to the repository when it is in
+    it, else its basename. Reports get committed; an absolute path names
+    the machine and the account that ran them."""
+    if os.sep not in path and (os.altsep is None or os.altsep not in path):
+        return path  # a command on PATH
+    p = os.path.abspath(path)
+    try:
+        if os.path.commonpath([p, REPO]) == REPO:
+            return os.path.relpath(p, REPO)
+    except ValueError:  # another drive on Windows
+        pass
+    return os.path.basename(p)
+
 # ------------------------------------------------------------ framework
 
 
@@ -904,7 +919,7 @@ def report(results: list[dict], cfg: dict, out: str, elapsed: float) -> int:
     verdicts = collections.Counter(v for r in results for v in r["verdicts"])
     total_ops = sum(op_total.values())
     lines = [f"# Outside swarm: {n} agents, {len(PERSONAS)} personas, {cfg['witness_count']} witnesses", "",
-             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}"
+             f"- target: `{display_path(cfg['cli'])}` ({cfg['cli_version']}), witness_log {cfg['py_version']}"
              + (f"; **fault injected: {cfg['inject_fault']}**" if cfg.get("inject_fault") else ""),
              f"- {n} agents in {elapsed:.0f} s, {cfg['processes']} x {cfg['threads']} in flight, {total_ops} operations, "
              f"{sum(len(r['verdicts']) for r in results)} verdicts",
