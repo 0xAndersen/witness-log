@@ -52,6 +52,24 @@ coverage gaps are a bug report, not a vulnerability), and third-party
 dependencies (report those to the dependency's own maintainers; `cargo
 deny check` runs in CI against known advisories).
 
+## Verifying a release
+
+From v0.6.1, every asset of a GitHub release (the CLI archives and
+`SHA256SUMS`) carries a SLSA build-provenance attestation, signed through
+Sigstore by `.github/workflows/release.yml`. `SHA256SUMS` alone only
+proves a download matches what is in the release; the attestation proves
+the release workflow built it from the tagged commit:
+
+```sh
+gh attestation verify SHA256SUMS --repo 0xAndersen/witness-log \
+  --signer-workflow 0xAndersen/witness-log/.github/workflows/release.yml
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+The GitHub Action and the project's Docker image build run that check
+themselves. PyPI wheels carry PEP 740 attestations from Trusted
+Publishing; npm packages carry npm provenance.
+
 ## Known, disclosed limitations
 
 This is not a vulnerability report queue for things `THREAT_MODEL.md`

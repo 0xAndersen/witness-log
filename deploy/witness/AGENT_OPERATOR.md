@@ -66,6 +66,9 @@ ARCH=$(uname -m)            # x86_64 or aarch64
 VER=v0.6.0
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/SHA256SUMS
+# v0.6.1 and later, if you have the gh CLI, first prove the release
+# workflow built it (stop if this fails):
+#   gh attestation verify SHA256SUMS --repo 0xAndersen/witness-log
 sha256sum --ignore-missing -c SHA256SUMS
 tar xzf witness-log-$VER-$ARCH-unknown-linux-gnu.tar.gz      # flat: ./witness-log, LICENSE, README.md
 sudo install -m 0755 ./witness-log /usr/local/bin/witness-log
