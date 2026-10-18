@@ -9,9 +9,11 @@ agreement across implementations, handoff and authorization bindings via
 `bind` and the commerce profiles, dispute export, the MCP server's new
 tools, the MCP proxy, the hook daemon, the framework `Recorder`, the Node
 addon with both verifiers, the Go verifier against the Rust CLI, and
-evidence windows. Each persona asserts what the docs promise and records
-a note when the system disagrees, so the report lists findings, not just
-crashes.
+evidence windows. Each persona checks what the docs promise as an
+expectation (`Agent.expect` in outside.py); one the system does not meet
+is a finding, reported with what was expected and what was observed, and
+fails the run (exit status: crashed agents + failed expectations + 1 if
+any operation failed, capped at 99). Notes are informational only.
 
 Built for a hundred thousand agents on a small host: results stream to
 per-process JSONL files, each agent's workspace is deleted once it has
@@ -87,37 +89,32 @@ def p_cli_nocode(a: Agent):
     """The README's six commands, from the shell, nothing else."""
     j = a.journal
     code, out, err = a.op("cli.log.init", cli, a, "log", "init", j)
-    if code != 0 or "identity" not in out:
-        a.notes.append(f"log init: exit {code} {err[:120]}")
+    if not a.expect("`log init` exits 0 and prints the identity", code == 0 and "identity" in out, "exit 0 with identity",
+                    f"exit {code} {err[:120]}"):
         return
     ident = json.loads(out)["identity"]
     for i in range(6):
         code, out, err = a.op("cli.log.append.intent", cli, a, "log", "append", j, "--intent", json.dumps({"tool": "t", "i": i}))
-        if code != 0:
-            a.notes.append(f"log append intent: exit {code} {err[:120]}")
+        a.expect("`log append --intent` exits 0", code == 0, "exit 0", f"exit {code} {err[:120]}")
         code, out, err = a.op("cli.log.append.result", cli, a, "log", "append", j, "--result", json.dumps({"i": i}), "--outcome", "ok")
-        if code != 0:
-            a.notes.append(f"log append result: exit {code} {err[:120]}")
+        a.expect("`log append --result` exits 0", code == 0, "exit 0", f"exit {code} {err[:120]}")
     code, out, err = a.op("cli.log.forget", cli, a, "log", "forget", j, "1")
-    if code != 0:
-        a.notes.append(f"log forget: exit {code} {err[:120]}")
+    a.expect("`log forget` exits 0", code == 0, "exit 0", f"exit {code} {err[:120]}")
     code, out, err = a.op("cli.log.disclose", cli, a, "log", "disclose", j, "2")
-    if code != 0 or "salt" not in out:
-        a.notes.append(f"log disclose: exit {code} {err[:120]}")
+    a.expect("`log disclose` exits 0 and prints the salt", code == 0 and "salt" in out, "exit 0 with salt", f"exit {code} {err[:120]}")
     code, out, err = a.op("cli.log.info", cli, a, "log", "info", j)
-    if code != 0:
-        a.notes.append(f"log info: exit {code} {err[:120]}")
+    a.expect("`log info` exits 0", code == 0, "exit 0", f"exit {code} {err[:120]}")
     dp = os.path.join(a.dir, "dossier.json")
     code, out, err = a.op("cli.submit", cli, a, "submit", j, "--directory", dir_file(a), "--out", dp, "--min", str(MIN_WITNESSES))
-    if code != 0:
-        a.notes.append(f"submit --min {MIN_WITNESSES}: exit {code} {err[-160:]}")
+    if not a.expect(f"`submit --min {MIN_WITNESSES}` of an honest journal exits 0", code == 0, "exit 0", f"exit {code} {err[-160:]}"):
         return
     code, out, err = a.op("cli.verify.strict", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a), "--strict")
     a.verdicts.append({0: "witnessed", 10: "consistent-unwitnessed", 11: "below-strict", 20: "unanchored", 30: "diverged", 40: "invalid"}.get(code, f"exit{code}"))
-    if code not in (0, 11):
-        a.notes.append(f"verify --strict after submit: exit {code} {err[-160:]}")
-    if os.name == "posix" and oct(os.stat(dp).st_mode & 0o777) != "0o644":
-        a.notes.append(f"dossier mode {oct(os.stat(dp).st_mode & 0o777)}, expected 0644")
+    a.expect("`verify --strict` after `submit` is WITNESSED (exit 0, or 11 below a strict majority)", code in (0, 11),
+             "exit 0 or 11", f"exit {code} {err[-160:]}")
+    if os.name == "posix":
+        mode = oct(os.stat(dp).st_mode & 0o777)
+        a.expect("the dossier `submit` writes is mode 0644", mode == "0o644", "0o644", mode)
 
 
 def p_strict_verifier(a: Agent):
@@ -134,29 +131,25 @@ def p_strict_verifier(a: Agent):
     ident = log.identity_pubkey_hex()
     log.close()
     code, out, err = a.op("cli.verify.strict.unwitnessed", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a), "--strict")
-    if code != 10:
-        a.notes.append(f"verify --strict on an unwitnessed dossier: exit {code}, expected 10")
+    a.expect("`verify --strict` on an unwitnessed dossier exits 10", code == 10, "exit 10", f"exit {code}")
     code, out, err = a.op("cli.verify.strict.plain", cli, a, "verify", dp, "--identity", ident, "--directory", dir_file(a))
-    if code != 10:
-        a.notes.append(f"verify (no strict) on an unwitnessed dossier: exit {code}, expected 10")
+    a.expect("`verify` (no --strict) on an unwitnessed dossier exits 10", code == 10, "exit 10", f"exit {code}")
     d = json.load(open(dp))
     d["leaves"][1]["payload_hash"] = "ee" * 32
     open(dp, "w").write(json.dumps(d))
     code, out, err = a.op("cli.verify.invalid", cli, a, "verify", dp, "--identity", ident)
-    if code != 40 or "INVALID" not in out:
-        a.notes.append(f"verify on a tampered dossier: exit {code}, expected 40 INVALID")
+    a.expect("a tampered dossier verifies INVALID (exit 40)", code == 40 and "INVALID" in out, "exit 40 INVALID",
+             f"exit {code} {out.strip()[:80]!r}")
     open(dp, "w").write("{not json")
     code, out, err = a.op("cli.verify.garbage", cli, a, "verify", dp)
-    if code != 2:
-        a.notes.append(f"verify on garbage: exit {code}, expected 2")
+    a.expect("`verify` on a file that is not JSON is a usage error (exit 2)", code == 2, "exit 2", f"exit {code}")
 
 
 def p_journal_serve(a: Agent):
     """`journal serve` on loopback: append, forget, dossier, submit over HTTP."""
     port = free_port()
     code, so, se = a.op("cli.log.init", cli, a, "log", "init", a.journal)
-    if code != 0:
-        a.notes.append(f"log init before journal serve: exit {code} {se[:120]}")
+    if not a.expect("`log init` exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
     proc = subprocess.Popen([a.cfg["cli"], "journal", "serve", a.journal, "--listen", f"127.0.0.1:{port}", "--directory", dir_file(a)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -168,31 +161,26 @@ def p_journal_serve(a: Agent):
                 break
             time.sleep(0.1)
         else:
-            a.notes.append(f"journal serve did not answer /health: {proc.stderr.read().decode()[-200:]}")
+            a.expect("`journal serve` answers /health within 5 s", False, "200", f"no answer: {proc.stderr.read().decode()[-200:]}")
             return
         for i in range(5):
             st, body, _ = base.http("POST", url + "/append", json.dumps({"kind": "intent", "payload": {"i": i}}))
-            if st != 200:
-                a.notes.append(f"journal serve /append: {st} {body[:100]}")
+            a.expect("`journal serve` POST /append (intent) is 200", st == 200, "200", f"{st} {body[:100]}")
             st, body, _ = base.http("POST", url + "/append", json.dumps({"kind": "result", "payload": {"i": i}, "outcome": "ok"}))
-            if st != 200:
-                a.notes.append(f"journal serve /append result: {st} {body[:100]}")
+            a.expect("`journal serve` POST /append (result) is 200", st == 200, "200", f"{st} {body[:100]}")
         st, body, _ = base.http("POST", url + "/forget", json.dumps({"index": 1}))
-        if st != 200:
-            a.notes.append(f"journal serve /forget: {st} {body[:100]}")
+        a.expect("`journal serve` POST /forget is 200", st == 200, "200", f"{st} {body[:100]}")
         st, body, _ = base.http("GET", url + "/info")
-        if st != 200:
-            a.notes.append(f"journal serve /info: {st}")
+        a.expect("`journal serve` GET /info is 200", st == 200, "200", st)
         t0 = time.perf_counter()
         st, body, _ = base.http("POST", url + "/submit", json.dumps({"want": 6, "min": MIN_WITNESSES}), timeout=60)
         a.ops.append({"op": "journal.submit", "ms": (time.perf_counter() - t0) * 1000, "ok": st == 200, **({} if st == 200 else {"error": f"HTTP {st}: {body[:120]}"})})
         st, body, _ = base.http("GET", url + "/dossier")
-        if st != 200:
-            a.notes.append(f"journal serve /dossier: {st}")
+        if not a.expect("`journal serve` GET /dossier is 200", st == 200, "200", st):
             return
         rep = verify_py(a, body, ident_of(body), a.directory())
-        if rep["verdict"] != "witnessed":
-            a.notes.append(f"journal serve: dossier after /submit verifies {rep['verdict']}")
+        a.expect("`journal serve`: the dossier after /submit verifies WITNESSED", rep["verdict"] == "witnessed",
+                 "witnessed", rep["verdict"])
     finally:
         proc.terminate()
         try:
@@ -210,29 +198,29 @@ def p_directory_builder(a: Agent):
         json.dump(e, open(os.path.join(reg, f"w{i}.json"), "w"))
     out = os.path.join(a.dir, "built.json")
     code, so, se = a.op("cli.directory.build", cli, a, "directory", "build", "--registry", reg, "--include-project", "--out", out)
-    if code != 0:
-        a.notes.append(f"directory build: exit {code} {se[:120]}")
+    if not a.expect("`directory build` of valid entries exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
     built = json.load(open(out))
-    if len(built["witnesses"]) != len(entries):
-        a.notes.append(f"directory build kept {len(built['witnesses'])} of {len(entries)} entries")
+    a.expect("`directory build --include-project` keeps every entry", len(built["witnesses"]) == len(entries),
+             f"{len(entries)} entries", f"{len(built['witnesses'])} entries")
     e = a.directory()["witnesses"][-1]
     code, so, se = a.op("cli.witness.init.json", cli, a, "witness", "init", os.path.join(a.dir, "w"), "--name", f"swarm{a.idx}.test/w", "--org", "Swarm Agent Org", "--url", "http://127.0.0.1:1", "--json")
-    if code != 0:
-        a.notes.append(f"witness init --json: exit {code} {se[:120]}")
+    if not a.expect("`witness init --json` exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
     try:
         info = json.loads(so)
     except json.JSONDecodeError:
-        a.notes.append(f"witness init --json printed non-JSON: {so[:80]!r}")
+        info = None
+    if not a.expect("`witness init --json` prints JSON", info is not None, "JSON", repr(so[:80])):
         return
     code, so, se = a.op("cli.directory.add", cli, a, "directory", "add", out, "--vkey", info["vkey"], "--org", "Swarm Agent Org", "--url", "http://127.0.0.1:1")
-    if code != 0:
-        a.notes.append(f"directory add: exit {code} {se[:120]}")
+    if not a.expect("`directory add` by vkey exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
     built2 = json.load(open(out))
-    if len(built2["witnesses"]) != len(entries) + 1 or built2["witnesses"][-1]["pubkey"] != info["identity"]:
-        a.notes.append("directory add did not append the witness by its vkey")
+    a.expect("`directory add` appends the witness its vkey names",
+             len(built2["witnesses"]) == len(entries) + 1 and built2["witnesses"][-1]["pubkey"] == info["identity"],
+             f"{len(entries) + 1} entries, last key {info['identity']}",
+             f"{len(built2['witnesses'])} entries, last key {built2['witnesses'][-1]['pubkey']}")
     _ = e
 
 
@@ -250,20 +238,23 @@ def p_c2sp_export(a: Agent):
     open(dp, "w").write(dossier)
     note = os.path.join(a.dir, "note.txt")
     code, so, se = a.op("cli.c2sp.export", cli, a, "c2sp", "export", dp, "--directory", dir_file(a), "--out", note)
-    if code != 0:
-        a.notes.append(f"c2sp export: exit {code} {se[:120]}")
+    if not a.expect("`c2sp export` exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
+    # Every directory witness's key: `c2sp verify` rejects a note none of the
+    # supplied keys verifies, and the cosigners can be any of them (the
+    # first twelve covered a 20-witness directory, not a 40-witness one).
     keys = []
-    for w in a.directory()["witnesses"][:12]:
+    for w in a.directory()["witnesses"]:
         keys += ["--vkey", cosig_vkey(w["name"], w["pubkey"])]
     code, so, se = a.op("cli.c2sp.verify", cli, a, "c2sp", "verify", note, *keys)
-    if n and code != 0:
-        a.notes.append(f"c2sp verify of an exported note with {n} cosignatures: exit {code} {se[-120:]}")
+    if n:
+        a.expect("`c2sp verify` accepts an exported note with its cosignatures", code == 0, "exit 0",
+                 f"exit {code} with {n} cosignatures {se[-120:]}")
     if os.path.exists(GO_VERIFY):
         code, so, se = a.op("go.verify", lambda: (lambda r: (r.returncode, r.stdout, r.stderr))(subprocess.run([GO_VERIFY, dp, "--directory", dir_file(a), "--identity", ident_of(dossier), "--json"], capture_output=True, text=True, timeout=60)))
         code2, so2, se2 = cli(a, "verify", dp, "--identity", ident_of(dossier), "--directory", dir_file(a))
-        if code != code2:
-            a.notes.append(f"Go verdict exit {code} != Rust exit {code2} ({se[-100:]})")
+        a.expect("the Go verifier's exit code equals the Rust CLI's", code == code2, f"exit {code2} (Rust)",
+                 f"exit {code} (Go) {se[-100:]}")
 
 
 # ------------------------------------------------------------ Python surfaces
@@ -278,32 +269,34 @@ def p_discloser(a: Agent):
     leaves = json.loads(log.leaves_json())
     for i, p in zip(idx, payloads):
         d = a.op("disclose", log.disclose, i)
-        if d.get("payload") != p:
-            a.notes.append(f"disclose({i}) payload mismatch")
-        if not a.op("verify_disclosure", wl.verify_disclosure, leaves[i], p, d["salt"]):
-            a.notes.append(f"verify_disclosure false for leaf {i}")
-        if wl.payload_hash(p, bytes.fromhex(d["salt"]), i) != leaves[i]["payload_hash"]:
-            a.notes.append(f"payload_hash != leaf.payload_hash for {i}")
-        if wl.verify_disclosure(leaves[i], p + b"x", d["salt"]):
-            a.notes.append(f"verify_disclosure accepted a wrong payload for {i}")
+        a.expect("disclose() returns the stored payload", d.get("payload") == p, p[:60], f"leaf {i}: {str(d.get('payload'))[:60]}")
+        ok = a.op("verify_disclosure", wl.verify_disclosure, leaves[i], p, d["salt"])
+        a.expect("verify_disclosure accepts the disclosed payload and salt", ok, True, f"{ok} for leaf {i}")
+        ph = wl.payload_hash(p, bytes.fromhex(d["salt"]), i)
+        a.expect("payload_hash(payload, salt, index) equals the leaf's payload_hash", ph == leaves[i]["payload_hash"],
+                 leaves[i]["payload_hash"], f"{ph} for leaf {i}")
+        wrong = wl.verify_disclosure(leaves[i], p + b"x", d["salt"])
+        a.expect("verify_disclosure refuses a payload that is not the committed one", not wrong, False, f"{wrong} for leaf {i}")
     a.op("forget", log.forget, idx[2])
     try:
         d = log.disclose(idx[2])
-        if d.get("payload") is not None or d.get("salt"):
-            a.notes.append("disclose after forget still returns payload or salt")
+        a.expect("disclose() after forget returns neither payload nor salt",
+                 d.get("payload") is None and not d.get("salt"), "no payload, no salt",
+                 f"payload {str(d.get('payload'))[:40]}, salt {d.get('salt')}")
     except ValueError as e:
-        if "forgotten" not in str(e):
-            a.notes.append(f"disclose after forget raised ValueError without saying why: {str(e)[:80]}")
+        a.expect("disclose() after forget says the leaf was forgotten", "forgotten" in str(e), "ValueError naming 'forgotten'",
+                 str(e)[:80])
     except Exception as e:  # noqa: BLE001
-        a.notes.append(f"disclose after forget raised {type(e).__name__}: {str(e)[:80]}")
+        a.expect("disclose() after forget raises ValueError or returns nothing", False, "ValueError",
+                 f"{type(e).__name__}: {str(e)[:80]}")
     sidecar = a.journal + ".payloads"
-    if os.path.exists(sidecar) and payloads[2] in open(sidecar, "rb").read():
-        a.notes.append("forgotten payload still present in the .payloads sidecar")
+    kept = os.path.exists(sidecar) and payloads[2] in open(sidecar, "rb").read()
+    a.expect("a forgotten payload is removed from the .payloads sidecar", not kept, "absent", "still present" if kept else "absent")
     log.close()
     log2 = a.op("resume", wl.open, a.journal, a.seed, store_payloads=True)
     d = a.op("disclose.after_resume", log2.disclose, idx[5])
-    if d.get("payload") != payloads[5]:
-        a.notes.append("payload store not readable after resume")
+    a.expect("the payload store is readable after resume", d.get("payload") == payloads[5], payloads[5][:60],
+             str(d.get("payload"))[:60])
     log2.close()
 
 
@@ -318,16 +311,15 @@ def p_submitter(a: Agent):
     a.op("sync", log.sync)
     r = a.op("submit", log.submit, dir_file(a), 6, MIN_WITNESSES, timeout=20)
     a.verdicts.append(r["verdict"])
-    if r["verdict"] != "witnessed":
-        a.notes.append(f"log.submit verdict {r['verdict']} with {r.get('cosignatures')} cosignatures: {r.get('outcomes')}")
+    a.expect("log.submit of an honest journal reaches WITNESSED", r["verdict"] == "witnessed", "witnessed",
+             f"{r['verdict']} with {r.get('cosignatures')} cosignatures: {r.get('outcomes')}")
     a.op("append_intent", log.append_intent, b"more")
     r2 = a.op("asubmit", lambda: asyncio.run(log.asubmit(dir_file(a), 6, MIN_WITNESSES, timeout=20)))
     a.verdicts.append(r2["verdict"])
-    if r2["verdict"] != "witnessed":
-        a.notes.append(f"asubmit after growth: {r2['verdict']} {r2.get('outcomes')}")
+    a.expect("log.asubmit after growth reaches WITNESSED", r2["verdict"] == "witnessed", "witnessed",
+             f"{r2['verdict']} {r2.get('outcomes')}")
     rep = verify_py(a, r2["dossier"] if isinstance(r2["dossier"], str) else json.dumps(r2["dossier"]), log.identity_pubkey_hex(), a.directory())
-    if rep["verdict"] != "witnessed":
-        a.notes.append(f"dossier from asubmit verifies {rep['verdict']}")
+    a.expect("the dossier asubmit returns verifies WITNESSED", rep["verdict"] == "witnessed", "witnessed", rep["verdict"])
     open(os.path.join(a.dir, "dossier.json"), "w").write(r2["dossier"] if isinstance(r2["dossier"], str) else json.dumps(r2["dossier"]))
     log.close()
 
@@ -336,7 +328,11 @@ def _sealed_child(journal: str, seed_hex: str) -> None:
     """Runs in its own process: WITNESS_LOG_IDENTITY_SEED_ENV is process-wide,
     and a sibling thread's seedless open() must not inherit this seed."""
     import witness_log as wl
-    notes = []
+    checks = []  # [expectation, ok, expected, observed], recorded by the parent with Agent.expect
+
+    def expect(check, ok, expected, observed):
+        checks.append([check, bool(ok), str(expected), str(observed)])
+
     env_name = "WL_SEED"
     os.environ[env_name] = seed_hex
     os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"] = env_name
@@ -347,28 +343,25 @@ def _sealed_child(journal: str, seed_hex: str) -> None:
     ident = log.identity_pubkey_hex()
     log.close()
     header = open(journal).readline()
-    if seed_hex in header:
-        notes.append("sealed journal header contains the seed")
-    if ident not in header:
-        notes.append("sealed journal header lacks the identity pubkey")
+    expect("a sealed journal's header does not contain the seed", seed_hex not in header, "no seed", "seed present" if seed_hex in header else "no seed")
+    expect("a sealed journal's header names the identity", ident in header, ident, header[:120])
     del os.environ["WITNESS_LOG_IDENTITY_SEED_ENV"]
     try:
         wl.open(journal)
-        notes.append("sealed journal resumed without a seed")
-    except Exception:
-        pass
+        expect("a sealed journal does not resume without its seed", False, "refused", "resumed")
+    except Exception as e:  # noqa: BLE001
+        expect("a sealed journal does not resume without its seed", True, "refused", type(e).__name__)
     try:
         wl.open(journal, hashlib.sha256(b"wrong" + bytes.fromhex(seed_hex)).digest())
-        notes.append("sealed journal resumed with the wrong seed")
-    except Exception:
-        pass
+        expect("a sealed journal does not resume with the wrong seed", False, "refused", "resumed")
+    except Exception as e:  # noqa: BLE001
+        expect("a sealed journal does not resume with the wrong seed", True, "refused", type(e).__name__)
     log = wl.open(journal, bytes.fromhex(seed_hex))
-    if log.identity_pubkey_hex() != ident:
-        notes.append("identity changed across a sealed resume")
+    expect("the identity is unchanged across a sealed resume", log.identity_pubkey_hex() == ident, ident, log.identity_pubkey_hex())
     log.append_intent(b"after")
     rep = json.loads(wl.verify_dossier_json(log.to_dossier_json(), 0.66, ident))
     log.close()
-    print(json.dumps({"notes": notes, "verdict": rep["verdict"], "ident": ident}))
+    print(json.dumps({"checks": checks, "verdict": rep["verdict"], "ident": ident}))
 
 
 def p_sealed(a: Agent):
@@ -379,15 +372,15 @@ def p_sealed(a: Agent):
     if r.returncode != 0:
         return
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    a.notes += out["notes"]
+    for check, ok, expected, observed in out["checks"]:
+        a.expect(check, ok, expected, observed)
     a.verdicts.append(out["verdict"])
     env = {**os.environ, "WL_SEED_FILE_UNUSED": "1"}
     seed_file = os.path.join(a.dir, "seed.hex")
     open(seed_file, "w").write(a.seed.hex())
     code, so, se = a.op("cli.log.info.seed_file", lambda: (lambda x: (x.returncode, x.stdout, x.stderr))(
         subprocess.run([a.cfg["cli"], "log", "info", a.journal, "--identity-seed-file", seed_file], capture_output=True, text=True, timeout=60, env=env)))
-    if code != 0:
-        a.notes.append(f"CLI log info --identity-seed-file on a Python-sealed journal: exit {code} {se[-120:]}")
+    a.expect("`log info --identity-seed-file` opens a journal Python sealed", code == 0, "exit 0", f"exit {code} {se[-120:]}")
 
 
 def p_jcs_user(a: Agent):
@@ -419,20 +412,17 @@ def p_jcs_user(a: Agent):
         if wl.canonical_json(v) != _jcs.canonicalize(v):
             bad += 1
             samples.append(v)
-    if bad:
-        a.notes.append(f"canonical_json != profiles._jcs on {bad}/200 values, e.g. {json.dumps(samples[0])[:80]}")
-    a.ops.append({"op": "jcs.compare", "ms": 0, "ok": bad == 0})
+    a.expect("canonical_json agrees with the strict profile encoder (profiles._jcs)", bad == 0, "0 of 200 differ",
+             f"{bad}/200 differ" + (f", e.g. {json.dumps(samples[0])[:80]}" if samples else ""))
     if a.idx % 7 == 0 and shutil.which("node") and os.path.exists(NODE_PKG):
         v = [rnd() for _ in range(20)]
         script = f"import('{NODE_PKG}').then(m=>{{const vs=JSON.parse(process.argv[1]);for(const x of vs)process.stdout.write(Buffer.from(m.canonicalJson(x)).toString('hex')+'\\n')}})"
         r = subprocess.run(["node", "-e", script, json.dumps(v)], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            a.notes.append(f"node canonicalJson failed: {r.stderr[-120:]}")
-        else:
+        if a.expect("Node canonicalJson runs", r.returncode == 0, "exit 0", f"exit {r.returncode}: {r.stderr[-120:]}"):
             got = r.stdout.split()
             mism = [i for i, x in enumerate(v) if i < len(got) and wl.canonical_json(x).hex() != got[i]]
-            if mism:
-                a.notes.append(f"node canonicalJson != python canonical_json on {len(mism)}/20 values, e.g. {json.dumps(v[mism[0]])[:80]}")
+            a.expect("Node canonicalJson agrees with Python canonical_json", not mism, "0 of 20 differ",
+                     f"{len(mism)}/20 differ" + (f", e.g. {json.dumps(v[mism[0]])[:80]}" if mism else ""))
 
 
 def p_handoff_pair(a: Agent):
@@ -453,32 +443,29 @@ def p_handoff_pair(a: Agent):
     lb.sync()
     leaves_a, leaves_b = json.loads(la.leaves_json()), json.loads(lb.leaves_json())
     hb = a.op("verify_handoff_binding", wl.verify_handoff_binding, ia, json.dumps(leaves_a[s]), ib, json.dumps(leaves_b[r]))
-    if hb not in (None, True):
-        a.notes.append(f"verify_handoff_binding on a matching pair: {hb}")
+    # None is how 0.4.0 said "binds" (it returned the reason on failure).
+    a.expect("verify_handoff_binding accepts a matching pair", hb in (None, True), True, hb)
     ab = a.op("verify_authorization_binding", wl.verify_authorization_binding, ia, json.dumps(leaves_a[g1]), ib, json.dumps(leaves_b[g2]))
-    if ab not in (None, True):
-        a.notes.append(f"verify_authorization_binding on a matching pair: {ab}")
+    a.expect("verify_authorization_binding accepts a matching pair", ab in (None, True), True, ab)
     if hb is None:
+        # Describes the target's API (0.4.0), not a defect.
         a.notes.append("API: verify_handoff_binding returns None on success and a string on failure (falsy on success)")
     mix = wl.verify_handoff_binding(ia, json.dumps(leaves_a[s]), ib, json.dumps(leaves_b[g2]))
-    if mix in (None, True):
-        a.notes.append("verify_handoff_binding accepted a handoff/authorization mix")
+    a.expect("verify_handoff_binding refuses a handoff paired with an authorization", mix not in (None, True), "refused", mix)
     da, db = os.path.join(a.dir, "a.json"), os.path.join(a.dir, "b.json")
     open(da, "w").write(la.to_dossier_json())
     open(db, "w").write(lb.to_dossier_json())
     la.close()
     lb.close()
     code, so, se = a.op("cli.bind", cli, a, "bind", da, db, "--json")
-    if code != 0:
-        a.notes.append(f"bind on a matching pair: exit {code} {se[-120:]}")
-    else:
+    if a.expect("`bind` on a matching pair exits 0", code == 0, "exit 0", f"exit {code} {se[-120:]}"):
         try:
-            rep = json.loads(so)
-            txt = json.dumps(rep)
-            if "Some(" in txt or "GrantedByMe" in txt:
-                a.notes.append("bind --json prints Rust Debug text")
+            txt = json.dumps(json.loads(so))
         except json.JSONDecodeError:
-            a.notes.append(f"bind --json is not JSON: {so[:80]!r}")
+            txt = None
+        if a.expect("`bind --json` prints JSON", txt is not None, "JSON", repr(so[:80])):
+            a.expect("`bind --json` prints no Rust Debug text", "Some(" not in txt and "GrantedByMe" not in txt,
+                     "no Some(...) or GrantedByMe", txt[:120])
     # tamper B's handoff state -> MISMATCH
     d = json.load(open(db))
     for leaf in d["leaves"]:
@@ -486,8 +473,7 @@ def p_handoff_pair(a: Agent):
             leaf["handoff_state_hash"] = "00" * 32
     json.dump(d, open(db, "w"))
     code, so, se = a.op("cli.bind.tampered", cli, a, "bind", da, db)
-    if code == 0:
-        a.notes.append("bind exit 0 after tampering the handoff state hash")
+    a.expect("`bind` refuses a pair whose handoff state hash was tampered", code != 0, "non-zero exit", f"exit {code}")
 
 
 def p_commerce(a: Agent):
@@ -499,8 +485,8 @@ def p_commerce(a: Agent):
     ia, ib = la.identity_pubkey_hex(), lb.identity_pubkey_hex()
     mandate = {"id": f"m-{a.idx}", "max_amount": {"value": "120.00", "currency": "USD"}, "merchant": "example-merchant", "expires": 1800000000}
     h = a.op("ap2.mandate_hash", ap2.mandate_hash, mandate)
-    if h != hashlib.sha256(wl.canonical_json(mandate)).hexdigest():
-        a.notes.append("ap2.mandate_hash != sha256(canonical_json(mandate))")
+    want = hashlib.sha256(wl.canonical_json(mandate)).hexdigest()
+    a.expect("ap2.mandate_hash is sha256(canonical_json(mandate))", h == want, want, h)
     ga = a.op("ap2.record_grant", ap2.record_grant, la, mandate, counterparty=ib, scope="granted_by_me")
     gb = a.op("ap2.record_grant.b", ap2.record_grant, lb, mandate, counterparty=ia, scope="granted_to_me")
     settlement = {"amount": "119.50", "currency": "USD", "tx": f"0x{a.idx:064x}"}
@@ -511,25 +497,26 @@ def p_commerce(a: Agent):
     da, db = la.to_dossier_json(), lb.to_dossier_json()
     rep = a.op("ap2.bind_profile_ap2", ap2.bind_profile_ap2, da, db, mandate=mandate)
     ap = rep.get("ap2", {})
-    if not ap.get("mandate_hash_equal") or not ap.get("scope_not_widened"):
-        a.notes.append(f"bind_profile_ap2 on an honest pair: {json.dumps(ap)[:160]}")
+    a.expect("bind_profile_ap2 on an honest pair: mandate hashes equal, scope not widened",
+             ap.get("mandate_hash_equal") and ap.get("scope_not_widened"), "both true", json.dumps(ap)[:160])
     anchors = ap.get("settlement_anchors", {})
     sides = [v for v in anchors.values() if isinstance(v, dict)] if isinstance(anchors, dict) else []
-    if not any(side.get("proof_hash_ok", 0) > 0 and side.get("mandate_match", 0) > 0 for side in sides):
-        a.notes.append(f"bind_profile_ap2 reports no verified settlement anchor tied to the mandate: {json.dumps(anchors)[:160]}")
+    a.expect("bind_profile_ap2 reports a verified settlement anchor tied to the mandate",
+             any(side.get("proof_hash_ok", 0) > 0 and side.get("mandate_match", 0) > 0 for side in sides),
+             "proof_hash_ok and mandate_match on one side", json.dumps(anchors)[:160])
     bad = dict(mandate, max_amount={"value": "999.00", "currency": "USD"})
     rep2 = ap2.bind_profile_ap2(da, db, mandate=bad)
-    if rep2.get("ap2", {}).get("mandate_hash_equal"):
-        a.notes.append("bind_profile_ap2 accepted a different mandate as equal")
+    a.expect("bind_profile_ap2 does not call a different mandate equal", not rep2.get("ap2", {}).get("mandate_hash_equal"),
+             "mandate_hash_equal false", json.dumps(rep2.get("ap2", {}))[:160])
     out = os.path.join(a.dir, "dispute")
     man = a.op("ap2.dispute_export", ap2.dispute_export, la, [ga], out, payloads={ga: ap2.mandate_bytes(mandate)}, bindings=[rep])
     for f in ("dossier.json", "disclosures.json", "bindings.json", "MANIFEST.sha256"):
-        if not os.path.exists(os.path.join(out, f)):
-            a.notes.append(f"dispute export lacks {f}")
+        a.expect("a dispute export holds dossier, disclosures, bindings and MANIFEST", os.path.exists(os.path.join(out, f)),
+                 f, f"{f} missing")
     for line in open(os.path.join(out, "MANIFEST.sha256")):
         digest, _, name = line.strip().partition("  ")
-        if hashlib.sha256(open(os.path.join(out, name), "rb").read()).hexdigest() != digest:
-            a.notes.append(f"dispute MANIFEST digest wrong for {name}")
+        got = hashlib.sha256(open(os.path.join(out, name), "rb").read()).hexdigest()
+        a.expect("every dispute MANIFEST digest matches its file", got == digest, digest, f"{got} for {name}")
     _ = man
     # x402 and VI reuse the same calls
     m2 = x402.mandate({"scheme": "exact", "network": "base", "maxAmountRequired": "1000"}, {"payload": "p"})
@@ -541,11 +528,11 @@ def p_commerce(a: Agent):
     la.sync()
     lb.sync()
     r3 = a.op("x402.bind", x402.bind, la.to_dossier_json(), lb.to_dossier_json(), mandate=m2)
-    if not r3.get("ap2", {}).get("mandate_hash_equal"):
-        a.notes.append("x402.bind: mandate_hash_equal false on an honest pair")
+    a.expect("x402.bind on an honest pair: mandate hashes equal", r3.get("ap2", {}).get("mandate_hash_equal"), True,
+             json.dumps(r3.get("ap2", {}))[:160])
     r4 = a.op("vi.bind", vi.bind, la.to_dossier_json(), lb.to_dossier_json(), credential=cred)
-    if not r4.get("ap2", {}).get("mandate_hash_equal"):
-        a.notes.append("vi.bind: mandate_hash_equal false on an honest pair")
+    a.expect("vi.bind on an honest pair: mandate hashes equal", r4.get("ap2", {}).get("mandate_hash_equal"), True,
+             json.dumps(r4.get("ap2", {}))[:160])
     _ = (gb, rb)
     la.close()
     lb.close()
@@ -563,12 +550,10 @@ def p_recorder(a: Agent):
             a.op("recorder.result.error", rec.result, "search", ii, "boom", outcome="error")
         else:
             a.op("recorder.result", rec.result, "search", ii, {"hits": i})
-    if rec.errors:
-        a.notes.append(f"Recorder errors: {rec.errors[:2]}")
+    a.expect("the Recorder records ten calls without an error", not rec.errors, "no errors", rec.errors[:2])
     leaves = json.loads(log.leaves_json())
     types = [l["leaf_type"] for l in leaves]
-    if types != [1, 2] * 10:
-        a.notes.append(f"Recorder leaf types {types[:8]}...")
+    a.expect("the Recorder writes intent, result pairs", types == [1, 2] * 10, "[1, 2] x 10", types[:12])
     d = log.to_dossier_json()
     verify_py(a, d, log.identity_pubkey_hex(), None)
     log.close()
@@ -589,15 +574,14 @@ def p_evidence_window(a: Agent):
     try:
         w = a.op("evidence_window", f, 2, 6)
         n = len(w["entries"]) if isinstance(w, dict) else len(json.loads(w)["entries"])
-        if n != 4:
-            a.notes.append(f"evidence_window(2,6) has {n} entries")
+        a.expect("evidence_window(2, 6) holds 4 entries", n == 4, 4, n)
     except Exception as e:  # noqa: BLE001
-        a.notes.append(f"evidence_window(2,6) raised {type(e).__name__}: {str(e)[:80]}")
+        a.expect("evidence_window(2, 6) holds 4 entries", False, 4, f"raised {type(e).__name__}: {str(e)[:80]}")
     try:
         f(100, 200)
-        a.notes.append("evidence_window(100,200) on a 12-leaf log did not raise")
-    except Exception:
-        pass
+        a.expect("evidence_window(100, 200) on a 12-leaf log is refused", False, "an exception", "returned a window")
+    except Exception as e:  # noqa: BLE001
+        a.expect("evidence_window(100, 200) on a 12-leaf log is refused", True, "an exception", type(e).__name__)
     log.close()
 
 
@@ -622,32 +606,32 @@ def p_mcp_0_4(a: Agent):
             init = data(await c.call_tool("initialize_witness_chain", {"session_id": sid, "metadata": {"persona": "mcp04"}}))
             r = data(await c.call_tool("append_audit_step", {"session_id": sid, "intent": "plan", "tool_name": "plan", "payload": {"k": 1}, "state_transition": {}}))
             rr = data(await c.call_tool("record_result", {"session_id": sid, "intent_index": r["intent_index"], "tool_name": "plan", "outcome": "error", "value": {"err": "x"}}))
-            if "index" not in json.dumps(rr):
-                a.notes.append(f"record_result returned {json.dumps(rr)[:100]}")
+            a.expect("MCP record_result returns the leaf index", "index" in json.dumps(rr), "an index", json.dumps(rr)[:100])
             other = "ab" * 32
             h = data(await c.call_tool("record_handoff", {"session_id": sid, "direction": "sent", "counterparty_identity_pubkey": other, "state": {"task": 1}}))
-            if "index" not in json.dumps(h):
-                a.notes.append(f"record_handoff returned {json.dumps(h)[:100]}")
+            a.expect("MCP record_handoff returns the leaf index", "index" in json.dumps(h), "an index", json.dumps(h)[:100])
             au = data(await c.call_tool("record_authorization", {"session_id": sid, "kind": "granted_by_me", "counterparty_identity_pubkey": other, "scope": {"limit": 5}}))
-            if "index" not in json.dumps(au):
-                a.notes.append(f"record_authorization(object scope) returned {json.dumps(au)[:100]}")
+            a.expect("MCP record_authorization (object scope) returns the leaf index", "index" in json.dumps(au), "an index",
+                     json.dumps(au)[:100])
             try:
                 bad = await c.call_tool("record_authorization", {"session_id": sid, "kind": "granted_sideways", "counterparty_identity_pubkey": other, "scope": "x"})
-                if not getattr(bad, "is_error", False) and "error" not in json.dumps(data(bad)).lower():
-                    a.notes.append("record_authorization accepted an unknown kind")
-            except Exception:
-                pass
+                refused = getattr(bad, "is_error", False) or "error" in json.dumps(data(bad)).lower()
+            except Exception:  # noqa: BLE001
+                refused = True
+            a.expect("MCP record_authorization refuses an unknown kind", refused, "an error", "accepted")
             st = data(await c.call_tool("audit_this_session", {"session_id": sid}))
-            if st.get("leaf_count") not in (6, 7) or st.get("witnessed") is not False:
-                a.notes.append(f"audit_this_session: {json.dumps(st)[:120]}")
+            a.expect("MCP audit_this_session before submit: 6-7 leaves, not witnessed",
+                     st.get("leaf_count") in (6, 7) and st.get("witnessed") is False, "leaf_count 6 or 7, witnessed false",
+                     json.dumps(st)[:120])
             ex = data(await c.call_tool("export_dossier", {"session_id": sid}))
-            if not (ex.get("path") and os.path.exists(ex["path"]) and ex.get("sha256") == hashlib.sha256(open(ex["path"], "rb").read()).hexdigest()):
-                a.notes.append(f"export_dossier path/sha256 mismatch: {json.dumps(ex)[:120]}")
+            a.expect("MCP export_dossier's sha256 is the file's", bool(ex.get("path") and os.path.exists(ex["path"]) and ex.get("sha256") == hashlib.sha256(open(ex["path"], "rb").read()).hexdigest()),
+                     "path exists, sha256 matches", json.dumps(ex)[:120])
             sub = data(await c.call_tool("submit_to_witnesses", {"session_id": sid, "directory": a.directory(), "max_witnesses": 6, "min_witnesses": MIN_WITNESSES}))
             a.verdicts.append(sub["verdict"])
             st2 = data(await c.call_tool("audit_this_session", {"session_id": sid}))
-            if sub["verdict"] == "witnessed" and st2.get("witnessed") is not True:
-                a.notes.append("audit_this_session.witnessed false after a WITNESSED submit")
+            if sub["verdict"] == "witnessed":
+                a.expect("MCP audit_this_session.witnessed is true after a WITNESSED submit", st2.get("witnessed") is True,
+                         True, st2.get("witnessed"))
             return init["identity_pubkey"]
 
     a.op("mcp.session", lambda: anyio.run(go))
@@ -681,30 +665,28 @@ def p_mcp_proxy_user(a: Agent):
         proc.stdin.write((json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n").encode())
         proc.stdin.flush()
         tools = [t["name"] for t in a.op("proxy.tools_list", call, "tools/list")["result"]["tools"]]
-        if tools != ["echo", "audit__status", "audit__export"]:
-            a.notes.append(f"proxy tools/list: {tools}")
+        a.expect("the proxy lists the server's tools plus audit__status and audit__export",
+                 tools == ["echo", "audit__status", "audit__export"], ["echo", "audit__status", "audit__export"], tools)
         for i in range(4):
             r = a.op("proxy.tools_call", call, "tools/call", {"name": "echo", "arguments": {"i": i}})
-            if json.loads(r["result"]["content"][0]["text"]) != {"i": i}:
-                a.notes.append("proxy altered an echo result")
+            got = json.loads(r["result"]["content"][0]["text"])
+            a.expect("the proxy passes a tool result through unchanged", got == {"i": i}, {"i": i}, got)
         e = a.op("proxy.tools_call.fail", call, "tools/call", {"name": "echo", "arguments": {"fail": True}})
-        if not e["result"].get("isError"):
-            a.notes.append("proxy dropped isError")
+        a.expect("the proxy keeps isError on a failed call", e["result"].get("isError"), True, e["result"].get("isError"))
         c = a.op("proxy.tools_call.crash", call, "tools/call", {"name": "echo", "arguments": {"crash": True}}, 30)
-        if "error" not in c and not c.get("result", {}).get("isError"):
-            a.notes.append("proxy answered a crashed call as success")
+        a.expect("the proxy answers a call the server crashed on as an error", "error" in c or c.get("result", {}).get("isError"),
+                 "an error", json.dumps(c)[:100])
         r = a.op("proxy.tools_call.after_crash", call, "tools/call", {"name": "echo", "arguments": {"z": 1}}, 30)
-        if "result" not in r:
-            a.notes.append(f"proxy did not recover after a crash: {json.dumps(r)[:100]}")
+        a.expect("the proxy recovers after the server crashes", "result" in r, "a result", json.dumps(r)[:100])
         st = a.op("proxy.audit_status", call, "tools/call", {"name": "audit__status"})["result"]["structuredContent"]
-        if st.get("restarts", 0) < 1 or st.get("calls", 0) < 6:
-            a.notes.append(f"audit__status after crash: {json.dumps(st)[:120]}")
+        a.expect("audit__status after a crash counts the restart and every call",
+                 st.get("restarts", 0) >= 1 and st.get("calls", 0) >= 6, "restarts >= 1, calls >= 6", json.dumps(st)[:120])
         ex = a.op("proxy.audit_export", call, "tools/call", {"name": "audit__export"}, 60)["result"]["structuredContent"]
-        if ex.get("sha256") != hashlib.sha256(open(ex["path"], "rb").read()).hexdigest():
-            a.notes.append("audit__export sha256 mismatch")
+        got = hashlib.sha256(open(ex["path"], "rb").read()).hexdigest()
+        a.expect("audit__export's sha256 is the file's", ex.get("sha256") == got, got, ex.get("sha256"))
         a.verdicts.append(ex.get("verdict", "?"))
-        if ex.get("verdict") != "witnessed":
-            a.notes.append(f"proxy with --submit-every 3 exported {ex.get('verdict')} after {st.get('calls')} calls")
+        a.expect("the proxy with --submit-every 3 exports a WITNESSED dossier", ex.get("verdict") == "witnessed", "witnessed",
+                 f"{ex.get('verdict')} after {st.get('calls')} calls")
     finally:
         try:
             proc.stdin.close()
@@ -726,22 +708,21 @@ def p_hook_user(a: Agent):
     try:
         for i in range(6):
             ev = {"hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Bash", "tool_input": {"command": f"ls {i}"}}
-            if a.op("hook.pre", hook.main, ["--socket", sock], stdin=io.StringIO(json.dumps(ev))) != 0:
-                a.notes.append("hook PreToolUse exit != 0")
+            rc = a.op("hook.pre", hook.main, ["--socket", sock], stdin=io.StringIO(json.dumps(ev)))
+            a.expect("the hook exits 0 on PreToolUse", rc == 0, 0, rc)
             ev2 = {**ev, "hook_event_name": "PostToolUse", "tool_response": {"stdout": "x"}}
-            if a.op("hook.post", hook.main, ["--socket", sock], stdin=io.StringIO(json.dumps(ev2))) != 0:
-                a.notes.append("hook PostToolUse exit != 0")
+            rc = a.op("hook.post", hook.main, ["--socket", sock], stdin=io.StringIO(json.dumps(ev2)))
+            a.expect("the hook exits 0 on PostToolUse", rc == 0, 0, rc)
         a.op("hook.generic", hook.main, ["--socket", sock], stdin=io.StringIO(json.dumps({"tool": "t", "args": {"i": 1}, "result": "r"})))
         st = a.op("hook.status", hook.request, sock, {"op": "status"})
-        if not st.get("ok") or st.get("leaf_count") != 13:
-            a.notes.append(f"hook status: {json.dumps(st)[:120]}")
+        a.expect("hookd status after 13 events: ok, 13 leaves", st.get("ok") and st.get("leaf_count") == 13,
+                 "ok, leaf_count 13", json.dumps(st)[:120])
         ex = a.op("hook.export", hook.request, sock, {"op": "export"})
-        if not ex.get("ok") or not os.path.exists(ex.get("path", "")):
-            a.notes.append(f"hook export: {json.dumps(ex)[:120]}")
-        else:
+        if a.expect("hookd export writes the dossier", ex.get("ok") and os.path.exists(ex.get("path", "")), "ok, file exists",
+                    json.dumps(ex)[:120]):
             rep = verify_py(a, open(ex["path"]).read(), st["identity"], None)
-            if rep["verdict"] != "unanchored":
-                a.notes.append(f"hook dossier verifies {rep['verdict']}")
+            a.expect("the hook dossier verifies UNANCHORED without a directory", rep["verdict"] == "unanchored",
+                     "unanchored", rep["verdict"])
         sub = a.op("hook.submit", hook.request, sock, {"op": "submit"}, 60)
         if sub.get("ok"):
             a.verdicts.append(sub.get("verdict", "?"))
@@ -749,10 +730,10 @@ def p_hook_user(a: Agent):
         d.shutdown()
         t.join(5)
     none = sock + ".none"
-    if hook.main(["--socket", none], stdin=io.StringIO('{"tool": "x"}')) != 0:
-        a.notes.append("hook without a daemon was fatal without --strict")
-    if hook.main(["--socket", none, "--strict"], stdin=io.StringIO('{"tool": "x"}')) == 0:
-        a.notes.append("hook --strict without a daemon exited 0")
+    rc = hook.main(["--socket", none], stdin=io.StringIO('{"tool": "x"}'))
+    a.expect("the hook without a daemon is not fatal without --strict", rc == 0, 0, rc)
+    rc = hook.main(["--socket", none, "--strict"], stdin=io.StringIO('{"tool": "x"}'))
+    a.expect("the hook --strict without a daemon exits non-zero", rc != 0, "non-zero", rc)
 
 
 # ------------------------------------------------------------ Node and Go
@@ -785,21 +766,22 @@ log.close();
     if r.returncode != 0:
         return
     info = json.loads(r.stdout.strip().splitlines()[-1])
-    if info["verdictTs"] != info["verdictNative"]:
-        a.notes.append(f"node: TS verdict {info['verdictTs']} != native {info['verdictNative']}")
-    if not info["disclosedBefore"] or not info["disclosedAfter"]:
-        a.notes.append(f"node disclose before/after forget: {info['disclosedBefore']}/{info['disclosedAfter']}")
+    a.expect("Node: the TypeScript and native verifiers agree", info["verdictTs"] == info["verdictNative"],
+             info["verdictNative"], info["verdictTs"])
+    a.expect("Node: disclose works before forget and returns nothing after",
+             info["disclosedBefore"] and info["disclosedAfter"], "True/True",
+             f"{info['disclosedBefore']}/{info['disclosedAfter']}")
     code, so, se = a.op("cli.verify.node_dossier", cli, a, "verify", a.journal + ".dossier.json", "--identity", info["ident"])
-    if code != 20:
-        a.notes.append(f"Rust CLI on a Node-written dossier: exit {code} (expected 20 UNANCHORED) {se[-100:]}")
+    a.expect("the Rust CLI verifies a Node-written dossier UNANCHORED (exit 20)", code == 20, "exit 20", f"exit {code} {se[-100:]}")
     if a.idx % 5 == 0:
         import witness_log as wl
         try:
             log = wl.open(a.journal, a.seed)
             log.append_intent(b"from python")
             log.close()
+            a.expect("Python resumes a Node-written journal", True, "resumed", "resumed")
         except Exception as e:  # noqa: BLE001
-            a.notes.append(f"Python could not resume a Node-written journal: {type(e).__name__}: {str(e)[:80]}")
+            a.expect("Python resumes a Node-written journal", False, "resumed", f"{type(e).__name__}: {str(e)[:80]}")
 
 
 def p_go_verifier(a: Agent):
@@ -825,20 +807,18 @@ def p_go_verifier(a: Agent):
         return r1.returncode, r2.returncode, r1.stderr[-100:]
 
     g, r, err = a.op("go.verify.witnessed", both, dp, "--identity", ident, "--directory", dir_file(a))
-    if g != r:
-        a.notes.append(f"Go {g} != Rust {r} on a witnessed dossier {err}")
+    a.expect("Go and Rust agree on a witnessed dossier", g == r, f"exit {r} (Rust)", f"exit {g} (Go) {err}")
     d = json.loads(dossier)
     d["leaves"][3]["payload_hash"] = "00" * 32
     open(dp, "w").write(json.dumps(d))
     g, r, err = a.op("go.verify.tampered", both, dp, "--identity", ident, "--directory", dir_file(a))
-    if g != r or g != 40:
-        a.notes.append(f"Go {g} != Rust {r} (want 40) on a tampered dossier {err}")
+    a.expect("Go and Rust both verify a tampered dossier INVALID (exit 40)", g == r == 40, "exit 40 from both",
+             f"Go {g}, Rust {r} {err}")
     d = json.loads(dossier)
     d["receipts"] = d.get("receipts", [])[:1]
     open(dp, "w").write(json.dumps(d))
     g, r, err = a.op("go.verify.one_receipt", both, dp, "--identity", ident, "--directory", dir_file(a))
-    if g != r:
-        a.notes.append(f"Go {g} != Rust {r} with one receipt {err}")
+    a.expect("Go and Rust agree with one receipt", g == r, f"exit {r} (Rust)", f"exit {g} (Go) {err}")
 
 
 # ------------------------------------------------------------ witnesser
@@ -868,14 +848,11 @@ def p_witnesser(a: Agent):
     ok = a.op("witnesser.flush", w.flush, 60)
     st = w.status()
     d = w.dossier()
-    if d:
+    if a.expect("the Witnesser produces a dossier after flush()", bool(d), "a dossier", f"none: flush={ok} status={st}"):
         rep = verify_py(a, d, log.identity_pubkey_hex(), a.directory())
-        if rep["verdict"] != "witnessed":
-            a.notes.append(f"Witnesser dossier verifies {rep['verdict']} ({st})")
-    else:
-        a.notes.append(f"Witnesser produced no dossier: flush={ok} status={st}")
-    if not os.path.exists(a.journal + ".witnesses.json"):
-        a.notes.append("Witnesser wrote no state file")
+        a.expect("the Witnesser's dossier verifies WITNESSED", rep["verdict"] == "witnessed", "witnessed", f"{rep['verdict']} ({st})")
+    a.expect("the Witnesser writes its state file", os.path.exists(a.journal + ".witnesses.json"), "<journal>.witnesses.json",
+             "missing")
     log.close()
 
 
@@ -952,8 +929,10 @@ def iter_results(out: str):
 
 
 def report(out: str, cfg: dict, elapsed: float):
+    """Write REPORT.md; returns (crashed agents, failed operations, failed expectations)."""
     n = crashed = 0
-    by_persona = collections.defaultdict(lambda: {"n": 0, "crashed": 0, "notes": 0})
+    exp = base.Expectations()
+    by_persona = collections.defaultdict(lambda: {"n": 0, "crashed": 0, "notes": 0, "checked": 0, "failed": 0})
     ops = collections.defaultdict(list)
     op_fail, op_total, sigs, statuses, verdicts = collections.Counter(), collections.Counter(), collections.Counter(), collections.Counter(), collections.Counter()
     examples, example_agents = {}, {}
@@ -962,10 +941,13 @@ def report(out: str, cfg: dict, elapsed: float):
         n += 1
         secs.append(r["secs"])
         crashed += r["status"] != "ok"
+        exp.add(r)
         b = by_persona[r["persona"]]
         b["n"] += 1
         b["crashed"] += r["status"] != "ok"
         b["notes"] += len(r["notes"])
+        b["checked"] += sum((r.get("checks") or {}).values())
+        b["failed"] += len(r.get("failed_expectations") or [])
         for o in r["ops"]:
             op_total[o["op"]] += 1
             if o["op"] == "witness.add-checkpoint":
@@ -985,7 +967,7 @@ def report(out: str, cfg: dict, elapsed: float):
             examples.setdefault(sig, r["error"])
             example_agents.setdefault(sig, f"{r['persona']}#{r['idx']}")
         for note in r["notes"]:
-            sig = f"{r['persona']} note: {base.signature(note)}"
+            sig = f"{r['persona']} note (informational): {base.signature(note)}"
             sigs[sig] += 1
             examples.setdefault(sig, note)
             example_agents.setdefault(sig, f"{r['persona']}#{r['idx']}")
@@ -993,20 +975,24 @@ def report(out: str, cfg: dict, elapsed: float):
             verdicts[v] += 1
     total_ops = sum(op_total.values())
     lines = [f"# Outside swarm: {n:,} agents, {len(PERSONAS)} personas, {cfg['witness_count']} witnesses (0.4.0)", "",
-             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}, {cfg['host']}",
+             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}, {cfg['host']}"
+             + (f"; **fault injected: {cfg['inject_fault']}**" if cfg.get("inject_fault") else ""),
              f"- {n:,} agents in {elapsed:.0f} s ({n / max(elapsed, 1):.1f} agents/s), {cfg['processes']} x {cfg['threads']} in flight, {total_ops:,} operations, {sum(verdicts.values()):,} verdicts",
              f"- agents finished cleanly: {n - crashed:,}/{n:,}; operations failed: {sum(op_fail.values()):,}/{total_ops:,}",
+             exp.summary(),
              f"- witness add-checkpoint statuses: {dict(sorted(statuses.items(), key=lambda kv: -kv[1]))}",
              f"- verdicts: {dict(verdicts.most_common())}",
              f"- per-agent wall time: p50 {base.pct(secs, 50):.2f} s, p95 {base.pct(secs, 95):.2f} s, max {max(secs) if secs else 0:.1f} s", ""]
-    lines += ["## Findings (clustered by signature, most frequent first)", ""]
+    lines += exp.lines(60)
+    lines += ["", "## Failed operations, crashes and notes (clustered by signature, most frequent first)", ""]
     if not sigs:
         lines.append("None.")
     for sig, c in sigs.most_common(60):
         lines.append(f"- **{c:,}x** `{sig}`  \n  e.g. ({example_agents[sig]}) `{examples[sig][:240]}`")
-    lines += ["", "## Per persona", "", "| persona | agents | crashed | notes |", "|---|---|---|---|"]
+    lines += ["", "## Per persona", "", "| persona | agents | crashed | expectations checked | failed | notes |",
+              "|---|---|---|---|---|---|"]
     for p, b in sorted(by_persona.items()):
-        lines.append(f"| {p} | {b['n']:,} | {b['crashed']} | {b['notes']} |")
+        lines.append(f"| {p} | {b['n']:,} | {b['crashed']} | {b['checked']:,} | {b['failed']:,} | {b['notes']} |")
     lines += ["", "## Latency per operation (ms; successful calls)", "", "| op | n | p50 | p95 | p99 | max | failed |", "|---|---|---|---|---|---|---|"]
     for op, xs in sorted(ops.items(), key=lambda kv: -len(kv[1])):
         lines.append(f"| {op} | {len(xs):,} | {base.pct(xs, 50):.2f} | {base.pct(xs, 95):.2f} | {base.pct(xs, 99):.2f} | {max(xs):.1f} | {op_fail[op]} |")
@@ -1014,9 +1000,9 @@ def report(out: str, cfg: dict, elapsed: float):
         if op not in ops:
             lines.append(f"| {op} | 0 | - | - | - | - | {c} |")
     open(os.path.join(out, "REPORT.md"), "w").write("\n".join(lines) + "\n")
-    print("\n".join(lines[:14]))
+    print("\n".join(lines[:lines.index("## Expectations checked")]))
     print(f"\nreport: {os.path.join(out, 'REPORT.md')}")
-    return crashed, sum(op_fail.values())
+    return crashed, sum(op_fail.values()), exp.total_failed()
 
 
 def main() -> int:
@@ -1032,6 +1018,7 @@ def main() -> int:
     ap.add_argument("--agent-witness-base-port", type=int, default=21000)
     ap.add_argument("--only", help="comma-separated personas")
     ap.add_argument("--report-only", action="store_true", help="rebuild REPORT.md from the JSONL files in --out")
+    ap.add_argument("--inject-fault", choices=base.FAULTS, help="self-test of the gate (see outside.py); the run must exit non-zero")
     args = ap.parse_args()
     import witness_log as wl
     out = args.out or tempfile.mkdtemp(prefix="outside04-")
@@ -1042,13 +1029,13 @@ def main() -> int:
            "directory": directory, "cli": args.cli, "cli_version": ver, "py_version": getattr(wl, "__version__", "?"), "run_id": int(time.time()),
            "witness_count": len(directory["witnesses"]), "processes": args.processes, "threads": args.threads,
            "operator_serve_seconds": args.operator_serve_seconds, "agent_witness_base_port": args.agent_witness_base_port,
-           "host": f"{os.cpu_count()} cpu, {os.uname().sysname} {os.uname().machine}"}
+           "host": f"{os.cpu_count()} cpu, {os.uname().sysname} {os.uname().machine}", "inject_fault": args.inject_fault}
     for d in (cfg["work"], cfg["shared"], cfg["agent_dir"]):
         os.makedirs(d, exist_ok=True)
     if args.report_only:
         meta = json.load(open(os.path.join(out, "run.json")))
-        report(out, meta["cfg"], meta["elapsed"])
-        return 0
+        crashed, failed_ops, failed_expectations = report(out, meta["cfg"], meta["elapsed"])
+        return min(99, crashed + failed_expectations + (1 if failed_ops else 0))
     personas = assign_personas(args.agents)
     if args.only:
         keep = set(args.only.split(","))
@@ -1081,9 +1068,9 @@ def main() -> int:
                 break
     elapsed = time.time() - t0
     json.dump({"cfg": {k: v for k, v in cfg.items() if k != "directory"}, "elapsed": elapsed, "agents": agents}, open(os.path.join(out, "run.json"), "w"))
-    crashed, failed_ops = report(out, cfg, elapsed)
-    print(f"agents crashed: {crashed}; operations failed: {failed_ops}")
-    return min(99, crashed + (1 if failed_ops else 0))
+    crashed, failed_ops, failed_expectations = report(out, cfg, elapsed)
+    print(f"agents crashed: {crashed}; operations failed: {failed_ops}; expectations failed: {failed_expectations}")
+    return min(99, crashed + failed_expectations + (1 if failed_ops else 0))
 
 
 if __name__ == "__main__":

@@ -199,6 +199,7 @@ def s04_hostile_http(obs):
     forged = body.replace(sig_line, f"{parts[0]} {parts[1]} {base64.b64encode(bytes(raw_sig)).decode()}")
     cases["forged signature on canonical origin"] = (("POST /add-checkpoint HTTP/1.1\r\nContent-Length: %d\r\n\r\n" % len(forged.encode())).encode() + forged.encode(), 403)
     bad = 0
+    logs_before = json.loads(http("GET", w.url + "/")[1])["logs"]
     for name, (req, want) in cases.items():
         got = status_of(raw(P, req))
         if want is None:
@@ -212,7 +213,10 @@ def s04_hostile_http(obs):
     obs.append(f"{len(cases) - bad}/{len(cases)} malformed/hostile requests answered correctly")
     # forged requests must not have enrolled anything
     info = json.loads(http("GET", w.url + "/")[1])
-    obs.append(f"logs enrolled after hostile batch: {info['logs']} (unchanged by junk)")
+    obs.append(f"logs enrolled before/after the hostile batch: {logs_before}/{info['logs']}")
+    if info["logs"] != logs_before:
+        bad += 1
+        obs.append("ISSUE: the hostile batch enrolled a log")
     # Smear attempt: relay an honest log's checkpoint with a junk proof.
     _, hj = new_journal("smear", 5)
     http("POST", w.url + "/add-checkpoint", hj.add_checkpoint_body(0))
@@ -379,6 +383,7 @@ def s06_stale_and_replayed_checkpoints_are_not_accusations(obs):
     # stale size 5 with old=5 (witness holds 10) → 409 telling it 10
     codes = [http("POST", w.url + "/add-checkpoint", "old 5\n" + old_body.split("\n", 1)[1]) for w in WS]
     obs.append(f"stale with old=5: {sorted(set(c[0] for c in codes))}, bodies {sorted(set(c[1].strip() for c in codes))}")
+    assert {(c[0], c[1].strip()) for c in codes} == {(409, "10")}, codes
     after = {w.name: ev_count(w) for w in WS}
     assert before == after, "a stale checkpoint was recorded as fork evidence"
     obs.append("no stale/replayed checkpoint was recorded as fork evidence")
