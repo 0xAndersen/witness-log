@@ -165,7 +165,7 @@ type verifyArgs struct {
 // --no-strict for one release (0.5.x).
 const noStrictRemoved = "--no-strict was removed in 0.6.0 (RFC-0002 kept it for one release). " +
 	"A WITNESSED verdict from fewer than a strict majority of the directory exits 11; " +
-	"--allow-sub-majority accepts it as exit 0."
+	"--allow-sub-majority accepts it as exit 0"
 
 // rustFloat is the grammar of Rust's f64::from_str for finite decimal
 // values (the only ones --threshold accepts): no hex floats, underscores
