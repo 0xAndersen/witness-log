@@ -74,8 +74,18 @@ witness-log-hookd --journal agent.jsonl --socket /run/user/1000/wl.sock \
 ```
 
 - Socket: `--socket`, default `$XDG_RUNTIME_DIR/witness-log-hookd.sock`
-  or `<tmpdir>/witness-log-hookd-<uid>.sock`; created `0600`. A stale
-  socket file is replaced; a live one makes the second daemon refuse.
+  or, without `XDG_RUNTIME_DIR`, `<tmpdir>/witness-log-<uid>/hookd.sock`;
+  created `0600`. A stale socket file is replaced; a live one makes the
+  second daemon refuse. The socket carries every tool call's input and
+  output in plaintext, so the daemon creates the `witness-log-<uid>`
+  directory `0700` and refuses to start if it exists owned by another
+  user, as a symlink or file, or with group or other permissions (through
+  0.6.0 the fallback was a socket name directly in the shared temp
+  directory, which another local user could bind first). The hook sends
+  nothing to a socket file another user owns, nor, on Linux, to a daemon
+  running as another user (`SO_PEERCRED`); it reports "not recorded" and
+  exits 0, or 2 with `--strict`. An explicit `--socket` should be in a
+  directory only you can write to.
 - Journal: `witness_log.open` rules. `WITNESS_LOG_IDENTITY_SEED_ENV` in
   the daemon's environment seals it (the hook passes nothing about keys).
 - Protocol, one JSON object per line: `{"op": "append", "leaf":

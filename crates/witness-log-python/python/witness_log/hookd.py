@@ -14,6 +14,14 @@ key each time. The daemon resumes once and serves appends over the
 socket; the socket is created 0600 and the journal is sealed when
 ``WITNESS_LOG_IDENTITY_SEED_ENV`` is set (see ``witness_log.open``).
 
+The socket carries every tool call's input and output in plaintext, so
+it lives where only this user can reach it: ``$XDG_RUNTIME_DIR``, or
+else a ``witness-log-<uid>`` directory under the system temp directory
+that the daemon creates 0700 and refuses to use if it exists owned by
+someone else, is not a directory, or grants group or other access.
+``witness-log-hook`` checks the socket's owner, and on Linux the
+daemon's uid (``SO_PEERCRED``), before it sends anything.
+
 Protocol (one JSON object per line, one reply per request)::
 
     {"op": "append", "leaf": "intent"|"result"|"memory", "payload": <JSON>}
@@ -37,7 +45,9 @@ import hashlib
 import json
 import os
 import socket
+import stat
 import sys
+import tempfile
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -47,17 +57,47 @@ from . import open as open_journal
 MAX_REQUEST_BYTES = 4_000_000
 
 
+def fallback_socket_dir() -> str:
+    """``<tmpdir>/witness-log-<uid>``: the per-user directory the socket
+    lives in when there is no ``$XDG_RUNTIME_DIR``."""
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    return os.path.join(tempfile.gettempdir(), f"witness-log-{uid}")
+
+
 def default_socket_path() -> str:
     """``$XDG_RUNTIME_DIR/witness-log-hookd.sock`` when that directory
-    exists (per-user, cleaned at logout), else
-    ``<tmpdir>/witness-log-hookd-<uid>.sock``."""
+    exists (per-user, 0700, cleaned at logout), else
+    ``<tmpdir>/witness-log-<uid>/hookd.sock`` (see
+    :func:`private_dir`). Through 0.6.0 the fallback was
+    ``<tmpdir>/witness-log-hookd-<uid>.sock``, a name in a shared
+    directory that another local user could bind first and so receive
+    every tool call. No side effects: the daemon creates the directory."""
     run = os.environ.get("XDG_RUNTIME_DIR")
     if run and os.path.isdir(run):
         return os.path.join(run, "witness-log-hookd.sock")
-    import tempfile
+    return os.path.join(fallback_socket_dir(), "hookd.sock")
 
-    uid = os.getuid() if hasattr(os, "getuid") else 0
-    return os.path.join(tempfile.gettempdir(), f"witness-log-hookd-{uid}.sock")
+
+def private_dir(path: str) -> str:
+    """Create ``path`` mode 0700, or accept it if it already is a
+    directory (not a symlink) owned by this user with no group or other
+    permissions. Raises ``OSError`` otherwise: in a shared temp directory
+    someone else may have created it to receive the hook's traffic."""
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode):
+        raise OSError(f"{path} exists and is not a directory; refusing to put the hook socket there")
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        raise OSError(
+            f"{path} is owned by uid {st.st_uid}, not you (uid {os.getuid()}); another user may have "
+            "created it to receive your tool calls. Refusing it: remove it, or pass --socket"
+        )
+    if st.st_mode & 0o077:
+        raise OSError(f"{path} has mode {oct(st.st_mode & 0o777)}; it must be 0700. Refusing it: chmod 700 it, or remove it")
+    return path
 
 
 class Hookd:
@@ -171,6 +211,9 @@ class Hookd:
     # -- socket -------------------------------------------------------------------
 
     def bind(self) -> None:
+        parent = os.path.dirname(os.path.abspath(self.socket_path))
+        if parent == os.path.abspath(fallback_socket_dir()):
+            private_dir(parent)
         if os.path.exists(self.socket_path):
             # A live daemon answers; a stale socket file does not.
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -189,8 +232,6 @@ class Hookd:
         # socket into place: no moment where it is reachable with a wider
         # mode, and no umask change (umask is process-wide; the in-process
         # daemon of a 100,000-agent run made sibling threads' CLI output 0600).
-        import tempfile
-
         private = tempfile.mkdtemp(prefix=".hookd-", dir=os.path.dirname(os.path.abspath(self.socket_path)) or ".")
         staged = os.path.join(private, "s")
         try:
