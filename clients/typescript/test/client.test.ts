@@ -68,7 +68,15 @@ describe("@witness-log/client", { skip: existsSync(BIN) ? false : `no CLI at ${B
       procs.push(p);
       await waitHealthy(url);
     }
-    wl = await WitnessLogMCP.start({ sessionId: "agent-1", serverPath: SERVER, home: join(tmp, "home"), metadata: { model: "test" } });
+    // The test's witnesses are on 127.0.0.1, which a directory passed in a
+    // tool call may only name when the operator allows it.
+    wl = await WitnessLogMCP.start({
+      sessionId: "agent-1",
+      serverPath: SERVER,
+      home: join(tmp, "home"),
+      metadata: { model: "test" },
+      env: { WITNESS_LOG_ALLOW_PRIVATE_WITNESSES: "1" },
+    });
   });
 
   after(async () => {

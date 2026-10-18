@@ -119,7 +119,9 @@ async def test_unpinned_verdicts_say_where_the_directory_came_from(tmp_path, dir
     attacker, _ = directories["attacker"]
     operator, _ = directories["operator"]
     home = tmp_path / "home"
-    async with Client(_params(home)) as c:
+    # Both directories are on 127.0.0.1, which a caller's directory may only
+    # name with the operator's switch (security sweep F9).
+    async with Client(_params(home, WITNESS_LOG_ALLOW_PRIVATE_WITNESSES="1")) as c:
         await _start(c)
         v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "s"}))
         assert v["directory_source"] is None and v["verdict"] != "witnessed"

@@ -74,7 +74,7 @@ from typing import Any, Callable, Dict, Literal, Optional, Union
 
 import witness_log as wl
 
-from .witnessing import load_state, submit_round
+from .witnessing import ALLOW_PRIVATE_ENV, load_state, submit_round, witness_address_guard
 
 try:  # official SDK 2.x
     from mcp.server.mcpserver import MCPServer as _Server
@@ -842,6 +842,13 @@ async def submit_to_witnesses(
     says which was used: "pinned", "default" ($WITNESS_LOG_HOME/witnesses.json)
     or "caller".
 
+    A witness is only ever sent the checkpoint, and redirects are not
+    followed. For a directory passed here ("caller"), witness hosts that
+    resolve to a link-local or cloud metadata address are refused, and so
+    are loopback and private addresses unless the operator set
+    WITNESS_LOG_ALLOW_PRIVATE_WITNESSES=1 (a local testnet); a refused
+    witness is an outcome with the reason, and nothing is sent to it.
+
     `split_view_unsafe` is true when the verdict is witnessed but the
     cosigning witnesses are not a strict majority of `directory`: the rest
     could have cosigned a conflicting history (the CLI exits 11 for it).
@@ -865,10 +872,23 @@ async def submit_to_witnesses(
         raise ValueError("max_witnesses and min_witnesses must be at least 1")
     log, lock = await _get(session_id)
     state_path = str(_journal_path(session_id)) + ".witnesses.json"
+    # A directory from the caller names URLs nobody vetted: the server must
+    # not become a way to reach the host's metadata service or its private
+    # network. The operator's directories (pinned, default) are trusted.
+    guard = None
+    if source == "caller":
+        allow_private = os.environ.get(ALLOW_PRIVATE_ENV, "").strip().lower() in ("1", "true", "yes")
+        guard = witness_address_guard(allow_private=allow_private)
     async with lock:
         r = await asyncio.to_thread(
             functools.partial(
-                submit_round, log, directory, state_path, max_witnesses=max_witnesses, timeout=WITNESS_TIMEOUT_S
+                submit_round,
+                log,
+                directory,
+                state_path,
+                max_witnesses=max_witnesses,
+                timeout=WITNESS_TIMEOUT_S,
+                url_guard=guard,
             )
         )
         ident = log.identity_pubkey_hex()

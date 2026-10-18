@@ -359,7 +359,11 @@ def p_mcp_user(a: Agent):
     from mcp.client.client import Client
     from mcp.client.stdio import StdioServerParameters
     server = os.path.join(REPO, "integrations", "mcp", "witness_mcp_server.py")
-    params = StdioServerParameters(command=sys.executable, args=[server], env={**os.environ, "WITNESS_LOG_HOME": os.path.join(a.dir, "mcp-home")})
+    # The swarm's witnesses are on 127.0.0.1: the operator's switch lets a
+    # directory passed in a tool call name them.
+    params = StdioServerParameters(command=sys.executable, args=[server],
+                                   env={**os.environ, "WITNESS_LOG_HOME": os.path.join(a.dir, "mcp-home"),
+                                        "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES": "1"})
 
     def data(r):
         sc = getattr(r, "structured_content", None)

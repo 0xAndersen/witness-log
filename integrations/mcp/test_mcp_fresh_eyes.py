@@ -59,7 +59,11 @@ def _witness(i: int):
 
 def _params(home):
     return StdioServerParameters(
-        command=sys.executable, args=["-m", "witness_log.mcp_server"], env={"WITNESS_LOG_HOME": str(home)}
+        command=sys.executable,
+        args=["-m", "witness_log.mcp_server"],
+        # The test's witnesses are on 127.0.0.1, which a directory passed in a
+        # tool call may only name when the operator allows it.
+        env={"WITNESS_LOG_HOME": str(home), "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES": "1"},
     )
 
 

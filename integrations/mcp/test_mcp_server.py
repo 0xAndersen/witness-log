@@ -79,7 +79,11 @@ def _start_witness(i: int):
 async def test_every_tool_over_stdio(tmp_path):
     home = tmp_path / "home"
     params = StdioServerParameters(
-        command=sys.executable, args=[str(SERVER)], env={"WITNESS_LOG_HOME": str(home)}
+        command=sys.executable,
+        args=[str(SERVER)],
+        # The test's witnesses are on 127.0.0.1, which a directory passed in a
+        # tool call may only name when the operator allows it.
+        env={"WITNESS_LOG_HOME": str(home), "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES": "1"},
     )
     witnesses = [_start_witness(i) for i in range(3)]
     directory = {"witnesses": [e for _, e in witnesses]}
