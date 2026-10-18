@@ -240,8 +240,13 @@ did not meet this bar; all are closed in 0.3.1. Since 0.5.0 the verdicts
 keep the same line: a file that fails a check is INVALID (exit 40), and
 DIVERGED (exit 30) is reserved for a dossier that passes every check and
 contradicts a head the verifier supplied or an equivocation proof that
-verifies under the key named by the identity's canonical origin (never
-the key inside the proof file).
+verifies under the verifier key built from the identity's canonical
+origin: its name is the origin, its key is the identity, and its key ID
+is computed from the two. Nothing is taken from the proof file's own
+`log_vkey`, which must equal that key field for field (key ID included)
+or the proof does not count; through 0.5.0 the reference read the key ID
+from the file, so signature lines carrying an ID the file chose counted
+as the log's.
 
 ## What "verified" means when you run `witness-log verify`
 

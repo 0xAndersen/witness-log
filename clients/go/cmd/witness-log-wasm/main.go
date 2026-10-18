@@ -159,6 +159,7 @@ func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string
 	if opts.Threshold != nil {
 		threshold = *opts.Threshold
 		o.Threshold = threshold
+		o.ThresholdSet = true
 	}
 	if len(opts.Revocations) > 0 && string(opts.Revocations) != "null" {
 		revs, err := witnesslog.ParseRevocations(opts.Revocations)
@@ -175,13 +176,8 @@ func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string
 		o.KnownHeads = append(o.KnownHeads, kh)
 	}
 	for _, raw := range opts.Evidence {
-		var wrapped struct {
-			Proof *witnesslog.EquivocationProof `json:"proof"`
-		}
-		var p witnesslog.EquivocationProof
-		if json.Unmarshal(raw, &wrapped) == nil && wrapped.Proof != nil {
-			p = *wrapped.Proof
-		} else if err := json.Unmarshal(raw, &p); err != nil {
+		p, err := witnesslog.ParseEvidence(raw)
+		if err != nil {
 			return fail("not an equivocation proof: " + err.Error())
 		}
 		o.Evidence = append(o.Evidence, p)

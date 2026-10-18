@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -145,8 +146,12 @@ type Options struct {
 	// out-of-band; never read it from the dossier.
 	ExpectedIdentityPubkey string
 	// Threshold is the quorum gate as a fraction of the trusted
-	// directory. Zero means DefaultThreshold.
+	// directory. Zero means DefaultThreshold unless ThresholdSet is true.
 	Threshold float64
+	// ThresholdSet makes Threshold apply as given, zero included, as the
+	// reference applies `witness-log verify --threshold 0` (every receipt
+	// count meets a zero fraction).
+	ThresholdSet bool
 	// MinReceipts, when set, replaces the fraction gate with an absolute
 	// count of valid receipts from distinct witnesses in the directory.
 	MinReceipts *int
@@ -205,9 +210,48 @@ type EquivocationProof struct {
 	ConflictingNote string `json:"conflicting_note"`
 }
 
+// ParseEvidence reads one evidence item as every verifier reads it: a JSON
+// object that is the proof itself or, as `witness-log witness serve`
+// writes it, carries the proof under "proof" ({"observed_unix", "kind":
+// "equivocation", "proof": {...}}). The proof must be an object whose
+// origin, log_vkey, earlier_note and conflicting_note are JSON strings;
+// other keys are ignored. Anything else is an error (the caller's
+// mistake, exit 2), never a proof that silently fails to verify. The
+// reference (EquivocationProof::from_evidence) and TypeScript verifiers
+// apply the same rule.
+func ParseEvidence(raw []byte) (EquivocationProof, error) {
+	var p EquivocationProof
+	var item map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &item); err != nil || item == nil {
+		return p, errors.New(`an evidence item must be a JSON object: a proof, or {"proof": {...}} as witness serve writes it`)
+	}
+	if inner, ok := item["proof"]; ok {
+		item = nil
+		if err := json.Unmarshal(inner, &item); err != nil || item == nil {
+			return p, errors.New(`the evidence item's "proof" must be a JSON object`)
+		}
+	}
+	for _, f := range []struct {
+		key string
+		dst *string
+	}{{"origin", &p.Origin}, {"log_vkey", &p.LogVkey}, {"earlier_note", &p.EarlierNote}, {"conflicting_note", &p.ConflictingNote}} {
+		v, ok := item[f.key]
+		if !ok {
+			return p, fmt.Errorf("equivocation proof is missing field %s", f.key)
+		}
+		// A JSON null would unmarshal into a string without error.
+		if t := bytes.TrimLeft(v, " \t\r\n"); len(t) == 0 || t[0] != '"' || json.Unmarshal(v, f.dst) != nil {
+			return p, fmt.Errorf("equivocation proof field %s must be a string", f.key)
+		}
+	}
+	return p, nil
+}
+
 // Verify checks the proof with the key the canonical origin names: the
-// proof's own log_vkey must be exactly that key, and both notes must
-// verify under it, name the origin, and have one size and two roots.
+// proof's own log_vkey must be exactly that key (name, key ID, type and
+// key), and both notes must verify under it, name the origin, and have one
+// size and two roots. The key ID is computed from the origin, never read
+// from the file.
 func (p *EquivocationProof) Verify() bool {
 	pub, ok := IdentityFromCanonicalOrigin(p.Origin)
 	if !ok {
@@ -215,7 +259,7 @@ func (p *EquivocationProof) Verify() bool {
 	}
 	key := NewEd25519VerifierKey(p.Origin, pub)
 	claimed, err := ParseVerifierKey(p.LogVkey)
-	if err != nil || claimed.Name != p.Origin || claimed.SigType != SigTypeEd25519 || !bytes.Equal(claimed.PublicKey, pub) {
+	if err != nil || claimed.Name != key.Name || claimed.ID != key.ID || claimed.SigType != key.SigType || !bytes.Equal(claimed.PublicKey, key.PublicKey) {
 		return false
 	}
 	read := func(text string) *Checkpoint {
@@ -312,7 +356,7 @@ func VerifyDossier(dossierJSON []byte, directory *Directory, opts Options) (Verd
 // Verify is VerifyDossier on an already-parsed Dossier.
 func (d *Dossier) Verify(directory *Directory, opts Options) *Report {
 	threshold := opts.Threshold
-	if threshold == 0 {
+	if threshold == 0 && !opts.ThresholdSet {
 		threshold = DefaultThreshold
 	}
 	r := &Report{Failures: []string{}, Contradictions: []string{}, KnownHeadsUnchecked: []string{}}
@@ -540,13 +584,9 @@ func short(hexKey string) string {
 	return hexKey
 }
 
-const projectOperatedBucket = "__witness-log-project-operated__"
-
-// normalizeLabel trims, lowercases and collapses whitespace runs, so an
-// operator cannot inflate diversity with case or spacing variants.
-func normalizeLabel(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
-}
+// projectOperatedBucket is the reference's PROJECT_OPERATED_BUCKET, NULs
+// included, so no operator_org label collides with it here and not there.
+const projectOperatedBucket = "\x00witness-log-project-operated\x00"
 
 func operatorKey(w *WitnessEntry) string {
 	if w.IsProjectOperated {

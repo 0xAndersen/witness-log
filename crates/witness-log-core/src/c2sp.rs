@@ -204,6 +204,12 @@ impl VerifierKey {
     }
 }
 
+/// A signed-note key name: non-empty, no Unicode space (White_Space) and
+/// no '+' (signed-note §Format).
+pub fn is_valid_key_name(name: &str) -> bool {
+    !name.is_empty() && !name.chars().any(|c| c == '+' || c.is_whitespace())
+}
+
 /// One signature line from a signed note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteSignature {
@@ -243,6 +249,16 @@ impl NoteSignature {
         let b64 = parts
             .next()
             .ok_or_else(|| C2spError::MalformedSignature("missing signature".into()))?;
+        // signed-note §Format: key names contain no Unicode spaces and no
+        // '+'. A line that breaks this is malformed whether or not the key
+        // is known, so the whole note is rejected, as the reference parser
+        // (golang.org/x/mod/sumdb/note) rejects it; it is not an "unknown
+        // key" to skip. The Go and TypeScript verifiers apply the same rule.
+        if !is_valid_key_name(key_name) {
+            return Err(C2spError::MalformedSignature(
+                "key name contains '+' or a Unicode space".into(),
+            ));
+        }
         let payload = Base64::decode_vec(b64)
             .map_err(|_| C2spError::MalformedSignature("signature is not valid base64".into()))?;
         // Bind the 4-byte key ID and the remaining signature bytes by
@@ -767,6 +783,44 @@ mod tests {
         let vkey = VerifierKey::for_ed25519("example.com/log42", &log_key.verifying_key());
         let verified = note.verify(&[vkey]).expect("must still verify");
         assert_eq!(verified.len(), 1, "only the known key counts");
+    }
+
+    #[test]
+    fn a_signature_line_with_an_invalid_key_name_makes_the_note_malformed() {
+        // signed-note §Format: no '+' and no Unicode space in a key name.
+        // Such a line is malformed, not a signature from an unknown key,
+        // so the note is rejected even though the line's key is unknown
+        // (as golang.org/x/mod/sumdb/note rejects it). The Go and
+        // TypeScript verifiers apply the same rule (corpus 15).
+        let k = test_key();
+        let cp = Checkpoint {
+            origin: "example.com/log42".into(),
+            tree_size: 1,
+            root_hash: [1u8; 32],
+            extensions: vec![],
+        };
+        let good = cp.sign(&k).unwrap().encode().unwrap();
+        let payload = Base64::encode_string(&[7u8; 68]);
+        for name in ["a+b", "a\u{a0}b", "a\u{3000}b", "a\u{85}b", "a\u{2028}b"] {
+            let raw = format!("{good}{EM_DASH} {name} {payload}\n");
+            assert!(
+                matches!(
+                    SignedNote::parse(&raw),
+                    Err(C2spError::MalformedSignature(_))
+                ),
+                "{name:?}"
+            );
+        }
+        // U+FEFF and U+007F are not White_Space: such a name is merely
+        // unknown, and the note still verifies under its own key.
+        for name in ["a\u{feff}b", "a\u{7f}b"] {
+            let raw = format!("{good}{EM_DASH} {name} {payload}\n");
+            let note = SignedNote::parse(&raw).expect(name);
+            let vkey = VerifierKey::for_ed25519("example.com/log42", &k.verifying_key());
+            assert!(note.verify(&[vkey]).is_ok(), "{name:?}");
+        }
+        assert!(is_valid_key_name("example.com/log42"));
+        assert!(!is_valid_key_name(""));
     }
 
     #[test]

@@ -290,6 +290,44 @@ describe("canonicalJson is RFC 8785, byte-identical to the Python package", () =
   });
 });
 
+describe("corpus 15: both verifiers read evidence, known heads and labels alike", () => {
+  const corpusFile = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus", "15_evidence_and_args.json");
+  it("refused (exit 2) or the same verdict, exit code and report fields", { skip: !existsSync(corpusFile) }, () => {
+    const v = JSON.parse(readFileSync(corpusFile, "utf8"));
+    for (const c of v.cases) {
+      const opts = {
+        directory: c.directory === null ? undefined : v.directories[c.directory],
+        identity: c.expected_identity ?? undefined,
+        threshold: c.threshold,
+        minWitnesses: c.min_witnesses ?? undefined,
+        knownHeads: c.known_heads,
+        evidence: c.evidence.map((k: string) => v.evidence[k]),
+        allowSubMajority: c.allow_sub_majority,
+        subjectOrg: c.subject_org ?? undefined,
+      };
+      const e = c.expect;
+      if (e.exit_code === 2) {
+        assert.throws(() => verifyDossier(v.dossiers[c.dossier], opts), TypeError, `TS: ${c.name}`);
+        assert.throws(() => verifyDossierNative(v.dossiers[c.dossier], opts), Error, `Rust: ${c.name}`);
+        continue;
+      }
+      for (const r of [verifyDossier(v.dossiers[c.dossier], opts), verifyDossierNative(v.dossiers[c.dossier], opts)]) {
+        assert.equal(r.report.verdict, e.verdict, c.name);
+        assert.equal(r.exitCode, e.exit_code, c.name);
+        assert.equal(r.report.contradictions.length, e.contradictions, c.name);
+        assert.equal(r.report.known_heads_unchecked.length, e.known_heads_unchecked, c.name);
+        assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
+      }
+    }
+  });
+
+  it("F1: the evidence file witness serve writes is DIVERGED for both", { skip: !existsSync(corpusFile) }, () => {
+    const v = JSON.parse(readFileSync(corpusFile, "utf8"));
+    const ts = bothVerdicts(v.dossiers.full, { directory: v.directories.corpus, evidence: [v.evidence.wrapped] });
+    assert.equal(ts.verdict, "DIVERGED");
+  });
+});
+
 describe("corpus 13: both verifiers agree on every verdict case", () => {
   const corpusFile = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus", "13_verdicts.json");
   it("verdict, exit code and report fields", { skip: !existsSync(corpusFile) }, () => {

@@ -274,8 +274,7 @@ pub fn verify_dossier_value(
         .evidence
         .iter()
         .map(|v| {
-            let proof = v.get("proof").cloned().unwrap_or_else(|| v.clone());
-            serde_json::from_value::<witness_log_network::tlog_witness::EquivocationProof>(proof)
+            witness_log_network::tlog_witness::EquivocationProof::from_evidence(v)
                 .map_err(|e| format!("not an equivocation proof: {e}"))
         })
         .collect::<Result<Vec<_>, _>>()?;

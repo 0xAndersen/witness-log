@@ -521,7 +521,12 @@ impl AddCheckpointOutcome {
 /// different roots. Each note carries only the log's own signature, so
 /// anyone holding the log's verifier key can check both and see the
 /// conflict without trusting the witness that reported it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// Deserializes only from a JSON object (`{"origin", "log_vkey",
+/// "earlier_note", "conflicting_note"}`, all strings). serde's derived
+/// impl also accepted a four-element array, which the Go and TypeScript
+/// verifiers do not read as a proof (security review of 0.5.0, F5).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EquivocationProof {
     pub origin: String,
     /// C2SP vkey the notes verify under.
@@ -530,32 +535,76 @@ pub struct EquivocationProof {
     pub conflicting_note: String,
 }
 
+impl<'de> serde::Deserialize<'de> for EquivocationProof {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let object = serde_json::Map::<String, serde_json::Value>::deserialize(d)?;
+        Self::from_object(&object).map_err(serde::de::Error::custom)
+    }
+}
+
 impl EquivocationProof {
+    /// One evidence item as every verifier entry point reads it (`verify
+    /// --evidence`, wasm, Node, Python; the Go and TypeScript verifiers
+    /// apply the same rule): a JSON object that is either the proof itself
+    /// or, as `witness serve` writes it, carries the proof under `"proof"`
+    /// (`{"observed_unix", "kind": "equivocation", "proof": {...}}`). The
+    /// proof must be an object whose `origin`, `log_vkey`, `earlier_note`
+    /// and `conflicting_note` are strings; other keys are ignored.
+    /// Anything else is the caller's error, never a proof that silently
+    /// fails to verify.
+    pub fn from_evidence(item: &serde_json::Value) -> Result<Self, String> {
+        let object = item.as_object().ok_or(
+            "an evidence item must be a JSON object: a proof, or {\"proof\": {...}} as `witness serve` writes it",
+        )?;
+        match object.get("proof") {
+            Some(inner) => Self::from_object(
+                inner
+                    .as_object()
+                    .ok_or("the evidence item's \"proof\" must be a JSON object")?,
+            ),
+            None => Self::from_object(object),
+        }
+    }
+
+    fn from_object(object: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
+        let field = |k: &str| match object.get(k) {
+            Some(serde_json::Value::String(s)) => Ok(s.clone()),
+            Some(_) => Err(format!("equivocation proof field {k} must be a string")),
+            None => Err(format!("equivocation proof is missing field {k}")),
+        };
+        Ok(Self {
+            origin: field("origin")?,
+            log_vkey: field("log_vkey")?,
+            earlier_note: field("earlier_note")?,
+            conflicting_note: field("conflicting_note")?,
+        })
+    }
+
     /// Check the proof independently: both notes verify under the log's
     /// key, name `origin`, have the same size, and differ in root.
     ///
     /// The key is taken from `origin`, never from the proof: a canonical
     /// origin (`witness-log/<identity hex>`) names its own key, and the
-    /// embedded `log_vkey` must be that key with the origin as its name.
-    /// Before 0.4.2 the embedded vkey was trusted as given, so a proof
-    /// signed with a stranger's key under a victim's origin verified
-    /// (review round 2, W1). A proof for a non-canonical origin needs the
-    /// trusted key supplied out of band: `verify_with_key`.
+    /// verifier key the notes are checked under is built from that origin
+    /// and identity, key ID included. The embedded `log_vkey` must equal
+    /// it field for field (name, key ID, type, key) or the proof does not
+    /// verify. Before 0.4.2 the embedded vkey was trusted as given, so a
+    /// proof signed with a stranger's key under a victim's origin verified
+    /// (review round 2, W1); through 0.5.0 its key ID was still read from
+    /// the file, so signature lines carrying any ID the file named counted
+    /// as the log's (security review of 0.5.0, F5). A proof for a
+    /// non-canonical origin needs the trusted key supplied out of band:
+    /// `verify_with_key`.
     pub fn verify(&self) -> bool {
         let Some(identity) = witness_log_core::c2sp::identity_from_canonical_origin(&self.origin)
         else {
             return false;
         };
-        let Ok(vkey) = VerifierKey::parse(&self.log_vkey) else {
-            return false;
-        };
-        if vkey.name != self.origin
-            || vkey.sig_type != witness_log_core::c2sp::SIG_TYPE_ED25519
-            || vkey.public_key != identity.to_bytes()
-        {
-            return false;
+        let expected = VerifierKey::for_ed25519(&self.origin, &identity);
+        match VerifierKey::parse(&self.log_vkey) {
+            Ok(claimed) if claimed == expected => self.verify_with_key(&expected),
+            _ => false,
         }
-        self.verify_with_key(&vkey)
     }
 
     /// `verify` for a log whose origin is not canonical: `vkey` is the

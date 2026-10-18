@@ -35,6 +35,8 @@ rust:
 corpus:
 	cargo run --quiet -p witness-log-core --example generate_corpus
 	cargo run --quiet -p witness-log-network --example generate_verdict_corpus
+	cargo run --quiet -p witness-log-network --example generate_fleet_corpus
+	cargo run --quiet -p witness-log-network --example generate_evidence_corpus
 	@git diff --exit-code corpus/ || { echo "corpus drifted: commit it if the change is intended (CONTRIBUTING.md, 'The conformance gate')"; exit 1; }
 
 cli:

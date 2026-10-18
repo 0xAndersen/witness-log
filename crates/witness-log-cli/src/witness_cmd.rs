@@ -129,30 +129,15 @@ fn cmd_verify_evidence(args: &[String]) -> ExitCode {
     let Some(path) = args.first().filter(|a| !a.starts_with("--")) else {
         return usage_err("witness verify-evidence: missing <evidence.json>");
     };
-    let raw = match crate::read_input(path) {
-        Ok(r) => r,
+    // Accept the file as `serve` writes it ({"proof": {...}}) or a bare
+    // proof, by the same rule as `verify --evidence`.
+    let proof = match crate::read_evidence(path) {
+        Ok(p) => p,
         Err(e) => {
             eprintln!("{path}: {e}");
             return ExitCode::from(2);
         }
     };
-    let doc: serde_json::Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{path}: not JSON: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    // Accept the file as `serve` writes it ({"proof": {...}}) or a bare proof.
-    let proof_value = doc.get("proof").cloned().unwrap_or(doc);
-    let proof: witness_log_network::tlog_witness::EquivocationProof =
-        match serde_json::from_value(proof_value) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("{path}: not an equivocation proof: {e}");
-                return ExitCode::from(2);
-            }
-        };
     let describe = |n: &str| -> String {
         witness_log_core::c2sp::SignedNote::parse(n)
             .ok()

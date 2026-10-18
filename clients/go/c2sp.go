@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // C2SP signature types (c2sp.org/signed-note, c2sp.org/tlog-cosignature).
@@ -83,7 +84,7 @@ func ParseVerifierKey(s string) (VerifierKey, error) {
 	if err != nil || len(idB) != 4 {
 		return VerifierKey{}, ErrMalformedVkey
 	}
-	material, err := base64.StdEncoding.DecodeString(parts[2])
+	material, err := strictBase64.DecodeString(parts[2])
 	if err != nil || len(material) < 1 {
 		return VerifierKey{}, ErrMalformedVkey
 	}
@@ -101,6 +102,19 @@ type NoteSignature struct {
 
 const emDash = "—"
 
+// strictBase64 is standard base64 that rejects non-zero padding bits, so
+// one value has one encoding, as in the reference (base64ct) and the
+// TypeScript verifier. encoding/base64's StdEncoding accepts them, which
+// made a note with a non-canonical root or signature line verify here and
+// nowhere else (security review of 0.5.0, F5).
+var strictBase64 = base64.StdEncoding.Strict()
+
+// ValidKeyName reports whether name is a signed-note key name: non-empty,
+// with no Unicode space (White_Space) and no '+'.
+func ValidKeyName(name string) bool {
+	return name != "" && !strings.ContainsRune(name, '+') && strings.IndexFunc(name, unicode.IsSpace) < 0
+}
+
 // Encode renders the signature line without its trailing newline.
 func (s NoteSignature) Encode() string {
 	payload := append(append([]byte(nil), s.KeyID[:]...), s.Signature...)
@@ -117,7 +131,15 @@ func ParseNoteSignature(line string) (NoteSignature, error) {
 	if len(parts) != 2 || parts[0] == "" {
 		return NoteSignature{}, fmt.Errorf("%w: missing key name or signature", ErrMalformedSignature)
 	}
-	payload, err := base64.StdEncoding.DecodeString(parts[1])
+	// signed-note §Format: key names contain no Unicode spaces and no '+'.
+	// A line that breaks this is malformed whether or not its key is
+	// known, so the note is rejected (as golang.org/x/mod/sumdb/note does)
+	// rather than the line skipped as an unknown key. The reference and
+	// TypeScript verifiers apply the same rule.
+	if !ValidKeyName(parts[0]) {
+		return NoteSignature{}, fmt.Errorf("%w: key name contains '+' or a Unicode space", ErrMalformedSignature)
+	}
+	payload, err := strictBase64.DecodeString(parts[1])
 	if err != nil {
 		return NoteSignature{}, fmt.Errorf("%w: signature is not valid base64", ErrMalformedSignature)
 	}
@@ -300,7 +322,7 @@ func CheckpointFromNote(n *SignedNote) (*Checkpoint, error) {
 	if err != nil {
 		return nil, ErrMalformedTreeSize
 	}
-	rootB, err := base64.StdEncoding.DecodeString(lines[2])
+	rootB, err := strictBase64.DecodeString(lines[2])
 	if err != nil || len(rootB) != 32 {
 		return nil, ErrMalformedRootHash
 	}
