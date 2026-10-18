@@ -1,0 +1,1293 @@
+{
+  "cases": [
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "honest",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "independent_operators": null,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "honest dossier",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "identity_point_checkpoint",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "checkpoint by the identity point (A = R = identity, s = 0)",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "small_order_key_checkpoint",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "checkpoint by an order-8 key (R = r·B, s = r)",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "small_order_r_checkpoint",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "checkpoint by an honest key with R = identity, s = k·a",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "mixed_order_key_checkpoint",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "independent_operators": null,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "checkpoint by a mixed-order key, signed correctly (valid)",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": "native",
+      "dossier": "degenerate_native_receipt",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 10,
+        "has_failures": false,
+        "independent_operators": 1,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 1,
+        "verdict": "consistent_unwitnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": 2,
+      "name": "native receipt by a small-order witness key does not count",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": "c2sp",
+      "dossier": "degenerate_c2sp_receipt",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 10,
+        "has_failures": false,
+        "independent_operators": 1,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": 1,
+        "verdict": "consistent_unwitnessed"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": 2,
+      "name": "C2SP cosignature by a small-order witness key does not count",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "degenerate_key_binding",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "key binding with R = identity, s = k·a",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "degenerate_revocation",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "revocation with R = identity, s = k·a",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "undecodable_session_key",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 40,
+        "has_failures": true,
+        "independent_operators": null,
+        "internally_consistent": false,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "invalid"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "key binding for a session key that is not a curve point",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "small_order_session_key",
+      "evidence": [],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "independent_operators": null,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "key binding for a small-order session key (it signs nothing: valid)",
+      "subject_org": null,
+      "threshold": 0.66
+    },
+    {
+      "allow_sub_majority": false,
+      "directory": null,
+      "dossier": "honest",
+      "evidence": [
+        "degenerate_notes"
+      ],
+      "expect": {
+        "contradictions": 0,
+        "exit_code": 20,
+        "has_failures": false,
+        "independent_operators": null,
+        "internally_consistent": true,
+        "known_heads_unchecked": 0,
+        "split_view_unsafe": false,
+        "valid_receipts": null,
+        "verdict": "unanchored"
+      },
+      "expected_identity": null,
+      "known_heads": [],
+      "min_witnesses": null,
+      "name": "equivocation proof whose notes have R = identity, s = k·a is not evidence",
+      "subject_org": null,
+      "threshold": 0.66
+    }
+  ],
+  "description": "Strict Ed25519 (SPEC.md §6; outside review of 0.6.0, H3/M3). `signatures`: run every entry through the Ed25519 check your verifier uses for checkpoint, key binding, revocation, receipt and signed-note signatures, with the hex public_key (32 bytes), message and signature (64 bytes); the result must equal `valid`, which is what the reference's check returns: VerifyingKey::from_bytes (A must decode; y >= p and x = 0 with the sign bit set are decoded, as in RFC 8032 implementations generally) then ed25519-dalek 2's verify_strict: s < L, R must decode, A and R must not be of small order (in any encoding), [s]B - [k]A with k = SHA-512(R || A || M) over the encodings as given must encode to exactly R's bytes. Mixed-order points are not refused. `cofactorless_non_strict` and `cofactored_non_strict` say what RFC 8032 without the small-order checks would answer, for the reader; they are not expectations. `cases`: run each as in 15_evidence_and_args.json, with the named dossier, the named trusted directory from `directories` (none when null), threshold, min_witnesses and the named evidence items; the verdict, exit code and report fields must equal expect. Every key here is public and for testing only.",
+  "directories": {
+    "c2sp": {
+      "witnesses": [
+        {
+          "compute_provider": "corpus-16-witness-a-provider",
+          "is_project_operated": false,
+          "name": "corpus-16-witness-a",
+          "operator_org": "corpus-16-operator-a",
+          "pubkey": "9109db55f79797a396462fb895c2adcea7e8683c2f3056c07a5475155537b73e",
+          "runtime": "human",
+          "url": "https://corpus-16-witness-a.example"
+        },
+        {
+          "compute_provider": "corpus-16-witness-c-provider",
+          "is_project_operated": false,
+          "name": "corpus-16-witness-c",
+          "operator_org": "corpus-16-operator-c",
+          "pubkey": "0100000000000000000000000000000000000000000000000000000000000080",
+          "runtime": "human",
+          "url": "https://corpus-16-witness-c.example"
+        }
+      ]
+    },
+    "native": {
+      "witnesses": [
+        {
+          "compute_provider": "corpus-16-witness-a-provider",
+          "is_project_operated": false,
+          "name": "corpus-16-witness-a",
+          "operator_org": "corpus-16-operator-a",
+          "pubkey": "9109db55f79797a396462fb895c2adcea7e8683c2f3056c07a5475155537b73e",
+          "runtime": "human",
+          "url": "https://corpus-16-witness-a.example"
+        },
+        {
+          "compute_provider": "corpus-16-witness-b-provider",
+          "is_project_operated": false,
+          "name": "corpus-16-witness-b",
+          "operator_org": "corpus-16-operator-b",
+          "pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+          "runtime": "human",
+          "url": "https://corpus-16-witness-b.example"
+        }
+      ]
+    }
+  },
+  "dossiers": {
+    "degenerate_c2sp_receipt": {
+      "checkpoint": {
+        "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+        "sig_alg": "ed25519",
+        "signature": "b23b7d8d18b047059dac9b05ade4f0bb8108515fae8ac4340154991cfb64cafd5569896a7e680b7238f412fb5e7dbe4f28fe62c7bb141e7645d930ed70956903",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+          "signature": "936fe90f15b8f3cf8bf6ec5731600eff9437fb9ee11a71e80ded45be0d13f3f344cf9ccc5f4aa071b87b80bb9ec3ea309973ceae1d469dfff97a82e8e787a200",
+          "tree_size": 2,
+          "witness_pubkey": "9109db55f79797a396462fb895c2adcea7e8683c2f3056c07a5475155537b73e",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "c2sp_origin": "witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+          "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "tree_size": 2,
+          "witness_pubkey": "0100000000000000000000000000000000000000000000000000000000000080",
+          "witnessed_at_ms": 1700000012000
+        }
+      ]
+    },
+    "degenerate_key_binding": {
+      "checkpoint": {
+        "root_hash": "391f5a841c5db882ab4ff0d564333386d8756a49ded0bee79ff7193854c937f9",
+        "sig_alg": "ed25519",
+        "signature": "35d31278d67e2f02f38ddd6565a48bc9068812b5f5e0e3855af52999d7a14eab95465fd3537e2f0b5a8c3474608f083ba2e63d3c4c02b4f632a30463d5f3b300",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [
+        {
+          "custody": "self_held",
+          "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "not_after_ms": null,
+          "session_number": 1,
+          "session_pubkey": "31debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bc",
+          "signature": "010000000000000000000000000000000000000000000000000000000000000011cf3b1b7ddc53eb05de3f1a6385a8ee42f7806593d99a30730c5c6bcd993e02",
+          "timestamp_ms": 1699999999000
+        }
+      ],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "31debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bc",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "31debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bc",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "degenerate_native_receipt": {
+      "checkpoint": {
+        "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+        "sig_alg": "ed25519",
+        "signature": "b23b7d8d18b047059dac9b05ade4f0bb8108515fae8ac4340154991cfb64cafd5569896a7e680b7238f412fb5e7dbe4f28fe62c7bb141e7645d930ed70956903",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": [
+        {
+          "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+          "signature": "936fe90f15b8f3cf8bf6ec5731600eff9437fb9ee11a71e80ded45be0d13f3f344cf9ccc5f4aa071b87b80bb9ec3ea309973ceae1d469dfff97a82e8e787a200",
+          "tree_size": 2,
+          "witness_pubkey": "9109db55f79797a396462fb895c2adcea7e8683c2f3056c07a5475155537b73e",
+          "witnessed_at_ms": 1700000011000
+        },
+        {
+          "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+          "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "tree_size": 2,
+          "witness_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+          "witnessed_at_ms": 1700000011000
+        }
+      ]
+    },
+    "degenerate_revocation": {
+      "checkpoint": {
+        "root_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sig_alg": "ed25519",
+        "signature": "8c13f7528417b50133aaeb8163135cb4c28299f34c2bb07935aa47db434a4a97c3a3f35bfd5f5ca2ca0ef0049e42d91154c969edaeff4176aec13b38ad68ff0d",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 0
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [],
+      "leaves": [],
+      "revocations": [
+        {
+          "as_of_ms": 1700001000000,
+          "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "reason": "corpus 16",
+          "signature": "0100000000000000000000000000000000000000000000000000000000000000ef9e769a7b49f192a70d554cf8984f556b8b5347f16b610939a945e98299f70b"
+        }
+      ],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "honest": {
+      "checkpoint": {
+        "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+        "sig_alg": "ed25519",
+        "signature": "b23b7d8d18b047059dac9b05ade4f0bb8108515fae8ac4340154991cfb64cafd5569896a7e680b7238f412fb5e7dbe4f28fe62c7bb141e7645d930ed70956903",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "identity_point_checkpoint": {
+      "checkpoint": {
+        "root_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sig_alg": "ed25519",
+        "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "signer_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 0
+      },
+      "identity_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+      "key_bindings": [],
+      "leaves": [],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "mixed_order_key_checkpoint": {
+      "checkpoint": {
+        "root_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sig_alg": "ed25519",
+        "signature": "48ad9ae45e438d62799ea8da00ecd86a880c547b99b9dfdb32eaac6b9c95b4de88858ab5066775adcc0537877edb57cd842f87736b6b35c93b1ab20f88e6b90f",
+        "signer_pubkey": "966dc67c44528839cae506068660bba008119e83594cf46dc169cac064d51385",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 0
+      },
+      "identity_pubkey": "966dc67c44528839cae506068660bba008119e83594cf46dc169cac064d51385",
+      "key_bindings": [],
+      "leaves": [],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "small_order_key_checkpoint": {
+      "checkpoint": {
+        "root_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sig_alg": "ed25519",
+        "signature": "56b9bbe993df6d86a01de9311816353e3b25b0005f20c49d9c20bdbaffea1e32bcb8117917ad863908e32f10358a5775a88457233935b5dacc1078723896a000",
+        "signer_pubkey": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "timestamp_ms": 1700000010035,
+        "tree_size": 0
+      },
+      "identity_pubkey": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "key_bindings": [],
+      "leaves": [],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "small_order_r_checkpoint": {
+      "checkpoint": {
+        "root_hash": "75e17e39bbe6771a9d616705959a8bc8c9dffe95f6031ba2ef217cf18d56a419",
+        "sig_alg": "ed25519",
+        "signature": "0100000000000000000000000000000000000000000000000000000000000000bbde8ee7b99e3525bab6ab64bea98d5bd9fb5a21e8b0f4294e99f7a6fcd4bc0b",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "small_order_session_key": {
+      "checkpoint": {
+        "root_hash": "d49890825c336b56ff7f1c4b152d05c4c33e4a625bb86a88dd505f0405e97252",
+        "sig_alg": "ed25519",
+        "signature": "3e7b2b7c8f736fa3136e10abb6f4b5ee4ae2fa51357c7c58a827c58d1e1d5836bd13ea7fef401adfea1d17430c2c7e37d9c987f43329ff2add56e927c0c5e001",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [
+        {
+          "custody": "self_held",
+          "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "not_after_ms": null,
+          "session_number": 1,
+          "session_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+          "signature": "0da7aef1493e955efa7279c31b2d0cde7b390de301bcd159c9e40927f79f10a3b397381a51794ef3a4f646f4a791f8139aa4ea7c48e3ed74564db6c9d6c95900",
+          "timestamp_ms": 1699999999000
+        }
+      ],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "0100000000000000000000000000000000000000000000000000000000000000",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    },
+    "undecodable_session_key": {
+      "checkpoint": {
+        "root_hash": "f64cc001fcc942e3807af25ccf980ea4022f3a71b1056c19ef0274becd77017b",
+        "sig_alg": "ed25519",
+        "signature": "ff1120a22efd3a0d1889228adfb2a673828f97858b273be79fd8425db960b75adc966489781a312911b1805af72f8fcfc844d1ba597c7e843238905b9812ad01",
+        "signer_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+        "timestamp_ms": 1700000010000,
+        "tree_size": 2
+      },
+      "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "key_bindings": [
+        {
+          "custody": "self_held",
+          "identity_pubkey": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+          "not_after_ms": null,
+          "session_number": 1,
+          "session_pubkey": "0200000000000000000000000000000000000000000000000000000000000000",
+          "signature": "1883f5f85548b9c31ef2390962d88c15ac6aaac93bde3c304308125d11405a3ef4baf620769fddc11781b44b09cc723a87be3971b847f8ae968578f012de0801",
+          "timestamp_ms": 1699999999000
+        }
+      ],
+      "leaves": [
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 0,
+          "leaf_type": 1,
+          "payload_hash": "6060606060606060606060606060606060606060606060606060606060606060",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "0200000000000000000000000000000000000000000000000000000000000000",
+          "timestamp_ms": 1700000000000
+        },
+        {
+          "anchor_proof_hash": null,
+          "anchor_proof_json": null,
+          "anchor_url": null,
+          "authorization_event_kind": null,
+          "authorization_scope_hash": null,
+          "counterparty_pubkey": null,
+          "handoff_direction": null,
+          "handoff_state_hash": null,
+          "index": 1,
+          "leaf_type": 1,
+          "payload_hash": "6161616161616161616161616161616161616161616161616161616161616161",
+          "redacted_index": null,
+          "revoked_identity": null,
+          "session_pubkey": "0200000000000000000000000000000000000000000000000000000000000000",
+          "timestamp_ms": 1700000001000
+        }
+      ],
+      "revocations": [],
+      "witness_directory": {
+        "witnesses": []
+      },
+      "witness_receipts": []
+    }
+  },
+  "evidence": {
+    "degenerate_notes": {
+      "conflicting_note": "witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a\n2\n5Mpn6CfIFEaGpNqnK6U4qh1dckOSTdC7IE5Egb5zgVg=\n\n— witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a DwI31QEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+hCP30/UnfIB//ciEthkmpdFdUgo5DRxkUh3fiItlQU=\n",
+      "earlier_note": "witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a\n2\nBOfhuhjSISbaMsgTPqO32t1+SRI3jNllFAX0unFsg3g=\n\n— witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a DwI31QEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABO+0zbd2DFq9mPYC4WPG1gB8G5LfUBtd0nVwtZUqSwI=\n",
+      "log_vkey": "witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a+0f0237d5+AVEcNKGiy1Id8WuyRrjejnmXziNcfnayKj11A6JIGd2K",
+      "origin": "witness-log/511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a"
+    }
+  },
+  "signatures": [
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "honest signature",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "",
+      "name": "honest signature, empty message",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "cc521b13f2ddbc50c606d3e7e832083b67a5ab5fd3bf61a147876155fa384178d2f4451793874c00e34671e4b6ce103be304be4ae86b25c7c67f5e2dba0cca0b",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e6f74686572206d657373616765",
+      "name": "honest signature, wrong message",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "honest signature by another key",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "62ea77ee7e7c12dec913c39d96254884a627055b362daa9fe9f7a3b774a522495e1221925dd1199cc0edd9ee43ba837b0d2733a8faa6218e067f4d10c99e3504",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "honest signature, R negated (sign bit flipped)",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db972f947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "honest signature with s + L (non-canonical s)",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727934b6b001904d7f02510eff3abdc3f56422e60617353cc3e8db7b2d32ae4c4d17",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "honest signature with s + 2L (non-canonical s)",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db97279218aa65eaab0915a27abf6dd9bbdd47922e60617353cc3e8db7b2d32ae4c4d27",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412030202330",
+      "name": "small-order A: the identity, canonical; R = r·B, s = r",
+      "public_key": "0100000000000000000000000000000000000000000000000000000000000000",
+      "signature": "57016a764ae1477897a1fbdcaf61d2a0eb578a399324a9a2aaf42acc60569d858513302be5a5d8616ea2e17ea32bedc5db1f977de1dbb85995e53468511c570f",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412031202330",
+      "name": "small-order A: order 8 point 1·T8, canonical; R = r·B, s = r",
+      "public_key": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "signature": "059f20a4e7b28e0ac7a7713f9dd5edbc1c054ba99a062704106e787d483419d471f275ab3c67eb373cecca9e199b8f64ec6a9781af82ebeccd537535fbb29c04",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412032202330",
+      "name": "small-order A: order 4 point 2·T8, canonical; R = r·B, s = r",
+      "public_key": "0000000000000000000000000000000000000000000000000000000000000080",
+      "signature": "f531134b19a2cf9276051e82a0c0d7d85c3f2c0d3a1ae807ed1f2ec6d0982cbc02af63d4f0186c5e06d8e1f84a3b25c648c1d348f9ecbc2847f2ba0bbc646f02",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722041203320233135",
+      "name": "small-order A: order 8 point 3·T8, canonical; R = r·B, s = r",
+      "public_key": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "signature": "f66089671851eafcb02aa6d5e8ca822a41483d72dae43571fd313264b5f0cf948b044d3e195fa1d4585b8a09e3947df939c875b768456a36b211013db0d1a705",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412034202330",
+      "name": "small-order A: order 2 point 4·T8, canonical; R = r·B, s = r",
+      "public_key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature": "0fdd2135489c948b566c5e5607bc6abf8f1a5f2fc5a68000a6430b9769b6764eef5ca1d34e9f6dd8adbb4b2b2ec2b29e7b9ded9c9e22d03cb6d69192a35f5600",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412035202332",
+      "name": "small-order A: order 8 point 5·T8, canonical; R = r·B, s = r",
+      "public_key": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+      "signature": "bdef6a594387ee870ae349391e26ebbad986bcd293a0eb2f21ffae5444fb9ad3f38a5e4f58c5cccb33c96e3a70f32501b537b428878f1893e4611155fa80d90d",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412036202337",
+      "name": "small-order A: order 4 point 6·T8, canonical; R = r·B, s = r",
+      "public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signature": "49893a109df09d8f9cbca372f911e05fece24a95e3469a1d8f27a58a54da81a899662b1750b6969e406ad30a175880e98db694093016e8ec63c5dcc8b542ae0e",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412037202332",
+      "name": "small-order A: order 8 point 7·T8, canonical; R = r·B, s = r",
+      "public_key": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+      "signature": "72f40990c2cfebe957514680968163c94eb18dc31f58cbae2f8587fb2f762b2681e1bb53b5355e0ebc8c62b52cbdc423f2f69afffc8d29a03317e93226421003",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412038202330",
+      "name": "small-order A: the identity, x = 0 with the sign bit set; R = r·B, s = r",
+      "public_key": "0100000000000000000000000000000000000000000000000000000000000080",
+      "signature": "a47a28d3a382545386ed82724566dce8643c6a0508542a3bc822e56d0b70c2253f210f76240b2fcfcca295ecb3454a5e81abd2642f264bb81f1fd6839984e206",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412039202331",
+      "name": "small-order A: order 2 point, x = 0 with the sign bit set; R = r·B, s = r",
+      "public_key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "14cf1b9155fdab4ddfe9234571809286097afea9c1d5e0bbd7c9e55aa8dd8f95041c52f9635f40059c24e072d246d6595d11de3d962bce8e112dbb3878dce205",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722041203130202332",
+      "name": "small-order A: order 4 point, y = p (non-canonical y = 0); R = r·B, s = r",
+      "public_key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature": "d44b14fe5cb997f996e0bd5a9e9617ad99d51554f0edb96f2aee71f5203ba3826407bb293bb51e1039ddd769833116f3cd13f80aa67fa9bb0595c07d895a0204",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722041203131202331",
+      "name": "small-order A: order 4 point, y = p (non-canonical y = 0), sign bit set; R = r·B, s = r",
+      "public_key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "5b8d32a17e212566a06c6a5aa82738695d7dd30b5637f94661a78d9ee7528ad981447bf011f6ce5f9c2ff06cb6cbd68e32592ae2b03576c3e3df5e2f713c4b07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722041203132202330",
+      "name": "small-order A: the identity, y = p + 1 (non-canonical y = 1); R = r·B, s = r",
+      "public_key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature": "af3546a558e56713f1b11c9abef98b2686739b96eceaa5edf93decc735c6f1de915263c76dc4ad258598689122eb39d80e9d642a1e9f04f69d9846928442430d",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722041203133202330",
+      "name": "small-order A: the identity, y = p + 1 (non-canonical y = 1), sign bit set; R = r·B, s = r",
+      "public_key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "d7f6068aa04c222b9aad0ba33bd518f2c1c0bee9a46c975da4f53ecf3b19d3607867d63199ec1b3ad882e098c6842e32527eaf3bd533d58f64062d5652a34f07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20616e79206d65737361676520617420616c6c",
+      "name": "small-order A and R: both the identity, s = 0 (verifies any message non-strictly)",
+      "public_key": "0100000000000000000000000000000000000000000000000000000000000000",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f72646572204120616e642052202333",
+      "name": "small-order A (order 4 point 2·T8, canonical) and small-order R (order 4), s = 0",
+      "public_key": "0000000000000000000000000000000000000000000000000000000000000080",
+      "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220412c2052206964656e74697479202331",
+      "name": "small-order A (order 2 point, x = 0 with the sign bit set), R = the identity, s = 0",
+      "public_key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522030",
+      "name": "small-order R: the identity, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000004cb41ad091608432e1208335ed3ad17e4952845e70d415c1b01574e9252d7608",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522031",
+      "name": "small-order R: order 8 point 1·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a89ed1859c457be1cb5863034db431afe5f4f36508a479d0c1cda7436306b280c",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522032",
+      "name": "small-order R: order 4 point 2·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000080339c8eeb337a7cf60aacea04bcb5d72a783a5ff9969549d49fa2496ae1a71707",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522033",
+      "name": "small-order R: order 8 point 3·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc0503244af33e821e2591f594aaa7f1ad1945de36da05e98a46c8677bbc2c357f0a",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522034",
+      "name": "small-order R: order 2 point 4·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f9ee03795af1782a706e1fbe8b1ffe992a0876feb056a7e25c2cb96961f50d40a",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522035",
+      "name": "small-order R: order 8 point 5·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc8551168413a8fdfcdec74ccd146fd5e6f8710d8587466e7f648e1124c952f7d50a",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522036",
+      "name": "small-order R: order 4 point 6·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "0000000000000000000000000000000000000000000000000000000000000000d8c4fdf1d20bc9b6e59523b3aa5c6979d735b1af2c60eea35108e5cf667ecf0c",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522037",
+      "name": "small-order R: order 8 point 7·T8, canonical; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fab2e35ecb0b46c58f642df9fa10c408d7d8cc18ebb59cb0d5a881e0cafbd6ea0c",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522038",
+      "name": "small-order R: the identity, x = 0 with the sign bit set; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000802346194b8a15c8f025ec929960a130243b86b781c18ab4902c7f80289058df09",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f7264657220522039",
+      "name": "small-order R: order 2 point, x = 0 with the sign bit set; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc23b89a8ee13103babed2805f1474f46e6bce341e6510a862411db802f5a790b",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722052203130",
+      "name": "small-order R: order 4 point, y = p (non-canonical y = 0); honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f3a346172c975fc5cf5aa26ec0de9e6bf289528c4b3deb5b65076adaeed776700",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722052203131",
+      "name": "small-order R: order 4 point, y = p (non-canonical y = 0), sign bit set; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe72bc5cd5c0e0bada4ec7c9531de31f3a24bfc2db62970962d699e5c94537307",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722052203132",
+      "name": "small-order R: the identity, y = p + 1 (non-canonical y = 1); honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f849c5cd02cc9f8e91b2f9e3dfa82d107159f234cb97234b542c02b322d420602",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20736d616c6c2d6f726465722052203133",
+      "name": "small-order R: the identity, y = p + 1 (non-canonical y = 1), sign bit set; honest A, s = k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff054a8e63cbd5afd1e140ec92cfac658e4bb49e6af8a4e1b745c9f590b3fdc901",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a206d697865642d6f7264657220412034202330",
+      "name": "mixed-order A (prime-order + order 2), k·T = identity: verify_strict accepts",
+      "public_key": "583f2d0e8260c014479799470ff774eb66a81a3024969ce4b5bb7008b14b7edb",
+      "signature": "c71a0d4867ef94eb2ad79de12202f2dac2533c5c6c498554f2944c5e39a928069276e541f291cddc8d6516b26b9ef376e024a7ec5d5bc722ffcf45284f7b500e",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a206d697865642d6f7264657220412032202330",
+      "name": "mixed-order A (prime-order + order 4), k·T = identity: verify_strict accepts",
+      "public_key": "3699915cb427517afdab3ac4e3b17156c55c30cf140d74ed0fd3a95e72fa719b",
+      "signature": "e25209a41fff42355cae73f33d88ab05b0c6e145a1ee87a44a89a765cf39e388ab3af92ac34361ca5c95cb29f9eac96c771af75adaf129becf39486eff441303",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a206d697865642d6f7264657220412031202333",
+      "name": "mixed-order A (prime-order + order 8), k·T = identity: verify_strict accepts",
+      "public_key": "ac3d1a3360080b6f47e9598287a8e6e5ff7fa403cdcdd96516e365e494f83aff",
+      "signature": "b509923bdff6330c465d8b96e5e710f6ac79140357dd26226b125eb8509739cf55e4dc959f67beeb4f48e0ebd5baf6905ef108e89b39aa9fc87fde94a6947201",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a206d697865642d6f7264657220412c206bc2b754206e6f7420746865206964656e74697479202330",
+      "name": "mixed-order A (prime-order + order 8), k·T not the identity",
+      "public_key": "ac3d1a3360080b6f47e9598287a8e6e5ff7fa403cdcdd96516e365e494f83aff",
+      "signature": "b509923bdff6330c465d8b96e5e710f6ac79140357dd26226b125eb8509739cfbaafeea8627499736b593d770ca0935c7cae5076a9e6a78361e3777cb8a1ef06",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a206d697865642d6f726465722052",
+      "name": "mixed-order R (r·B + order 8), honest A, s = r + k·a",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "acb3175eec7a821906499313c165ea0a1a65b4919b920442ec37199a1903678cc70064bfa37b9679cf936c4ff6a69d939fc8f2cdb422a89d67b70f9004500006",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": true,
+      "cofactorless_non_strict": true,
+      "message": "636f727075732031363a206d697865642d6f72646572204120616e642052202335",
+      "name": "mixed-order A and mixed-order R whose torsion cancels: verify_strict accepts",
+      "public_key": "b2c5d17088f6fc9b027dd7fe85e7048744b306ae512ccb3b6ad139e983faf090",
+      "signature": "414ce8a113857de6f9b66cec3e9a15f5e59a4b6e646dfbbd13c8e665e6fc9873c2eb0e7bd9037f07d0d3bb06a7818a9b0bd495e9fdfa4aea14384a2546c2150a",
+      "valid": true
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "R does not decode (y not on the curve), honest A and s",
+      "public_key": "511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a",
+      "signature": "020000000000000000000000000000000000000000000000000000000000000047e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "A does not decode (y not on the curve)",
+      "public_key": "0200000000000000000000000000000000000000000000000000000000000000",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "A with y >= p (non-canonical) decoding to a point of large order",
+      "public_key": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "A with y >= p (non-canonical), sign bit set, decoding to a point of large order",
+      "public_key": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "0667f1bb3ee7de39b77236f346def6a5a914e7c5bf058e3d122121873db9727947e2baa475ea6caa7a710798dec9165022e60617353cc3e8db7b2d32ae4c4d07",
+      "valid": false
+    },
+    {
+      "cofactored_non_strict": false,
+      "cofactorless_non_strict": false,
+      "message": "636f727075732031363a20616e20686f6e657374206d657373616765",
+      "name": "A with y >= p (non-canonical), R = r·B, s = r",
+      "public_key": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature": "4704f55c933a507f2a6066fa505ebcb74534f255f7a38b6ae020d247f55b4318bf145fbe239b944d399b01e1cf673931ecaed324014fca47a85ff21553b1930b",
+      "valid": false
+    }
+  ]
+}

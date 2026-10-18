@@ -157,6 +157,8 @@ pub mod journal;
 pub mod leaf;
 pub mod log;
 pub mod merkle;
+#[doc(hidden)]
+pub mod object_only;
 pub mod redaction;
 pub mod sth;
 

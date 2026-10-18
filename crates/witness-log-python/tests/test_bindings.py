@@ -613,6 +613,65 @@ def test_corpus_15_evidence_known_heads_and_labels():
     assert seen == {2, 10, 11, 20, 30, 40}
 
 
+def _corpus_case(v, c, dossier_json):
+    """One corpus 16/17 case through verify_dossier_json: the report, or
+    None when the binding refuses the dossier (MalformedError)."""
+    args = (
+        dossier_json,
+        c["threshold"],
+        c["expected_identity"],
+        json.dumps(v["directories"][c["directory"]]) if c["directory"] else None,
+        c["min_witnesses"],
+        None,
+        c["known_heads"],
+        json.dumps([v["evidence"][k] for k in c["evidence"]]),
+        c["subject_org"],
+    )
+    if c["expect"].get("not_a_dossier"):
+        import pytest
+
+        with pytest.raises(witness_log.MalformedError):
+            witness_log.verify_dossier_json(*args)
+        return None
+    r = json.loads(witness_log.verify_dossier_json(*args))
+    e = c["expect"]
+    exit_code = 11 if r["split_view_unsafe"] and not c["allow_sub_majority"] else {
+        "witnessed": 0, "consistent_unwitnessed": 10, "unanchored": 20, "diverged": 30, "invalid": 40,
+    }[r["verdict"]]
+    assert r["verdict"] == e["verdict"], c["name"]
+    assert exit_code == e["exit_code"], c["name"]
+    assert r["internally_consistent"] == e["internally_consistent"], c["name"]
+    assert bool(r["failures"]) == e["has_failures"], c["name"]
+    assert len(r["contradictions"]) == e["contradictions"], c["name"]
+    assert (r["quorum"] or {}).get("valid_receipts") == e["valid_receipts"], c["name"]
+    return r
+
+
+def test_corpus_16_strict_ed25519_and_17_dossier_parsing():
+    """Outside review of 0.6.0 (H2, H3/M3, P3) through the binding:
+    degenerate Ed25519 signatures in dossiers (16), and texts that are or
+    are not dossiers, integers above 2^53 and hex case (17). A text the
+    reference cannot read raises MalformedError, never a verdict."""
+    import os
+
+    import pytest
+
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "..", "corpus")
+    paths = [os.path.join(root, n) for n in ("16_ed25519_strict.json", "17_dossier_parsing.json")]
+    if not all(os.path.exists(p) for p in paths):
+        pytest.skip("corpus not available")
+    v16 = json.load(open(paths[0], encoding="utf-8"))
+    for c in v16["cases"]:
+        _corpus_case(v16, c, json.dumps(v16["dossiers"][c["dossier"]]))
+    v17 = json.load(open(paths[1], encoding="utf-8"))
+    v17["evidence"] = {}
+    refused = 0
+    for c in v17["cases"]:
+        if _corpus_case(v17, c, c["dossier_json"]) is None:
+            refused += 1
+    assert refused >= 50
+
+
 _WITNESS_SERVICE_THREADS = r"""
 import base64, hashlib, os, sys, threading
 from witness_log import _core

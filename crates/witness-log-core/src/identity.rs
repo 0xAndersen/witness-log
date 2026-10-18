@@ -214,6 +214,7 @@ fn binding_message(
 /// Verifiers MUST surface custody alongside any signature-verification
 /// result; they are not the same thing.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 #[serde(rename_all = "snake_case")]
 pub enum KeyCustody {
     /// Agent process holds the key in memory. Any runtime compromise exposes it.
@@ -234,7 +235,10 @@ pub enum KeyCustody {
     Undisclosed,
 }
 
+crate::object_only_serde!(KeyCustody);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct KeyBindingStatement {
     pub identity_pubkey: String,
     pub session_pubkey: String,
@@ -253,6 +257,8 @@ pub struct KeyBindingStatement {
     pub not_after_ms: Option<u64>,
     pub signature: String,
 }
+
+crate::object_only_serde!(KeyBindingStatement);
 
 impl KeyBindingStatement {
     /// Signature validity only — does NOT check expiry. Use `verify_valid_at`
@@ -305,6 +311,7 @@ impl KeyBindingStatement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct RevocationStatement {
     pub identity_pubkey: String,
     pub as_of_ms: u64,
@@ -316,6 +323,8 @@ pub struct RevocationStatement {
     pub reason: String,
     pub signature: String,
 }
+
+crate::object_only_serde!(RevocationStatement);
 
 impl RevocationStatement {
     pub fn verify(&self) -> Result<(), IdentityError> {

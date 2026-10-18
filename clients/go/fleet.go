@@ -89,18 +89,10 @@ type attestation struct {
 // fields ignored). Anything else is a malformed anchor, never a parse
 // error of the dossier.
 func parseFleetAnchor(raw json.RawMessage) (*FleetAnchor, error) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("fleet_anchor: expected an object")
-	}
-	for _, k := range []string{"origin", "entry_index", "entry_bytes_b64", "inclusion_proof", "fleet_checkpoint_note"} {
-		v, ok := m[k]
-		if !ok {
-			return nil, fmt.Errorf("fleet_anchor: missing field %q", k)
-		}
-		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
-			return nil, fmt.Errorf("fleet_anchor: field %q is null", k)
-		}
+	// An object (never an array), each field once, matched exactly, none null.
+	m, err := readStruct(raw, fleetAnchorSpec)
+	if err != nil {
+		return nil, err
 	}
 	var proof []json.RawMessage
 	if err := json.Unmarshal(m["inclusion_proof"], &proof); err != nil {
@@ -112,8 +104,8 @@ func parseFleetAnchor(raw json.RawMessage) (*FleetAnchor, error) {
 		}
 	}
 	var a FleetAnchor
-	if err := json.Unmarshal(raw, &a); err != nil {
-		return nil, fmt.Errorf("fleet_anchor: %w", err)
+	if err := decodeFields(m, "fleet_anchor", &a); err != nil {
+		return nil, err
 	}
 	return &a, nil
 }

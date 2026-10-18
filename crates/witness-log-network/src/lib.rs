@@ -54,6 +54,7 @@ pub enum WitnessError {
 /// `evaluate_quorum` — see its doc comment for why they aren't collapsed
 /// into one number.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct WitnessEntry {
     pub name: String,
     pub operator_org: String,
@@ -89,6 +90,8 @@ pub struct WitnessEntry {
     pub is_project_operated: bool,
 }
 
+witness_log_core::object_only_serde!(WitnessEntry);
+
 /// Whether a witness is operated by a human process (a person or team
 /// manually or semi-manually running the check) or an autonomous agent
 /// polling and signing on a loop. Neither is inherently more trustworthy —
@@ -105,9 +108,12 @@ pub enum WitnessRuntime {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct WitnessDirectory {
     pub witnesses: Vec<WitnessEntry>,
 }
+
+witness_log_core::object_only_serde!(WitnessDirectory);
 
 /// Internal sentinel used to collapse every project-operated witness into
 /// a single bucket for diversity purposes, regardless of what individual
@@ -280,6 +286,7 @@ impl WitnessDirectory {
 /// A witness's signed attestation that it observed a specific checkpoint at
 /// a specific time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct WitnessReceipt {
     pub witness_pubkey: String, // hex
     pub tree_size: u64,
@@ -307,6 +314,8 @@ pub struct WitnessReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_name: Option<String>,
 }
+
+witness_log_core::object_only_serde!(WitnessReceipt);
 
 impl WitnessReceipt {
     pub fn sign(witness_key: &SigningKey, sth: &SignedTreeHead, witnessed_at_ms: u64) -> Self {
@@ -768,6 +777,7 @@ fn score_attestations(
 /// JSON shape by hand, which is exactly how those three would eventually
 /// drift out of sync with each other and with SPEC.md.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Dossier {
     pub identity_pubkey: String,
     pub leaves: Vec<Leaf>,
@@ -807,6 +817,8 @@ pub struct Dossier {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet_anchor: Option<fleet::FleetAnchorField>,
 }
+
+witness_log_core::object_only_serde!(Dossier);
 
 /// Five-valued verification verdict (the four of the 1F916 Agent Record
 /// draft §3.6 "Anchor Rule", with DIVERGED split per RFC-0002). These are

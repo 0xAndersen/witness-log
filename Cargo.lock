@@ -1086,6 +1086,7 @@ name = "witness-log-network"
 version = "0.6.0"
 dependencies = [
  "base64ct",
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "rand 0.8.7",

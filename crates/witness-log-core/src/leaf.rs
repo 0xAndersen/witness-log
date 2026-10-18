@@ -161,6 +161,7 @@ impl AuthorizationEventKind {
 /// A single committed leaf in the log. `payload_hash` is `H(payload || salt)`
 /// (see `redaction.rs`) — the raw payload itself is never stored in the tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Leaf {
     pub index: u64,
     pub leaf_type: u8,
@@ -221,6 +222,8 @@ pub struct Leaf {
     /// review, finding 17, and SPEC.md §3.3.
     pub anchor_proof_hash: Option<String>,
 }
+
+crate::object_only_serde!(Leaf);
 
 impl Leaf {
     /// Length-prefix a variable-length field: 4-byte BE length, then the

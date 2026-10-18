@@ -85,7 +85,7 @@ describe("openLog, append, export, verify", () => {
     assert.equal(bothVerdicts(reordered).verdict, "INVALID");
 
     const resigned = structuredClone(d);
-    resigned.checkpoint.timestamp_ms += 1;
+    resigned.checkpoint.timestamp_ms = Number(resigned.checkpoint.timestamp_ms) + 1;
     assert.equal(bothVerdicts(resigned).verdict, "INVALID");
 
     const otherIdentity = structuredClone(d);
@@ -97,7 +97,7 @@ describe("openLog, append, export, verify", () => {
     assert.equal(bothVerdicts(noBindings).verdict, "UNANCHORED"); // "not asserted", not a failure
 
     const wrongBinding = structuredClone(d);
-    wrongBinding.key_bindings![0].session_number += 1;
+    wrongBinding.key_bindings![0].session_number = Number(wrongBinding.key_bindings![0].session_number) + 1;
     assert.equal(bothVerdicts(wrongBinding).verdict, "INVALID");
   });
 
@@ -384,6 +384,50 @@ describe("corpus 14: both verifiers agree on every fleet anchor case (RFC-0001, 
           assert.equal("witnessed_via" in r.report, false, c.name);
         }
       }
+    }
+  });
+});
+
+describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers (outside review of 0.6.0)", () => {
+  const dir = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..", "..", "corpus");
+  const optsOf = (v: any, c: any) => ({
+    directory: c.directory === null ? undefined : v.directories[c.directory],
+    identity: c.expected_identity ?? undefined,
+    threshold: c.threshold,
+    minWitnesses: c.min_witnesses ?? undefined,
+    knownHeads: c.known_heads,
+    evidence: c.evidence.map((k: string) => v.evidence[k]),
+    allowSubMajority: c.allow_sub_majority,
+    subjectOrg: c.subject_org ?? undefined,
+  });
+  const same = (r: ReturnType<typeof verifyDossier>, e: any, name: string) => {
+    assert.equal(r.report.verdict, e.verdict, name);
+    assert.equal(r.exitCode, e.exit_code, name);
+    assert.equal(r.report.internally_consistent, e.internally_consistent, name);
+    assert.equal(r.report.contradictions.length, e.contradictions, name);
+    assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, name);
+  };
+
+  it("16: degenerate signatures in dossiers, the same verdict from both", { skip: !existsSync(join(dir, "16_ed25519_strict.json")) }, () => {
+    const v = JSON.parse(readFileSync(join(dir, "16_ed25519_strict.json"), "utf8"));
+    for (const c of v.cases) {
+      const d = v.dossiers[c.dossier];
+      for (const r of [verifyDossier(d, optsOf(v, c)), verifyDossierNative(d, optsOf(v, c))]) same(r, c.expect, c.name);
+    }
+  });
+
+  it("17: a text that is not a dossier is INVALID in TypeScript and refused natively; others the same verdict", { skip: !existsSync(join(dir, "17_dossier_parsing.json")) }, () => {
+    const v = JSON.parse(readFileSync(join(dir, "17_dossier_parsing.json"), "utf8"));
+    for (const c of v.cases) {
+      const opts = optsOf({ ...v, evidence: {} }, c);
+      if (c.expect.not_a_dossier) {
+        const ts = verifyDossier(c.dossier_json, opts);
+        assert.equal(ts.exitCode, 40, c.name);
+        assert.match(ts.failures[0], /^not a dossier: /, c.name);
+        assert.throws(() => verifyDossierNative(c.dossier_json, opts), WitnessLogError, c.name);
+        continue;
+      }
+      for (const r of [verifyDossier(c.dossier_json, opts), verifyDossierNative(c.dossier_json, opts)]) same(r, c.expect, c.name);
     }
   });
 });
