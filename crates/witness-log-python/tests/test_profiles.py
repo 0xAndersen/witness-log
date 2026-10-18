@@ -317,3 +317,19 @@ def test_vi_profile_offchain_rail(tmp_path):
         vi.record_receipt(merchant, {}, tx_ref="x", anchor_url=URL, network="card", chain_id="eip155:1")
     with pytest.raises(ValueError):
         vi.offchain_chain_id("Card Network!")
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: ap2._check_caip("eip155:8453\n", None),
+        lambda: ap2._check_caip("eip155:8453", "eip155:8453:0xabc\n"),
+        lambda: vi.offchain_chain_id("card\n"),
+    ],
+)
+def test_identifiers_with_a_trailing_newline_are_refused(call):
+    """Security sweep I3: the CAIP-2/CAIP-10 and network patterns ended in
+    `$`, which matches before a trailing newline, so "eip155:8453\\n" was
+    committed as a valid chain id."""
+    with pytest.raises(ValueError):
+        call()

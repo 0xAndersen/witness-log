@@ -215,7 +215,7 @@ def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def _session_dir(session_id: str) -> Path:
-    if not SESSION_ID.match(session_id):
+    if not SESSION_ID.fullmatch(session_id):
         raise ValueError(
             "session_id must be 1-128 characters of letters, digits, '.', '_' or '-' "
             "(it names a directory; no path separators)"
@@ -334,7 +334,7 @@ def _read_witnessed(session_id: str) -> "tuple[Optional[Dict[str, Any]], Optiona
         root = str(doc["checkpoint"]["root_hash"]).lower()
     except (ValueError, KeyError, TypeError) as e:
         return None, f"the witnessed head in {p} is unreadable ({type(e).__name__}: {e})"
-    if size < 0 or not _HEX64.match(root):
+    if size < 0 or not _HEX64.fullmatch(root):
         return None, f"the witnessed head in {p} is malformed (size {size}, root {root[:80]!r})"
     return doc, None
 
@@ -349,7 +349,7 @@ def _witnessed_heads(session_id: str, witnessed: Optional[Dict[str, Any]]) -> "l
         heads.append(f'{int(cp["tree_size"])}:{str(cp["root_hash"]).lower()}')
     st = load_state(str(_journal_path(session_id)) + ".witnesses.json")
     root = st["cosigned_root"].lower()
-    if st["cosigned_size"] > 0 and _HEX64.match(root):
+    if st["cosigned_size"] > 0 and _HEX64.fullmatch(root):
         heads.append(f'{st["cosigned_size"]}:{root}')
     return sorted(set(heads))
 

@@ -217,3 +217,11 @@ def test_main_exit_codes(tmp_path, server, capsys):
 def test_real_registry_offline():
     """The committed registry (possibly empty) must pass its own checks."""
     assert validate.main(["--offline"]) == 0
+
+
+def test_pubkey_with_a_trailing_newline_refused(tmp_path):
+    """Security sweep I3: HEX32 ended in `$`, which matches before a
+    trailing newline, so a key with one passed validate.py (and
+    build_directory.py)."""
+    _, problems, _ = run(tmp_path, entry(pubkey=KEY + "\n"), offline=True)
+    assert any("64 hex" in p for p in problems), problems

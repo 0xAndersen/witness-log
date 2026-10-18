@@ -247,3 +247,24 @@ async def test_a_journal_rewritten_or_truncated_after_witnessing_is_a_tamper_ale
     finally:
         for h, _ in ws:
             h.shutdown()
+
+
+@pytest.mark.anyio
+async def test_identifiers_with_a_trailing_newline_are_refused(tmp_path):
+    """Security sweep I3: the session-id pattern ended in `$`, which also
+    matches before a trailing newline, so "abc\\n" passed and named a
+    directory with a newline in it. The witnessed head's root had the
+    same check."""
+    home = tmp_path / "home"
+    async with Client(_params(home)) as c:
+        for sid in ("abc\n", "a\n", "ok-id\n"):
+            t = _error_text(await c.call_tool("initialize_witness_chain", {"session_id": sid}))
+            assert "session_id must be" in t, (sid, t)
+        assert not home.exists() or all("\n" not in p.name for p in home.iterdir())
+        await c.call_tool("initialize_witness_chain", {"session_id": "a"})
+        root = _data(await c.call_tool("audit_this_session", {"session_id": "a"}))["root"]
+        (home / "a" / "journal.jsonl.witnessed.json").write_text(
+            json.dumps({"checkpoint": {"tree_size": 1, "root_hash": root + "\n"}})
+        )
+        v = _data(await c.call_tool("verify_chain_integrity", {"session_id": "a"}))
+        assert any("malformed" in a for a in v["tamper_alerts"]), v["tamper_alerts"]
