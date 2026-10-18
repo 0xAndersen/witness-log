@@ -221,9 +221,12 @@ rewrite anything from last month.
 **`WriteReceipt`** is the answer to censorship-by-omission. A plain
 checkpoint commits to no particular event, so it cannot prove an event was
 *dropped*. A write receipt binds the identity to one `payload_hash` at one
-`tree_size`; if witnessed checkpoints later advance past that size and the
-leaf never appears, the receipt plus the checkpoints are evidence anyone
-can check (§9.4).
+`tree_size`; if checkpoints cosigned by two independent operators later
+advance past that size and the log's leaves, which must reproduce those
+checkpoints' roots, do not contain the event, the receipt plus the
+checkpoints and leaves are evidence anyone can check (§9.4,
+`silence_proof_for_subject`, which also says why a result is
+inconclusive).
 
 ---
 

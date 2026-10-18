@@ -176,14 +176,20 @@ fn finding07_silence_proof_deduplicates_observed_checkpoints() {
     let key = SigningKey::from_bytes(&id.to_bytes());
     let write_receipt = WriteReceipt::sign(&key, &"ab".repeat(32), 1, 1000);
     let later = SignedTreeHead::sign(&key, 5, &[2u8; 32], 2000);
-    let w = SigningKey::generate(&mut rand::rngs::OsRng);
+    // Two independent operators: since review III (M1) a checkpoint counts
+    // only with the bar a WITNESSED verdict needs.
     let mut dir = WitnessDirectory::default();
-    dir.witnesses
-        .push(mk_witness_entry(hex::encode(w.verifying_key().to_bytes())));
-    let r = WitnessReceipt::sign(&w, &later, 2000);
+    let mut receipts = vec![];
+    for org in ["org a", "org b"] {
+        let w = SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut e = mk_witness_entry(hex::encode(w.verifying_key().to_bytes()));
+        e.operator_org = org.into();
+        dir.witnesses.push(e);
+        receipts.push(WitnessReceipt::sign(&w, &later, 2000));
+    }
     let oc = ObservedCheckpoint {
         checkpoint: later,
-        receipts: vec![r],
+        receipts,
     };
     // Same checkpoint passed in twice -- must count once, not twice.
     let result = silence_proof(&write_receipt, &[], &[oc.clone(), oc], &dir, 2);
@@ -239,18 +245,26 @@ fn silence_proof_requires_a_signed_commitment_to_the_event() {
     assert!(receipt.verify().is_ok());
     assert!(log.write_receipt(99).is_none());
 
-    // Two genuinely witnessed later checkpoints from this log.
-    let w = SigningKey::generate(&mut rand::rngs::OsRng);
+    // Two later checkpoints from this log, each cosigned by two
+    // independent operators.
+    let ws: Vec<SigningKey> = (0..2)
+        .map(|_| SigningKey::generate(&mut rand::rngs::OsRng))
+        .collect();
     let mut dir = WitnessDirectory::default();
-    dir.witnesses
-        .push(mk_witness_entry(hex::encode(w.verifying_key().to_bytes())));
+    for (i, w) in ws.iter().enumerate() {
+        let mut e = mk_witness_entry(hex::encode(w.verifying_key().to_bytes()));
+        e.operator_org = format!("org {i}");
+        dir.witnesses.push(e);
+    }
     let mut later = vec![];
     for (size, b) in [(5u64, 2u8), (9, 3)] {
         let cp = SignedTreeHead::sign(&key, size, &[b; 32], 5000 + size);
-        let r = WitnessReceipt::sign(&w, &cp, 5000 + size);
         later.push(ObservedCheckpoint {
+            receipts: ws
+                .iter()
+                .map(|w| WitnessReceipt::sign(w, &cp, 5000 + size))
+                .collect(),
             checkpoint: cp,
-            receipts: vec![r],
         });
     }
 
@@ -259,12 +273,14 @@ fn silence_proof_requires_a_signed_commitment_to_the_event() {
         silence_proof(&receipt, log.leaves(), &later, &dir, 2),
         SilenceProofResult::Present { leaf_index: 0 }
     ));
-    // Absent from the view with two witnessed checkpoints past it: censored.
+    // Absent from an empty view: since review III (H1) that proves
+    // nothing, because no leaves reproduce the witnessed roots. (The full
+    // Censored path is in tests/review3_silence_proof.rs.)
     assert!(matches!(
         silence_proof(&receipt, &[], &later, &dir, 2),
-        SilenceProofResult::Censored {
-            receipt_tree_size: 0,
-            witnessed_checkpoints_after: 2
+        SilenceProofResult::Inconclusive {
+            witnessed_checkpoints_seen: 2,
+            ..
         }
     ));
     // A receipt whose payload hash was swapped after signing proves nothing.

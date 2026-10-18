@@ -2171,24 +2171,27 @@ mod policy_tests {
     }
 }
 
-/// Outcome of a silence-proof check. An agent that submitted an event,
-/// received a write receipt, and then watched N witnessed checkpoints
-/// pass without the event appearing has publishable evidence of censorship.
-/// See `silence_proof`.
+/// Outcome of a silence-proof check: did an event the log acknowledged
+/// (a signed write receipt) make it into the log's witnessed history?
+/// See [`silence_proof_for_subject`] for what each outcome rests on.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SilenceProofResult {
-    /// The event is present in the caller's leaf view. No censorship.
+    /// The event is in the caller's leaf view. Not an accusation; before
+    /// relying on it as proof of inclusion, check an inclusion proof
+    /// against a witnessed checkpoint.
     Present {
         /// The leaf index where the event appears.
         leaf_index: u64,
     },
-    /// N witnessed checkpoints after the write receipt's tree_size and
-    /// the event is still absent. Together with the (signed) write
-    /// receipt and those checkpoints, this is publishable evidence of
-    /// censorship-by-omission: the receipt proves the log accepted THIS
-    /// event; the witnessed checkpoints prove the log advanced past that
-    /// point; the absence proves the event was never included.
+    /// The log signed a receipt for the event, at least
+    /// `min_witnessed_checkpoints` distinct later checkpoints of the same
+    /// log were cosigned by two or more independent operators from the
+    /// caller's directory, the caller's leaves reproduce the root of every
+    /// one of them (so they are exactly the log's leaves up to the largest),
+    /// and the event is not among them. Anyone holding the same receipt,
+    /// checkpoints with their receipts, and leaves reaches this result
+    /// again, which is what makes the bundle evidence rather than a claim.
     Censored {
         /// The tree_size in the write receipt — the registry claimed to
         /// have accepted the event at this size.
@@ -2197,14 +2200,31 @@ pub enum SilenceProofResult {
         /// without the event appearing.
         witnessed_checkpoints_after: usize,
     },
-    /// Not enough information yet — fewer than `min_witnessed_checkpoints`
-    /// witnessed checkpoints have been observed since the receipt. Wait longer
-    /// before drawing a conclusion.
+    /// Not enough to conclude either way: too few witnessed checkpoints
+    /// since the receipt, a receipt that does not verify, leaves that do
+    /// not reproduce the witnessed checkpoints, or witnessed checkpoints
+    /// that contradict each other. [`SilenceProofReport::reason`] says
+    /// which.
     Inconclusive {
         receipt_tree_size: u64,
         witnessed_checkpoints_seen: usize,
         min_required: usize,
     },
+}
+
+/// [`SilenceProofResult`] plus what it was bound to and, when
+/// inconclusive, why.
+#[derive(Debug, Clone, Serialize)]
+pub struct SilenceProofReport {
+    pub result: SilenceProofResult,
+    /// The largest witnessed checkpoint `(tree_size, root_hash)` that the
+    /// caller's leaves reproduced, in whose leaves the event's absence was
+    /// checked. Set for `Censored`, and for `Inconclusive` when only the
+    /// count fell short.
+    pub bound_tree_size: Option<u64>,
+    pub bound_root_hash: Option<String>,
+    /// Why the result is `Inconclusive`; `None` otherwise.
+    pub reason: Option<String>,
 }
 
 /// One later checkpoint observed after a write receipt, paired with
@@ -2217,37 +2237,9 @@ pub struct ObservedCheckpoint {
     pub receipts: Vec<WitnessReceipt>,
 }
 
-/// Check whether an event the log acknowledged (`write_receipt`) appears
-/// in `latest_leaves`, or has been provably censored.
-///
-/// `write_receipt`: a [`WriteReceipt`] the log signed when it accepted the
-/// event. It commits the log to a specific `payload_hash` at a specific
-/// `tree_size`, which is what makes the finding evidence: a log that
-/// signs "I accepted H at size N" and then has witnesses cosign heads
-/// well past N that never contain H has censored H. The receipt's
-/// signature is verified first; an unverifiable receipt proves nothing.
-/// (Before 0.3.1 this function took a plain checkpoint as the "receipt",
-/// which commits to no event at all, so any payload hash could be
-/// "proven" censored against any witnessed log. Found by the final
-/// pre-publish review.)
-///
-/// `latest_leaves` must be the caller's most current view of the log —
-/// an event that appears in a checkpoint later than the caller's snapshot
-/// will read as absent here, which is a limitation of the caller's
-/// freshness, not a defect in this check.
-///
-/// `later_checkpoints`: every checkpoint the caller has observed with
-/// `tree_size > write_receipt.tree_size`, each paired with its receipts.
-/// A checkpoint counts toward `witnessed_checkpoints_after` only if its own
-/// signature verifies, it was signed by the SAME identity as the write
-/// receipt, AND at least one of its receipts is a valid signature from a
-/// key present in `trusted_directory` — this is what makes it a genuinely
-/// WITNESSED checkpoint rather than merely a registry-asserted one.
-/// Multiple receipts on the SAME checkpoint count that checkpoint once.
-///
-/// `min_witnessed_checkpoints`: how many DISTINCT witnessed checkpoints
-/// after the receipt's tree_size must pass before calling it censorship.
-/// 2 is a conservative minimum; 5 is robust.
+/// [`silence_proof_for_subject`] without naming the log's operator; the
+/// result only. Kept for 0.6 callers: since 0.6.1 its `Censored` requires
+/// the same binding and independence as the full function.
 pub fn silence_proof(
     write_receipt: &WriteReceipt,
     latest_leaves: &[Leaf],
@@ -2255,86 +2247,196 @@ pub fn silence_proof(
     trusted_directory: &WitnessDirectory,
     min_witnessed_checkpoints: usize,
 ) -> SilenceProofResult {
+    silence_proof_for_subject(
+        write_receipt,
+        latest_leaves,
+        later_checkpoints,
+        trusted_directory,
+        min_witnessed_checkpoints,
+        None,
+    )
+    .result
+}
+
+/// Check whether an event the log acknowledged (`write_receipt`) is in its
+/// witnessed history, or has been provably left out of it.
+///
+/// `write_receipt`: a [`WriteReceipt`] the log signed when it accepted the
+/// event. It commits the log to a specific `payload_hash` at a specific
+/// `tree_size`. Its signature is verified first; an unverifiable receipt
+/// proves nothing. (Before 0.3.1 this took a plain checkpoint, which
+/// commits to no event.)
+///
+/// `latest_leaves`: the log's leaves as the caller holds them, from index
+/// 0. They are trusted for nothing: `Censored` requires that they
+/// reproduce the root of every counted checkpoint, so a caller cannot
+/// drop the event from the list and accuse an honest log. (0.6.0 and
+/// earlier counted the checkpoints and looked for the event in this list
+/// without joining the two, so an accuser could pass a list with the event
+/// removed, or no list at all, and get `Censored` against an honest log.
+/// Found by the third outside review, H1.)
+///
+/// `later_checkpoints`: checkpoints the caller observed with
+/// `tree_size > write_receipt.tree_size`, each with its witness receipts.
+/// One counts only if its own signature verifies, it was signed by the
+/// same identity as the receipt, and its valid receipts from witnesses in
+/// `trusted_directory` come from at least
+/// [`MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED`] distinct independent
+/// operators, the bar `Verdict::Witnessed` uses (project-operated
+/// witnesses never count; witnesses of the log's own operator never
+/// count, the operator being the directory entry with the log's key or
+/// `subject_org`). One trusted receipt used to be enough, which made an
+/// accusation easier to reach than an affirmation (review III, M1). The
+/// same `(tree_size, root_hash)` observed twice counts once.
+///
+/// `min_witnessed_checkpoints`: how many distinct counted checkpoints must
+/// pass before calling it censorship. 2 is a conservative minimum; 5 is
+/// robust.
+///
+/// `subject_org`: the organisation that operates the log being checked,
+/// as for [`VerifyContext::subject_org`]; its witnesses never count.
+pub fn silence_proof_for_subject(
+    write_receipt: &WriteReceipt,
+    latest_leaves: &[Leaf],
+    later_checkpoints: &[ObservedCheckpoint],
+    trusted_directory: &WitnessDirectory,
+    min_witnessed_checkpoints: usize,
+    subject_org: Option<&str>,
+) -> SilenceProofReport {
+    let inconclusive = |seen: usize, bound: Option<(u64, String)>, reason: String| {
+        let (bound_tree_size, bound_root_hash) = match bound {
+            Some((n, r)) => (Some(n), Some(r)),
+            None => (None, None),
+        };
+        SilenceProofReport {
+            result: SilenceProofResult::Inconclusive {
+                receipt_tree_size: write_receipt.tree_size,
+                witnessed_checkpoints_seen: seen,
+                min_required: min_witnessed_checkpoints,
+            },
+            bound_tree_size,
+            bound_root_hash,
+            reason: Some(reason),
+        }
+    };
     // An unverifiable write receipt proves nothing about acceptance.
     if write_receipt.verify().is_err() {
-        return SilenceProofResult::Inconclusive {
-            receipt_tree_size: write_receipt.tree_size,
-            witnessed_checkpoints_seen: 0,
-            min_required: min_witnessed_checkpoints,
-        };
+        return inconclusive(0, None, "the write receipt does not verify".into());
     }
     let event_payload_hash = normalize_hex(&write_receipt.payload_hash);
 
-    // 1. Is the event present in the caller's current leaf view?
+    // 1. In the caller's view: not an accusation, whatever else holds.
     if let Some(idx) = latest_leaves
         .iter()
         .position(|l| normalize_hex(&l.payload_hash) == event_payload_hash)
     {
-        return SilenceProofResult::Present {
-            leaf_index: idx as u64,
+        return SilenceProofReport {
+            result: SilenceProofResult::Present {
+                leaf_index: idx as u64,
+            },
+            bound_tree_size: None,
+            bound_root_hash: None,
+            reason: None,
         };
     }
 
-    // 2. Count DISTINCT checkpoints, post-dating the receipt, that are
-    // themselves genuinely witnessed (>=1 valid receipt from a key in the
-    // trusted directory) -- not the number of receipts, and not the
-    // number of ObservedCheckpoint entries a naive polling caller may
-    // have accumulated duplicates of. A checkpoint is only counted if:
-    //   (a) it postdates the write receipt's tree_size,
-    //   (b) its own signature verifies,
-    //   (c) it was actually signed by the SAME log identity as the write
-    //       receipt -- a checkpoint from an unrelated log must never
-    //       count toward THIS log's censorship accusation, regardless of
-    //       how well-witnessed that other log happens to be,
-    //   (d) at least one of its receipts is a valid signature from a key
-    //       in the trusted directory,
-    //   (e) it is DISTINCT from every other counted checkpoint by
-    //       (tree_size, root_hash) -- the same witnessed checkpoint
-    //       observed and passed in twice (e.g. by a caller polling and
-    //       accumulating snapshots) must count once, not once per
-    //       observation. See the second-round review, finding 07 (POC C/D).
-    let mut counted_checkpoints: std::collections::HashSet<(u64, String)> =
-        std::collections::HashSet::new();
+    // 2. Distinct checkpoints after the receipt, of this log, cosigned by
+    // at least two independent operators from the caller's directory.
+    let mut counted: std::collections::BTreeSet<(u64, String)> = Default::default();
     for oc in later_checkpoints {
-        if oc.checkpoint.tree_size <= write_receipt.tree_size {
-            continue;
-        }
-        if oc.checkpoint.verify().is_err() {
-            continue;
-        }
-        if normalize_hex(&oc.checkpoint.signer_pubkey)
-            != normalize_hex(&write_receipt.signer_pubkey)
+        if oc.checkpoint.tree_size <= write_receipt.tree_size
+            || oc.checkpoint.verify().is_err()
+            || normalize_hex(&oc.checkpoint.signer_pubkey)
+                != normalize_hex(&write_receipt.signer_pubkey)
         {
             continue;
         }
-        let has_trusted_receipt = oc.receipts.iter().any(|r| {
-            r.verify(&oc.checkpoint).is_ok()
-                && trusted_directory
-                    .witnesses
-                    .iter()
-                    .any(|w| normalize_hex(&w.pubkey) == normalize_hex(&r.witness_pubkey))
-        });
-        if !has_trusted_receipt {
+        let q = evaluate_quorum_for_subject(
+            &oc.checkpoint,
+            &oc.receipts,
+            trusted_directory,
+            0.0,
+            subject_org,
+        );
+        if q.distinct_independent_operators < MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED {
             continue;
         }
-        counted_checkpoints.insert((
+        counted.insert((
             oc.checkpoint.tree_size,
             normalize_hex(&oc.checkpoint.root_hash),
         ));
     }
-    let witnessed_after = counted_checkpoints.len();
+    let seen = counted.len();
 
-    if witnessed_after >= min_witnessed_checkpoints {
-        SilenceProofResult::Censored {
-            receipt_tree_size: write_receipt.tree_size,
-            witnessed_checkpoints_after: witnessed_after,
+    // Two witnessed roots for one size: the log equivocated, and absence
+    // from one history says nothing about the other.
+    let mut sizes = HashSet::new();
+    if let Some((n, _)) = counted.iter().find(|(n, _)| !sizes.insert(*n)) {
+        return inconclusive(
+            seen,
+            None,
+            format!(
+                "two witnessed checkpoints of size {n} commit to different roots:                  the log showed two histories (equivocation evidence, not a silence proof)"
+            ),
+        );
+    }
+    let Some((largest, largest_root)) = counted.iter().next_back().cloned() else {
+        return inconclusive(
+            0,
+            None,
+            "no checkpoint after the receipt was cosigned by two independent operators              from the trusted directory"
+                .into(),
+        );
+    };
+
+    // 3. Bind the absence: the leaves must be the log's leaves up to the
+    // largest witnessed checkpoint, and agree with every smaller one.
+    if (latest_leaves.len() as u64) < largest {
+        return inconclusive(
+            seen,
+            None,
+            format!(
+                "the leaves cover {} entries but the largest witnessed checkpoint has {largest}:                  fetch the log up to that size",
+                latest_leaves.len()
+            ),
+        );
+    }
+    let mut tree = MerkleTree::new();
+    for l in latest_leaves.iter().take(largest as usize) {
+        tree.append(leaf_hash(&l.canonical_bytes()));
+    }
+    for (n, root) in &counted {
+        if tree.root_at(*n).map(hex::encode).as_deref() != Some(root.as_str()) {
+            return inconclusive(
+                seen,
+                None,
+                format!(
+                    "the leaves do not reproduce the witnessed root at size {n}: they are not                      the log's history, so the event's absence from them proves nothing"
+                ),
+            );
+        }
+    }
+    let bound = Some((largest, largest_root));
+
+    if seen >= min_witnessed_checkpoints {
+        let (bound_tree_size, bound_root_hash) = bound.unzip();
+        SilenceProofReport {
+            result: SilenceProofResult::Censored {
+                receipt_tree_size: write_receipt.tree_size,
+                witnessed_checkpoints_after: seen,
+            },
+            bound_tree_size,
+            bound_root_hash,
+            reason: None,
         }
     } else {
-        SilenceProofResult::Inconclusive {
-            receipt_tree_size: write_receipt.tree_size,
-            witnessed_checkpoints_seen: witnessed_after,
-            min_required: min_witnessed_checkpoints,
-        }
+        inconclusive(
+            seen,
+            bound,
+            format!(
+                "{seen} witnessed checkpoint(s) after the receipt; {min_witnessed_checkpoints} required"
+            ),
+        )
     }
 }
 

@@ -1146,12 +1146,33 @@ statement binding the log identity to one `payload_hash` at one
 message = "witness-log-write-receipt-v1" || lp(sig_alg) || lp(signer_pubkey) || lp(payload_hash as UTF-8 hex) || tree_size (8B BE) || issued_at_ms (8B BE)
 ```
 
-The holder of a receipt can later prove censorship-by-omission: if
-witnessed checkpoints of this log advance past `tree_size` and the
-event never appears, the receipt plus those checkpoints are evidence a
-third party can check with the log's key alone. A plain checkpoint is
-not a write receipt: it commits to no event, so it proves nothing about
-one (an earlier draft of the reference implementation made that mistake).
+The holder of a receipt can later prove censorship-by-omission. The
+evidence is the receipt, the later checkpoints of the same log with their
+witness receipts, and the log's leaves; a verifier concludes *censored*
+only when all of these hold:
+
+1. the write receipt verifies under the log's key;
+2. at least the required number of distinct checkpoints with
+   `tree_size` greater than the receipt's verify under the same key, and
+   each was cosigned by witnesses in the verifier's trusted directory
+   from at least two distinct independent operators (the bar of
+   `Witnessed`, §9.2: project-operated witnesses and the log's own
+   operator never count);
+3. no two of those checkpoints commit to different roots for one size
+   (that is equivocation, a different finding);
+4. the supplied leaves reproduce the root of every one of those
+   checkpoints, up to the largest — so they are exactly the log's leaves,
+   and an accuser cannot remove the event from them;
+5. the event's `payload_hash` is not among those leaves.
+
+Anything less is inconclusive, never an accusation. A third party holding
+the same bundle reaches the same conclusion. A plain checkpoint is not a
+write receipt: it commits to no event, so it proves nothing about one (an
+earlier draft of the reference implementation made that mistake). Before
+0.6.1 the reference implementation checked 1, 2 with a single trusted
+receipt, and 5 against the caller's leaf list without 3 and 4, so a list
+with the event removed produced an accusation against an honest log
+(review III, H1 and M1).
 
 ## 10. Open questions for v1.0
 
