@@ -223,10 +223,11 @@ USAGE:
       POST /submit {directory_path?,want?,min?}, GET /dossier, GET /info.
       Loopback only unless --allow-remote.
 
-  witness-log directory build [--registry DIR | --url URL] [--include-project] --out trusted.json
+  witness-log directory build [--registry DIR | --url URL] [--include-project] [--allow-insecure] --out trusted.json
   witness-log directory add <trusted.json> --vkey <c2sp vkey> --org ORG --url URL [--compute P]
       Build a directory file from registry/witnesses/*.json (the schema
-      registry/build_directory.py produces), or add one witness by its
+      registry/build_directory.py produces; every entry must pass the
+      offline checks of registry/validate.py), or add one witness by its
       C2SP verifier key.
 
   witness-log diff <a.json> <b.json>

@@ -405,16 +405,23 @@ defaults to `max(2, contacted/2 + 1)`. Errors are `{"error":"..."}` with
 ## directory
 
 ```
-witness-log directory build [--registry DIR | --url URL] [--include-project] --out trusted.json
+witness-log directory build [--registry DIR | --url URL] [--include-project] [--allow-insecure] --out trusted.json
 ```
 
 Collects `DIR/*.json` (one directory entry per file, sorted by file name;
 default `DIR` is `./registry/witnesses`) or a directory document fetched
-from an `http://` or `https://` URL into `{"witnesses": [...]}`, the schema
+from an `https://` URL into `{"witnesses": [...]}`, the schema
 `registry/build_directory.py` prints and `verify`/`submit` read.
-Project-operated entries are left out unless `--include-project`. A
-malformed entry or a duplicate key fails the build and names the file.
-Exit 1 on failure, 2 usage.
+Project-operated entries are left out unless `--include-project`. Every
+entry, project-operated or not, must pass the offline checks of
+`registry/validate.py`: only the known fields, all required ones present,
+a 64 lowercase hex key, a real `operator_org` with no stray whitespace,
+`runtime` `human` or `agent`, an `https://` URL that is not loopback, a
+C2SP key name, no duplicate key or name. Otherwise every problem is
+printed with the file (or `URL#index`) it is in, nothing is written, and
+the exit status is 1. `--allow-insecure` accepts `http://` and loopback
+URLs, in entries and for `--url`, for local tests. Exit 2 on usage
+errors, including a plain-`http://` `--url` without `--allow-insecure`.
 
 ```
 witness-log directory add <trusted.json> --vkey <c2sp vkey> --org ORG --url URL [--compute PROVIDER] [--project-operated]

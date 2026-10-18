@@ -197,7 +197,10 @@ def p_directory_builder(a: Agent):
     for i, e in enumerate(entries):
         json.dump(e, open(os.path.join(reg, f"w{i}.json"), "w"))
     out = os.path.join(a.dir, "built.json")
-    code, so, se = a.op("cli.directory.build", cli, a, "directory", "build", "--registry", reg, "--include-project", "--out", out)
+    # The swarm's witnesses listen on http://127.0.0.1; a registry entry must
+    # be https and not loopback, so a local fleet needs --allow-insecure.
+    code, so, se = a.op("cli.directory.build", cli, a, "directory", "build", "--registry", reg, "--include-project",
+                        "--allow-insecure", "--out", out)
     if not a.expect("`directory build` of valid entries exits 0", code == 0, "exit 0", f"exit {code} {se[:120]}"):
         return
     built = json.load(open(out))
