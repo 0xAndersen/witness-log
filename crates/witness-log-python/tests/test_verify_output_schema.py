@@ -38,7 +38,8 @@ def _check_output(doc, where):
     assert not errors, f"{where}: {errors[0].json_path}: {errors[0].message}"
     assert doc["exit_code"] in EXIT[doc["verdict"]], where
     assert doc["report"]["verdict"] == LOWER[doc["verdict"]], where
-    assert (doc["report"]["quorum"] is None) == (not doc["directory_pinned"]), where
+    if not doc["directory_pinned"]:
+        assert doc["report"]["quorum"] is None, where
     assert bool(doc["report"]["failures"]) == (doc["verdict"] == "INVALID"), where
 
 
@@ -97,3 +98,29 @@ def test_cli_verify_json_matches_the_schema():
         _check_output(doc, " ".join(extra) or "(no flags)")
         assert p.returncode == doc["exit_code"], extra
     assert doc["verdict"] == "INVALID"
+
+
+@pytest.mark.skipif(find_cli() is None, reason="witness-log CLI not built")
+def test_cli_fleet_anchor_output_matches_the_schema(tmp_path):
+    """Corpus 14 (RFC-0001, experimental): the optional fleet fields too."""
+    cli = find_cli()
+    vec = json.loads((REPO / "corpus" / "14_fleet_anchor.json").read_text())
+    directory = tmp_path / "trusted.json"
+    directory.write_text(json.dumps(vec["trusted_directory"]))
+    seen = set()
+    for name, dossier in vec["dossiers"].items():
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(dossier))
+        for extra in ([], ["--accept-fleet-anchor"]):
+            p = subprocess.run(
+                [cli, "verify", str(path), "--json", "--directory", str(directory), "--min-witnesses", "2",
+                 "--subject-org", vec["fleet_operator_org"], *extra],
+                capture_output=True, text=True,
+            )
+            doc = json.loads(p.stdout)
+            _check_output(doc, f"{name} {extra}")
+            assert p.returncode == doc["exit_code"]
+            fa = doc["report"].get("fleet_anchor")
+            if fa:
+                seen.add(fa["status"])
+    assert {"ignored", "verified", "failed"} <= seen

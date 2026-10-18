@@ -137,7 +137,9 @@ per agent.
 >    ~4 MB binary; operator notes: [link to deploy/witness/OPERATORS.md].
 > 2. Tell us whether you would enroll one log per organisation whose
 >    entries are its agents' checkpoints. That design is RFC-0001
->    ([link]); your answer decides whether we build it that way.
+>    ([link]). An experimental prototype ships in 0.6.0 (`witness-log
+>    fleet`), and an unmodified witness cosigns it after one `add-log`;
+>    your answer decides whether it becomes part of the spec.
 >
 > Either way, corrections to how we use the protocol are very welcome.
 >

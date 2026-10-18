@@ -76,6 +76,27 @@ other logs instead of refusing to start.
   the job on the verdict, with outputs and a job summary
   (docs/wiki/GitHub-Action.md).
 
+### Experimental: fleet checkpoint log (RFC-0001)
+
+Not part of the spec; nothing changes for a caller who does not opt in.
+One append-only log per organisation whose entries are its agents'
+checkpoint notes, so an existing transparency-log witness can be enrolled
+once per organisation instead of once per agent (docs/wiki/Fleet-Log.md).
+`witness-log fleet init / serve / witness`: the fleet log refuses a
+same-size fork of any agent (422 with an equivocation proof, like a
+witness) and gets its own checkpoint cosigned by ordinary witnesses
+through `add-log` and add-checkpoint. `submit --fleet <url>` writes a
+dossier with an optional `fleet_anchor`. `verify --accept-fleet-anchor`
+(requires `--subject-org`; Go, TypeScript, Node, wasm and Python take the
+same opt-in) also counts directory witnesses that cosigned the fleet
+checkpoint, deduplicated by key across both paths; a failed anchor is
+reported and adds nothing; fleet cosigners never make a dossier
+split-view resistant, so WITNESSED through the fleet alone exits 11. The
+report gains `fleet_anchor`, `witnessed_via` and `witness_paths`. Corpus
+vector 14. No tiles yet. Whether transparency-log operators will enroll
+such a log is the RFC's open question 3; the operator email drafts in
+docs/outreach ask it.
+
 ### Operators and adoption
 
 - **Three-organisation pilot**: `examples/pilot-triangle/run.py` (CLI
