@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: page rendering test (no browser, no engine)
+        run: node --test web/test/*.test.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
