@@ -787,8 +787,7 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
             ));
         }
     }
-    let dossier: witness_log_network::Dossier =
-        serde_json::from_str(&dossier_json).map_err(invalid)?;
+    let dossier = witness_log_network::Dossier::from_json(&dossier_json).map_err(invalid)?;
     let trusted = match &o.directory_json {
         Some(s) => Some(parse_directory(s)?),
         None => None,

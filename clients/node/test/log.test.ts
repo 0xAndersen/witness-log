@@ -430,4 +430,19 @@ describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers
       for (const r of [verifyDossier(c.dossier_json, opts), verifyDossierNative(c.dossier_json, opts)]) same(r, c.expect, c.name);
     }
   });
+
+  it("a text nested deeper than 1000, refused by both at once; a huge input quoted in part", { skip: !existsSync(join(dir, "17_dossier_parsing.json")) }, () => {
+    // Outside audit of 0.6.1: an ignored key of any depth was read by both,
+    // and refusals quoted the whole input.
+    const v = JSON.parse(readFileSync(join(dir, "17_dossier_parsing.json"), "utf8"));
+    const min: string = v.cases.find((c: { name: string }) => c.name === "whitespace around the object").dossier_json.trim();
+    const deep = `${min.slice(0, -1)},"zz":${"[".repeat(5_000_000)}${"]".repeat(5_000_000)}}`;
+    const t0 = performance.now();
+    assert.match(verifyDossier(deep).failures[0], /^not a dossier: nested deeper than 1000/);
+    assert.throws(() => verifyDossierNative(deep), (e: Error) => e instanceof WitnessLogError && /nested deeper than 1000/.test(e.message));
+    assert.ok(performance.now() - t0 < 3000, `${Math.round(performance.now() - t0)} ms`);
+    const huge = min.replace('"tree_size":0', `"tree_size":"${"a".repeat(10_000_000)}"`);
+    assert.ok(verifyDossier(huge).failures[0].length < 300);
+    assert.throws(() => verifyDossierNative(huge), (e: Error) => e instanceof WitnessLogError && e.message.length < 1000);
+  });
 });

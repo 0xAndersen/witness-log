@@ -256,8 +256,7 @@ pub fn verify_dossier_value(
     directory_json: Option<&str>,
     options: &VerifyOptions,
 ) -> Result<Value, String> {
-    let dossier: Dossier =
-        serde_json::from_str(dossier_json).map_err(|e| format!("not a dossier: {e}"))?;
+    let dossier = Dossier::from_json(dossier_json).map_err(|e| format!("not a dossier: {e}"))?;
     let trusted = match directory_json {
         Some(raw) => Some(parse_directory(raw)?),
         None => None,
@@ -351,8 +350,8 @@ fn names_other<'a>(leaves: &'a [Leaf], other: &str, tag: u8) -> Vec<&'a Leaf> {
 /// naming B against those of B naming A. Returns `{a, b, bound, failed,
 /// exit}` with the CLI's exit codes (0 bound, 30 mismatch, 10 nothing).
 pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
-    let a: Dossier = serde_json::from_str(a_json).map_err(|e| format!("a: not a dossier: {e}"))?;
-    let b: Dossier = serde_json::from_str(b_json).map_err(|e| format!("b: not a dossier: {e}"))?;
+    let a = Dossier::from_json(a_json).map_err(|e| format!("a: not a dossier: {e}"))?;
+    let b = Dossier::from_json(b_json).map_err(|e| format!("b: not a dossier: {e}"))?;
     let (ia, ib) = (a.identity_pubkey.as_str(), b.identity_pubkey.as_str());
     if ia == ib {
         return Err(format!(

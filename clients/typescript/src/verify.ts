@@ -25,7 +25,7 @@
  */
 import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from "node:crypto";
 import { EXIT_CODES, type Verdict } from "./cli.js";
-import { parseJsonExact, readDossier, readRevocation, readWitnessEntry, type FleetAnchorField, type U64 } from "./dossier-json.js";
+import { echo, readDossier, readDossierText, readRevocation, readWitnessEntry, type FleetAnchorField, type U64 } from "./dossier-json.js";
 
 export type { U64 } from "./dossier-json.js";
 
@@ -713,7 +713,7 @@ export function validateLeaf(leaf: Leaf, expectedIndex: number): string | null {
       if (e === null && present(leaf.anchor_proof_json)) {
         const actual = bytesToHex(sha256(utf8.encode(leaf.anchor_proof_json!)));
         if (actual !== leaf.anchor_proof_hash) {
-          e = `anchor_proof_json does not hash to the committed anchor_proof_hash (committed ${leaf.anchor_proof_hash}, actual ${actual})`;
+          e = `anchor_proof_json does not hash to the committed anchor_proof_hash (committed ${echo(leaf.anchor_proof_hash)}, actual ${actual})`;
         }
       }
       if (e === null && !/^https?:\/\//.test(leaf.anchor_url!)) {
@@ -1063,7 +1063,7 @@ export function parseKnownHead(h: KnownHead | string): KnownHead {
   let root: string;
   if (typeof h === "string") {
     const i = h.indexOf(":");
-    if (i < 0) throw new TypeError(`known head: expected <size>:<root hex>, got ${JSON.stringify(h)}`);
+    if (i < 0) throw new TypeError(`known head: expected <size>:<root hex>, got ${echo(h)}`);
     size = trimWhiteSpace(h.slice(0, i));
     root = trimWhiteSpace(h.slice(i + 1));
   } else {
@@ -1073,10 +1073,10 @@ export function parseKnownHead(h: KnownHead | string): KnownHead {
     size = String(h.tree_size);
     root = String(h.root_hash);
   }
-  if (!/^(0|[1-9][0-9]*)$/.test(size) || BigInt(size) > U64_MAX) {
-    throw new TypeError(`known head: size ${JSON.stringify(size)} is not a canonical decimal integer`);
+  if (!/^(0|[1-9][0-9]*)$/.test(size) || size.length > 20 || BigInt(size) > U64_MAX) {
+    throw new TypeError(`known head: size ${echo(size)} is not a canonical decimal integer`);
   }
-  if (!/^[0-9a-fA-F]{64}$/.test(root)) throw new TypeError(`known head: root ${JSON.stringify(root)} is not 32 bytes of hex`);
+  if (!/^[0-9a-fA-F]{64}$/.test(root)) throw new TypeError(`known head: root ${echo(root)} is not 32 bytes of hex`);
   const n = Number(size);
   return { tree_size: Number.isSafeInteger(n) ? n : BigInt(size), root_hash: root.toLowerCase() };
 }
@@ -1250,7 +1250,7 @@ function agentCheckpointFromEntry(entry: Uint8Array, identityHex: string): { siz
   if (cp === null) return "entry is not a checkpoint note";
   if (cp.extensions.length > 0) return "entry checkpoint has extension lines";
   const origin = canonicalOrigin(identityHex);
-  if (cp.origin !== origin) return `entry is a checkpoint of ${cp.origin}, not of this identity (${origin})`;
+  if (cp.origin !== origin) return `entry is a checkpoint of ${echo(cp.origin)}, not of this identity (${origin})`;
   if (verifiedCheckpoint(text, origin, identityHex.toLowerCase()) === null) return "entry is not signed by this identity";
   return { size: cp.size, root: cp.root };
 }
@@ -1281,7 +1281,7 @@ function verifyFleetAnchorInternal(
   directory: WitnessDirectory | undefined,
 ): { size: U64; atts: Attestation[] } | string {
   if (!validFleetOrigin(anchor.origin)) {
-    return `fleet origin ${JSON.stringify(anchor.origin)} is not a fleet log origin (a C2SP origin that is not witness-log/...)`;
+    return `fleet origin ${echo(anchor.origin)} is not a fleet log origin (a C2SP origin that is not witness-log/...)`;
   }
   const identity = String(sth.signer_pubkey ?? "");
   if (ed25519Key(identity) === null) return "the checkpoint's signer_pubkey is not an Ed25519 key";
@@ -1303,7 +1303,7 @@ function verifyFleetAnchorInternal(
   }
   const fleet = parseCheckpointText(note.text);
   if (fleet === null) return "fleet_checkpoint_note is not a checkpoint";
-  if (fleet.origin !== anchor.origin) return `the fleet checkpoint is for origin ${fleet.origin}, not ${anchor.origin}`;
+  if (fleet.origin !== anchor.origin) return `the fleet checkpoint is for origin ${echo(fleet.origin)}, not ${echo(anchor.origin)}`;
   if (anchor.inclusion_proof.length > MAX_INCLUSION_PROOF_HASHES) return "inclusion_proof is longer than any tree needs";
   if (anchor.inclusion_proof.some((h) => !/^[0-9a-fA-F]{64}$/.test(h))) {
     return "inclusion_proof holds a value that is not 32 bytes of hex";
@@ -1533,7 +1533,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
 
   let read: ReturnType<typeof readDossier>;
   try {
-    read = readDossier(typeof dossier === "string" ? parseJsonExact(dossier) : dossier);
+    read = typeof dossier === "string" ? readDossierText(dossier) : readDossier(dossier);
   } catch (e) {
     return unverifiable(`not a dossier: ${e instanceof Error ? e.message : String(e)}`, inputs);
   }

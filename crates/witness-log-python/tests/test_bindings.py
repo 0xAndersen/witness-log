@@ -647,6 +647,36 @@ def _corpus_case(v, c, dossier_json):
     return r
 
 
+def test_hostile_dossier_text_is_refused_quickly_with_a_bounded_message():
+    """Outside audit of 0.6.1, through the binding: a dossier nested deeper
+    than 1000 arrays and objects is not a dossier (it was read), and a
+    refusal quotes a bounded part of a huge input (it quoted all of it)."""
+    import time
+
+    key = "aa" * 32
+    leaf = '{"index":0,"leaf_type":1,"timestamp_ms":1,"session_pubkey":"%s","payload_hash":"%s"%s}'
+    checkpoint = (
+        '{"sig_alg":"ed25519","tree_size":1,"root_hash":"","timestamp_ms":0,'
+        '"signer_pubkey":"%s","signature":""}' % key
+    )
+
+    def dossier(leaf_extra="", extra=""):
+        return '{"identity_pubkey":"%s","leaves":[%s],"checkpoint":%s%s}' % (
+            key, leaf % (key, "bb" * 32, leaf_extra), checkpoint, extra)
+
+    # At the limit: read (INVALID only because the checkpoint is unsigned).
+    r = json.loads(witness_log.verify_dossier_json(dossier(extra=',"zz":' + "[" * 999 + "]" * 999), 0.66))
+    assert r["verdict"] == "invalid"
+    for n in (1000, 100_000):
+        started = time.monotonic()
+        with pytest.raises(witness_log.MalformedError, match="nested deeper than 1000"):
+            witness_log.verify_dossier_json(dossier(extra=',"zz":' + "[" * n + "]" * n), 0.66)
+        assert time.monotonic() - started < 5
+    with pytest.raises(witness_log.MalformedError) as e:
+        witness_log.verify_dossier_json(dossier(leaf_extra=',"handoff_direction":"%s"' % ("S" * 10_000_000)), 0.66)
+    assert len(str(e.value)) < 1000
+
+
 def test_corpus_16_strict_ed25519_and_17_dossier_parsing():
     """Outside review III (H2, H3/M3, P3) through the binding:
     degenerate Ed25519 signatures in dossiers (16), and texts that are or

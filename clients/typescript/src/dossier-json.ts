@@ -17,10 +17,22 @@
  * - a unit enum variant is its name or `{"name": null}`;
  * - field strings and struct keys have no unpaired surrogate;
  * - `fleet_anchor` is any JSON value with no unpaired surrogate, finite
- *   numbers and at most 126 levels of nesting.
+ *   numbers and at most 126 levels of nesting;
+ * - the whole text nests at most {@link MAX_DOSSIER_DEPTH} (1000) arrays
+ *   and objects deep, the dossier object being depth 1, ignored keys
+ *   included.
  *
  * Anything else is not a dossier: `readDossier` throws `NotADossier`, and
  * `verifyDossier` turns that into INVALID.
+ *
+ * Reading stays bounded on hostile text (outside audit of 0.6.1, where an
+ * ignored key nested 5 million deep held a parser frame per level and a
+ * 10-million-digit literal took seconds and came back whole in the
+ * failure): `readDossierText` stops at the 1001st level, builds only the
+ * members the dossier's types name (an ignored key's value is checked as
+ * JSON and dropped), reads a u64 literal of more than 20 digits as out of
+ * range without converting it, and quotes at most a bounded part of any
+ * input in a message ({@link echo}).
  */
 
 /** A u64: a `bigint` exactly when above `Number.MAX_SAFE_INTEGER`. */
@@ -59,13 +71,62 @@ function setOwn(obj: Record<string, unknown>, key: string, value: unknown): void
 }
 
 /**
+ * How deep a dossier text may nest (SPEC.md §9, "Reading a dossier"):
+ * arrays and objects, counted outside strings, the dossier object being
+ * depth 1. A deeper text is not a dossier, wherever the nesting is. Every
+ * dossier an implementation writes nests at most 5 deep and a readable
+ * `fleet_anchor` at most 127; Go's encoding/json stops at 10,000. The
+ * reference's `MAX_DOSSIER_DEPTH`.
+ */
+export const MAX_DOSSIER_DEPTH = 1000;
+
+/** How many characters of an input a message quotes ({@link echo}). */
+const ECHO_CHARS = 64;
+
+/**
+ * `s` quoted, cut to its first 64 characters with its length in bytes when
+ * it is longer: what a message quotes of untrusted input. The reference
+ * and the Go verifier bound theirs the same way; the wording of a failure
+ * is not normative.
+ */
+export function echo(value: unknown): string {
+  // Public verifiers (validateLeaf, verifyFleetAnchor) may be handed
+  // values of any type.
+  const s = typeof value === "string" ? value : String(value);
+  if (s.length <= ECHO_CHARS) return JSON.stringify(s);
+  const head = Array.from(s.slice(0, 2 * ECHO_CHARS)).slice(0, ECHO_CHARS).join("");
+  if (head.length === s.length) return JSON.stringify(s);
+  return `${JSON.stringify(head)}… (${Buffer.byteLength(s, "utf8")} bytes)`;
+}
+
+/** A number literal as written, cut to its first 64 characters when longer. */
+function literal(s: string): string {
+  return s.length <= ECHO_CHARS ? s : `${s.slice(0, ECHO_CHARS)}… (${s.length} characters)`;
+}
+
+/**
+ * What {@link parseJsonExact} builds of a value: `"all"` builds it whole;
+ * `{fields}` builds an object's members that `fields` names, each by its
+ * own shape, and checks every other member's value as JSON without
+ * building it (it reads as {@link IGNORED}); `{items}` builds every item of
+ * an array by that shape. A value of another kind than its shape (an array
+ * where an object belongs) is built whole, for the reader to refuse.
+ */
+export type Shape = "all" | { fields: Readonly<Record<string, Shape>> } | { items: Shape };
+
+/** The value of a member its object's {@link Shape} does not name: checked as JSON, not built. */
+export const IGNORED: unique symbol = Symbol("ignored");
+
+/**
  * RFC 8259 JSON, strictly, as serde_json reads it: numbers come back as
  * {@link JsonNumber}, an object's repeated keys are recorded, escapes that
  * leave an unpaired surrogate are kept for the reader to judge, and a text
  * that is not valid Unicode is refused. Iterative, so nesting depth is
- * bounded by memory, not the call stack. Throws a SyntaxError.
+ * bounded by `maxDepth`, never the call stack: the parser holds one frame
+ * per open array or object and fails at the first one past `maxDepth`.
+ * `shape` says what to build ({@link Shape}). Throws a SyntaxError.
  */
-export function parseJsonExact(text: string): unknown {
+export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = Infinity): unknown {
   if (LONE_SURROGATE.test(text)) throw new SyntaxError("the text is not valid Unicode (an unpaired surrogate)");
   let i = 0;
   const fail = (what: string): never => {
@@ -133,44 +194,96 @@ export function parseJsonExact(text: string): unknown {
       start = i;
     }
   };
-  const key = (): string => {
+  /** A string checked as string() checks it, without building it. */
+  const skipString = (): void => {
+    if (text.charCodeAt(i) !== 0x22) fail("expected a string");
+    i++;
+    for (;;) {
+      const c = text.charCodeAt(i);
+      if (Number.isNaN(c)) fail("unterminated string");
+      if (c === 0x22) {
+        i++;
+        return;
+      }
+      if (c < 0x20) fail("control character in a string");
+      if (c !== 0x5c) {
+        i++;
+        continue;
+      }
+      const e = text[i + 1];
+      if (e === "u") {
+        if (!HEX4.test(text.slice(i + 2, i + 6))) fail("invalid \\u escape");
+        i += 6;
+      } else if (e !== undefined && '"\\/bfnrt'.includes(e)) {
+        i += 2;
+      } else {
+        fail("invalid escape");
+      }
+    }
+  };
+  /**
+   * One open array or object. `shape` null: the container is skipped
+   * (checked, not built), and so is everything in it.
+   */
+  type Frame = {
+    isArray: boolean;
+    shape: Shape | null;
+    arr: unknown[] | undefined;
+    obj: Record<string, unknown> | undefined;
+    key: string;
+  };
+  const key = (f: Frame): void => {
     ws();
-    const k = string();
+    if (f.shape === null) skipString();
+    else f.key = string();
     ws();
     if (text.charCodeAt(i) !== 0x3a) fail("expected ':'");
     i++;
-    return k;
   };
-  type Frame = { arr: unknown[]; obj?: undefined; key?: undefined } | { arr?: undefined; obj: Record<string, unknown>; key: string };
+  /** The shape of the next value in `f`: null to skip it. */
+  const inner = (f: Frame): Shape | null => {
+    const s = f.shape;
+    if (s === null || s === "all") return s;
+    if ("items" in s) return s.items;
+    return Object.prototype.hasOwnProperty.call(s.fields, f.key) ? s.fields[f.key] : null;
+  };
   const stack: Frame[] = [];
+  let next: Shape | null = shape;
   for (;;) {
     ws();
     let v: unknown;
     const c = text.charCodeAt(i);
-    if (c === 0x7b) {
+    if (c === 0x7b || c === 0x5b) {
+      // Its depth is one more than the containers open around it.
+      if (stack.length >= maxDepth) fail(`nested deeper than ${maxDepth} arrays and objects`);
+      const isArray = c === 0x5b;
       i++;
       ws();
-      const obj: Record<string, unknown> = {};
-      if (text.charCodeAt(i) === 0x7d) {
+      const s: Shape | null =
+        next === null ? null : next !== "all" && (isArray ? "items" in next : "fields" in next) ? next : "all";
+      if (text.charCodeAt(i) === (isArray ? 0x5d : 0x7d)) {
         i++;
-        v = obj;
+        v = s === null ? IGNORED : isArray ? [] : {};
       } else {
-        stack.push({ obj, key: key() });
-        continue;
-      }
-    } else if (c === 0x5b) {
-      i++;
-      ws();
-      const arr: unknown[] = [];
-      if (text.charCodeAt(i) === 0x5d) {
-        i++;
-        v = arr;
-      } else {
-        stack.push({ arr });
+        const f: Frame = {
+          isArray,
+          shape: s,
+          arr: s !== null && isArray ? [] : undefined,
+          obj: s !== null && !isArray ? {} : undefined,
+          key: "",
+        };
+        stack.push(f);
+        if (!isArray) key(f);
+        next = inner(f);
         continue;
       }
     } else if (c === 0x22) {
-      v = string();
+      if (next === null) {
+        skipString();
+        v = IGNORED;
+      } else {
+        v = string();
+      }
     } else if (text.startsWith("true", i)) {
       i += 4;
       v = true;
@@ -184,7 +297,7 @@ export function parseJsonExact(text: string): unknown {
       NUMBER.lastIndex = i;
       const m = NUMBER.exec(text);
       if (m === null) fail("expected a value");
-      v = new JsonNumber(m![0]);
+      v = next === null ? IGNORED : new JsonNumber(m![0]);
       i += m![0].length;
     }
     // Attach v to its container and close every container that ends here.
@@ -196,29 +309,69 @@ export function parseJsonExact(text: string): unknown {
         return v;
       }
       if (top.arr !== undefined) top.arr.push(v);
-      else setOwn(top.obj, top.key, v);
+      else if (top.obj !== undefined) setOwn(top.obj, top.key, v);
       ws();
       const d = text.charCodeAt(i);
       if (d === 0x2c) {
         i++;
-        if (top.obj !== undefined) top.key = key();
+        if (!top.isArray) key(top);
+        next = inner(top);
         break;
       }
-      if (top.arr !== undefined && d === 0x5d) {
+      if (d === (top.isArray ? 0x5d : 0x7d)) {
         i++;
         stack.pop();
-        v = top.arr;
+        v = top.shape === null ? IGNORED : (top.arr ?? top.obj);
         continue;
       }
-      if (top.obj !== undefined && d === 0x7d) {
-        i++;
-        stack.pop();
-        v = top.obj;
-        continue;
-      }
-      fail(top.arr !== undefined ? "expected ',' or ']'" : "expected ',' or '}'");
+      fail(top.isArray ? "expected ',' or ']'" : "expected ',' or '}'");
     }
   }
+}
+
+/**
+ * Whether a value nests deeper than `max` arrays and objects, the value
+ * itself being depth 1 (for a dossier passed as a value, not as text). A
+ * cycle nests without end. Iterative, and linear in the value's size: a
+ * sub-value reached twice is measured once.
+ */
+function nestsDeeperThan(root: unknown, max: number): boolean {
+  const container = (x: unknown): x is object => x !== null && typeof x === "object" && !(x instanceof JsonNumber);
+  if (!container(root)) return false;
+  const height = new Map<object, number>();
+  const open = new Set<object>();
+  type Frame = { node: object; children: unknown[]; next: number; height: number };
+  const stack: Frame[] = [];
+  const enter = (node: object): boolean => {
+    if (stack.length + 1 > max) return false;
+    open.add(node);
+    stack.push({ node, children: Array.isArray(node) ? node : Object.values(node), next: 0, height: 1 });
+    return true;
+  };
+  if (!enter(root)) return true;
+  while (stack.length > 0) {
+    const f = stack[stack.length - 1];
+    if (f.next < f.children.length) {
+      const c = f.children[f.next++];
+      if (!container(c)) continue;
+      if (open.has(c)) return true;
+      const h = height.get(c);
+      if (h === undefined) {
+        if (!enter(c)) return true;
+      } else if (stack.length + h > max) {
+        return true;
+      } else {
+        f.height = Math.max(f.height, h + 1);
+      }
+      continue;
+    }
+    stack.pop();
+    open.delete(f.node);
+    height.set(f.node, f.height);
+    const parent = stack[stack.length - 1];
+    if (parent !== undefined) parent.height = Math.max(parent.height, f.height + 1);
+  }
+  return false;
 }
 
 // ------------------------------------------------------------- reading
@@ -226,15 +379,31 @@ export function parseJsonExact(text: string): unknown {
 type Obj = Record<string, unknown>;
 type Reader = (v: unknown, path: string) => unknown;
 
+/** What of a value each reader reads, for parseJsonExact to build; "all" when absent. */
+const SHAPES = new WeakMap<Reader, Shape>();
+const shapeOf = (r: Reader): Shape => SHAPES.get(r) ?? "all";
+function withShape<R extends Reader>(r: R, s: Shape): R {
+  SHAPES.set(r, s);
+  return r;
+}
+
 function isObject(v: unknown): v is Obj {
   return v !== null && typeof v === "object" && !Array.isArray(v) && !(v instanceof JsonNumber);
 }
 
 function describe(v: unknown): string {
-  if (v instanceof JsonNumber) return `number ${v.literal}`;
+  if (v instanceof JsonNumber) return `number ${literal(v.literal)}`;
   if (Array.isArray(v)) return "an array";
   if (v === null) return "null";
-  return typeof v === "object" ? "an object" : `${typeof v} ${String(v).slice(0, 40)}`;
+  if (typeof v === "string") return `string ${echo(v)}`;
+  if (typeof v === "bigint") return `bigint ${bigintText(v)}`;
+  return typeof v === "object" ? "an object" : `${typeof v} ${String(v).slice(0, ECHO_CHARS)}`;
+}
+
+/** A bigint in decimal, or a note of its size when that would run past 64 digits. */
+function bigintText(n: bigint): string {
+  const limit = 10n ** BigInt(ECHO_CHARS);
+  return n < limit && n > -limit ? String(n) : "a number of more than 64 digits";
 }
 
 function bad(path: string, what: string): never {
@@ -254,7 +423,10 @@ function uint(max: bigint): Reader {
   return (v, path) => {
     let n: bigint;
     if (v instanceof JsonNumber) {
-      if (!/^(0|[1-9][0-9]*)$/.test(v.literal)) bad(path, `${v.literal} is not an unsigned integer literal`);
+      if (!/^(0|[1-9][0-9]*)$/.test(v.literal)) bad(path, `${literal(v.literal)} is not an unsigned integer literal`);
+      // 2^64 - 1 has 20 digits: a longer literal is out of range, and is
+      // not converted (BigInt of millions of digits takes seconds).
+      if (v.literal.length > 20) bad(path, `${literal(v.literal)} is out of range`);
       n = BigInt(v.literal);
     } else if (typeof v === "bigint") {
       n = v;
@@ -267,7 +439,7 @@ function uint(max: bigint): Reader {
     } else {
       return bad(path, `expected an unsigned integer, got ${describe(v)}`);
     }
-    if (n < 0n || n > max) bad(path, `${n} is out of range`);
+    if (n < 0n || n > max) bad(path, `${bigintText(n)} is out of range`);
     return n <= MAX_SAFE ? Number(n) : n;
   };
 }
@@ -276,10 +448,13 @@ const u64 = uint(U64_MAX);
 const u8 = uint(255n);
 
 function list(item: Reader): Reader {
-  return (v, path) => {
-    if (!Array.isArray(v)) bad(path, `expected an array, got ${describe(v)}`);
-    return (v as unknown[]).map((x, i) => item(x, `${path}[${i}]`));
-  };
+  return withShape(
+    (v, path) => {
+      if (!Array.isArray(v)) bad(path, `expected an array, got ${describe(v)}`);
+      return (v as unknown[]).map((x, i) => item(x, `${path}[${i}]`));
+    },
+    { items: shapeOf(item) },
+  );
 }
 
 /** A unit variant: its name, or `{"name": null}`. */
@@ -302,8 +477,17 @@ interface Field {
   nullable?: boolean;
 }
 
-/** A struct: an object; known keys once, exactly, typed; other keys ignored. */
+/**
+ * A struct: an object; known keys once, exactly, typed; other keys ignored
+ * (and, read from text, never built: their values are {@link IGNORED}).
+ */
 function struct(fields: Record<string, Field>): Reader {
+  const shape: Record<string, Shape> = Object.create(null);
+  for (const [name, f] of Object.entries(fields)) shape[name] = shapeOf(f.read);
+  return withShape(structReader(fields), { fields: shape });
+}
+
+function structReader(fields: Record<string, Field>): Reader {
   return (v, path) => {
     if (!isObject(v)) bad(path, `expected an object, got ${describe(v)}`);
     const o = v as Obj;
@@ -382,12 +566,12 @@ const WITNESS_ENTRY_STRUCT = struct({
 });
 
 /** A witness directory entry, with serde's defaults filled in. */
-export const readWitnessEntry: Reader = (v, path) => {
+export const readWitnessEntry: Reader = withShape((v, path) => {
   const e = WITNESS_ENTRY_STRUCT(v, path) as Obj;
   e.runtime ??= "human";
   e.is_project_operated ??= false;
   return e;
-};
+}, shapeOf(WITNESS_ENTRY_STRUCT));
 
 const WITNESS_DIRECTORY = struct({ witnesses: req(list(readWitnessEntry)) });
 
@@ -437,7 +621,10 @@ const MAX_FLEET_ANCHOR_DEPTH = 126;
 /** The rules a `serde_json::Value` imposes: no unpaired surrogate, finite numbers, bounded nesting. */
 function checkJsonValue(v: unknown, path: string, depth: number): void {
   if (v instanceof JsonNumber) {
-    if (!Number.isFinite(Number(v.literal))) bad(path, `number ${v.literal.slice(0, 20)}… is out of range`);
+    // Number() rounds to nearest, ties to even, as serde_json with
+    // float_roundtrip and Go's strconv.ParseFloat do: 1.7976931348623158e308
+    // is finite, 1.7976931348623159e308 is not.
+    if (!Number.isFinite(Number(v.literal))) bad(path, `number ${literal(v.literal)} is out of range`);
   } else if (typeof v === "number") {
     if (!Number.isFinite(v)) bad(path, "number out of range");
   } else if (typeof v === "string") {
@@ -481,11 +668,29 @@ const DOSSIER = struct({
 });
 
 /**
- * A dossier, from the value `parseJsonExact` or `JSON.parse` produced (or
- * one built in code), as the reference deserialises it. Throws
- * {@link NotADossier}.
+ * A dossier from its JSON text, as the reference reads it
+ * (`Dossier::from_json`): parsed exactly, stopping at the first array or
+ * object past {@link MAX_DOSSIER_DEPTH}, with only the members the
+ * dossier's types name built. Throws {@link NotADossier} or a SyntaxError.
+ */
+export function readDossierText(text: string): ReadDossier {
+  return readParsed(parseJsonExact(text, shapeOf(DOSSIER), MAX_DOSSIER_DEPTH));
+}
+
+/**
+ * A dossier, from the value `JSON.parse` produced (or one built in code),
+ * as the reference deserialises it; a value nested deeper than
+ * {@link MAX_DOSSIER_DEPTH} is not a dossier, as its text would not be.
+ * Throws {@link NotADossier}.
  */
 export function readDossier(value: unknown): ReadDossier {
+  if (nestsDeeperThan(value, MAX_DOSSIER_DEPTH)) {
+    bad("dossier", `nested deeper than ${MAX_DOSSIER_DEPTH} arrays and objects`);
+  }
+  return readParsed(value);
+}
+
+function readParsed(value: unknown): ReadDossier {
   const d = DOSSIER(value, "dossier") as Obj;
   d.witness_receipts ??= [];
   d.witness_directory ??= { witnesses: [] };

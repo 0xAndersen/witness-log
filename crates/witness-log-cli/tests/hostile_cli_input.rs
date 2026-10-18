@@ -92,3 +92,86 @@ fn cli_rejects_unrecognized_flags_instead_of_silently_ignoring_them() {
         "expected an unrecognized-flag error, got: {stderr}"
     );
 }
+
+fn run_verify_json_on(content: &str) -> std::process::Output {
+    let f = tempfile_write(content);
+    let out = Command::new(env!("CARGO_BIN_EXE_witness-log"))
+        .args(["verify", f.path_str(), "--json"])
+        .output()
+        .expect("failed to run witness-log binary");
+    f.close();
+    out
+}
+
+fn hostile_dossier(leaf_extra: &str, payload_hash: &str, extra: &str) -> String {
+    let key = "aa".repeat(32);
+    format!(
+        r#"{{"identity_pubkey":"{key}","leaves":[{{"index":0,"leaf_type":1,"timestamp_ms":1,"session_pubkey":"{key}","payload_hash":"{payload_hash}"{leaf_extra}}}],"checkpoint":{{"sig_alg":"ed25519","tree_size":1,"root_hash":"","timestamp_ms":0,"signer_pubkey":"{key}","signature":""}}{extra}}}"#
+    )
+}
+
+/// An outside audit of 0.6.1: a refusal or a failure quoted the hostile
+/// input whole (a 10-million-character variant name on stderr, a
+/// 10-million-character field in `failures`). Messages now quote a bounded
+/// part of it.
+#[test]
+fn cli_messages_quote_a_bounded_part_of_a_huge_input() {
+    let huge = "S".repeat(10_000_000);
+    let hash = "bb".repeat(32);
+    // Not a dossier: serde_json's error names the variant it refused.
+    let out = run_verify_json_on(&hostile_dossier(
+        &format!(r#","handoff_direction":"{huge}""#),
+        &hash,
+        "",
+    ));
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        out.stderr.len() < 1000,
+        "{} bytes on stderr",
+        out.stderr.len()
+    );
+    // A dossier, INVALID: the leaf check names the field it refused.
+    let out = run_verify_json_on(&hostile_dossier("", &huge, ""));
+    assert_eq!(out.status.code(), Some(40));
+    assert!(
+        out.stdout.len() < 10_000,
+        "{} bytes on stdout",
+        out.stdout.len()
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let failures = report["report"]["failures"].as_array().unwrap();
+    assert!(
+        failures
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("payload_hash")),
+        "{failures:?}"
+    );
+}
+
+/// SPEC.md §9: a dossier text nests at most 1000 arrays and objects deep
+/// (the dossier object is depth 1). Before, an ignored key of any depth was
+/// read here while Go refused 10,000 levels and more.
+#[test]
+fn cli_refuses_a_dossier_nested_deeper_than_1000() {
+    let hash = "bb".repeat(32);
+    let nested = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+    let at_limit = run_verify_json_on(&hostile_dossier(
+        "",
+        &hash,
+        &format!(r#","zz":{}"#, nested(999)),
+    ));
+    // Read, and INVALID: the checkpoint is not signed.
+    assert_eq!(at_limit.status.code(), Some(40));
+    for n in [1000, 100_000] {
+        let started = std::time::Instant::now();
+        let out = run_verify_json_on(&hostile_dossier(
+            "",
+            &hash,
+            &format!(r#","zz":{}"#, nested(n)),
+        ));
+        assert_eq!(out.status.code(), Some(2), "an ignored key {n} deep");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("nested deeper than 1000"), "{stderr}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+}

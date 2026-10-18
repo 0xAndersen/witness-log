@@ -186,15 +186,15 @@ type KnownHead struct {
 func ParseKnownHead(s string) (KnownHead, error) {
 	size, root, ok := strings.Cut(s, ":")
 	if !ok {
-		return KnownHead{}, fmt.Errorf("expected <size>:<root hex>, got %q", s)
+		return KnownHead{}, fmt.Errorf("expected <size>:<root hex>, got %s", echo(s))
 	}
 	n, err := strconv.ParseUint(strings.TrimSpace(size), 10, 64)
 	if err != nil || strings.TrimSpace(size) != strconv.FormatUint(n, 10) {
-		return KnownHead{}, fmt.Errorf("size %q is not a canonical decimal integer", size)
+		return KnownHead{}, fmt.Errorf("size %s is not a canonical decimal integer", echo(size))
 	}
 	b, err := hex.DecodeString(strings.TrimSpace(root))
 	if err != nil || len(b) != 32 {
-		return KnownHead{}, fmt.Errorf("root %q is not 32 bytes of hex", root)
+		return KnownHead{}, fmt.Errorf("root %s is not 32 bytes of hex", echo(root))
 	}
 	var h Hash
 	copy(h[:], b)

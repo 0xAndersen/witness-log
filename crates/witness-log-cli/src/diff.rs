@@ -30,7 +30,7 @@ fn short(hexstr: &str) -> String {
 
 fn load(path: &str) -> Result<Dossier, String> {
     let raw = crate::read_input(path).map_err(|e| format!("could not read {path}: {e}"))?;
-    serde_json::from_str(&raw).map_err(|e| format!("could not parse {path}: {e}"))
+    Dossier::from_json(&raw).map_err(|e| format!("could not parse {path}: {e}"))
 }
 
 pub fn run_diff(path_a: &str, path_b: &str) -> ExitCode {

@@ -235,7 +235,7 @@ inconclusive).
 ```rust
 use witness_log_network::{Dossier, Verdict, VerifyContext, WitnessDirectory};
 
-let dossier: Dossier = serde_json::from_str(&json)?;
+let dossier = Dossier::from_json(&json)?;   // SPEC.md §9's reading rule, depth limit included
 let directory: WitnessDirectory = serde_json::from_str(&dir_json)?;   // YOURS, obtained out-of-band
 
 let report = dossier.verify(0.66, &VerifyContext {

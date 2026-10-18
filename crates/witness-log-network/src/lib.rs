@@ -53,20 +53,22 @@ pub enum WitnessError {
 /// the same or different in each case. Both axes are scored separately in
 /// `evaluate_quorum` — see its doc comment for why they aren't collapsed
 /// into one number.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+///
+/// Serialized as a JSON object with these fields in this order, and read
+/// only from an object, never from an array of the field values. `runtime`,
+/// `compute_provider` and `is_project_operated` may be absent (their
+/// defaults: human, none, false).
+#[derive(Debug, Clone)]
 pub struct WitnessEntry {
     pub name: String,
     pub operator_org: String,
     pub url: String,
     pub pubkey: String, // hex
-    #[serde(default)]
     pub runtime: WitnessRuntime,
     /// Free-text identifier of the underlying compute/model stack this
     /// witness runs on (e.g. "anthropic-api", "openai-api",
     /// "self-hosted-llama-3", "human-manual"). `None` when not disclosed.
     /// Used only for the runtime-diversity axis, never required.
-    #[serde(default)]
     pub compute_provider: Option<String>,
     /// True if this witness is operated by the same party that maintains
     /// the WitnessLog project itself, rather than a genuinely third-party
@@ -86,11 +88,27 @@ pub struct WitnessEntry {
     /// dashboard MUST surface this flag directly wherever quorum results
     /// are shown, not just leave it discoverable in the raw directory —
     /// see `QuorumResult::project_operated_receipts`.
-    #[serde(default)]
     pub is_project_operated: bool,
 }
 
-witness_log_core::object_only_serde!(WitnessEntry);
+/// The serde shape of [`WitnessEntry`]; see `witness_log_core::object_only`
+/// for why it is a separate, private type.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "WitnessEntry", rename = "WitnessEntry")]
+struct WitnessEntryDef {
+    name: String,
+    operator_org: String,
+    url: String,
+    pubkey: String,
+    #[serde(default)]
+    runtime: WitnessRuntime,
+    #[serde(default)]
+    compute_provider: Option<String>,
+    #[serde(default)]
+    is_project_operated: bool,
+}
+
+witness_log_core::object_only_serde!(WitnessEntry, WitnessEntryDef);
 
 /// Whether a witness is operated by a human process (a person or team
 /// manually or semi-manually running the check) or an autonomous agent
@@ -107,13 +125,20 @@ pub enum WitnessRuntime {
     Agent,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+/// A witness directory: `{"witnesses": [...]}`, read only from an object.
+#[derive(Debug, Clone, Default)]
 pub struct WitnessDirectory {
     pub witnesses: Vec<WitnessEntry>,
 }
 
-witness_log_core::object_only_serde!(WitnessDirectory);
+/// The serde shape of [`WitnessDirectory`]; see `witness_log_core::object_only`.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "WitnessDirectory", rename = "WitnessDirectory")]
+struct WitnessDirectoryDef {
+    witnesses: Vec<WitnessEntry>,
+}
+
+witness_log_core::object_only_serde!(WitnessDirectory, WitnessDirectoryDef);
 
 /// Internal sentinel used to collapse every project-operated witness into
 /// a single bucket for diversity purposes, regardless of what individual
@@ -284,9 +309,10 @@ impl WitnessDirectory {
 }
 
 /// A witness's signed attestation that it observed a specific checkpoint at
-/// a specific time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+/// a specific time. Serialized as a JSON object with these fields in this
+/// order (`c2sp_origin` and `witness_name` only when set), and read only
+/// from an object, never from an array of the field values.
+#[derive(Debug, Clone)]
 pub struct WitnessReceipt {
     pub witness_pubkey: String, // hex
     pub tree_size: u64,
@@ -301,7 +327,6 @@ pub struct WitnessReceipt {
     /// [`canonical_origin`](witness_log_core::c2sp::canonical_origin).
     /// Absent (and not serialized) for native receipts, so pre-existing
     /// dossiers are byte-identical.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub c2sp_origin: Option<String>,
     /// The directory `name` of the witness that issued this receipt, as
     /// the submitting client knew it (`witness.example/w1`). Display
@@ -311,11 +336,25 @@ pub struct WitnessReceipt {
     /// a trusted directory by `witness_pubkey` alone. Absent (and not
     /// serialized) when unknown, so dossiers from before 0.4.0 and
     /// receipts without a name are byte-identical to what they were.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_name: Option<String>,
 }
 
-witness_log_core::object_only_serde!(WitnessReceipt);
+/// The serde shape of [`WitnessReceipt`]; see `witness_log_core::object_only`.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "WitnessReceipt", rename = "WitnessReceipt")]
+struct WitnessReceiptDef {
+    witness_pubkey: String,
+    tree_size: u64,
+    root_hash: String,
+    witnessed_at_ms: u64,
+    signature: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    c2sp_origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    witness_name: Option<String>,
+}
+
+witness_log_core::object_only_serde!(WitnessReceipt, WitnessReceiptDef);
 
 impl WitnessReceipt {
     pub fn sign(witness_key: &SigningKey, sth: &SignedTreeHead, witnessed_at_ms: u64) -> Self {
@@ -776,15 +815,19 @@ fn score_attestations(
 /// through this type rather than each independently constructing the same
 /// JSON shape by hand, which is exactly how those three would eventually
 /// drift out of sync with each other and with SPEC.md.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+///
+/// Read a dossier from JSON text with [`Dossier::from_json`], which applies
+/// all of SPEC.md §9's "Reading a dossier" rule. The `Deserialize` impl
+/// applies all of it but the nesting limit: the dossier and every struct in
+/// it are read only from objects, never from arrays of the field values;
+/// `witness_receipts`, `witness_directory`, `key_bindings` and
+/// `revocations` may be absent but not `null`; other keys are ignored.
+#[derive(Debug, Clone)]
 pub struct Dossier {
     pub identity_pubkey: String,
     pub leaves: Vec<Leaf>,
     pub checkpoint: SignedTreeHead,
-    #[serde(default)]
     pub witness_receipts: Vec<WitnessReceipt>,
-    #[serde(default)]
     pub witness_directory: WitnessDirectory,
     /// Every session-key binding covering the session keys that actually
     /// authored `leaves`. Required for a verifier to check SPEC.md §5's
@@ -801,10 +844,8 @@ pub struct Dossier {
     /// verification then reports `Invalid` (`Diverged` before 0.5.0)
     /// for an agent that merely rebooted. Binding history is persisted
     /// across snapshots and journal replays for exactly this reason.
-    #[serde(default)]
     pub key_bindings: Vec<KeyBindingStatement>,
     /// Every revocation the identity has issued for itself.
-    #[serde(default)]
     pub revocations: Vec<RevocationStatement>,
     /// RFC-0001, **experimental**: this checkpoint's entry in an
     /// organisation's fleet checkpoint log, with that log's cosigned
@@ -814,11 +855,110 @@ pub struct Dossier {
     /// to before. A field that does not have the expected shape still
     /// parses (as [`fleet::FleetAnchorField::Malformed`]), so it cannot
     /// make a dossier unreadable to a verifier that ignores it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet_anchor: Option<fleet::FleetAnchorField>,
 }
 
-witness_log_core::object_only_serde!(Dossier);
+/// The serde shape of [`Dossier`]; see `witness_log_core::object_only` for
+/// why it is a separate, private type.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Dossier", rename = "Dossier")]
+struct DossierDef {
+    identity_pubkey: String,
+    leaves: Vec<Leaf>,
+    checkpoint: SignedTreeHead,
+    #[serde(default)]
+    witness_receipts: Vec<WitnessReceipt>,
+    #[serde(default)]
+    witness_directory: WitnessDirectory,
+    #[serde(default)]
+    key_bindings: Vec<KeyBindingStatement>,
+    #[serde(default)]
+    revocations: Vec<RevocationStatement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fleet_anchor: Option<fleet::FleetAnchorField>,
+}
+
+witness_log_core::object_only_serde!(Dossier, DossierDef);
+
+/// The deepest a dossier text may nest (SPEC.md §9, "Reading a dossier"):
+/// arrays and objects, counted outside strings, the dossier object itself
+/// being depth 1. A deeper text is not a dossier.
+///
+/// Why 1000: a dossier written by any implementation nests at most 5 deep
+/// (a key binding's threshold custody), and the deepest value the reference
+/// reads at all is a `fleet_anchor` 126 levels below the dossier object
+/// (serde_json's recursion limit), 127 in all; corpus 17 has an ignored
+/// key 201 deep. Below 1000 nothing changes. Before the limit, serde_json
+/// skipped ignored keys of any depth, Go's encoding/json refused 10,000
+/// levels and more, and the TypeScript parser held a frame per level until
+/// it ran out of memory (outside audit of 0.6.1). 1000 is an order of
+/// magnitude below Go's limit, so that limit never decides, and bounds what
+/// any verifier holds while reading.
+pub const MAX_DOSSIER_DEPTH: usize = 1000;
+
+/// Why a text is not a dossier (SPEC.md §9, "Reading a dossier"). The
+/// message quotes at most a bounded part of the text
+/// (`witness_log_core::echo`).
+#[derive(Debug, Error)]
+pub enum DossierParseError {
+    /// The text nests deeper than [`MAX_DOSSIER_DEPTH`]; `offset` is the
+    /// byte offset of the first bracket past the limit.
+    #[error("nested deeper than {MAX_DOSSIER_DEPTH} arrays and objects (at byte {offset})")]
+    TooDeep { offset: usize },
+    /// Not RFC 8259 JSON, or JSON without the dossier's shape.
+    #[error("{}", witness_log_core::echo::bounded(&.0.to_string()))]
+    Json(#[source] serde_json::Error),
+}
+
+/// The byte offset of the first `[` or `{` outside a string at which `text`
+/// is nested deeper than `max`, if any. Exact for JSON; for a text that is
+/// not JSON the answer does not matter, since it is refused either way.
+/// One pass, no allocation, so a hostile text costs no more than its
+/// length to measure.
+fn json_nesting_exceeds(text: &[u8], max: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in text.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > max {
+                    return Some(i);
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+impl Dossier {
+    /// Read a dossier from its JSON text as SPEC.md §9 ("Reading a
+    /// dossier") says, which is how the Go and TypeScript verifiers read it
+    /// too (`/corpus/17_dossier_parsing.json`): the text nests at most
+    /// [`MAX_DOSSIER_DEPTH`] deep, then everything the `Deserialize` impl
+    /// checks. `serde_json::from_str::<Dossier>` alone skips the depth
+    /// limit; read a dossier from anywhere else with this.
+    pub fn from_json(text: &str) -> Result<Self, DossierParseError> {
+        if let Some(offset) = json_nesting_exceeds(text.as_bytes(), MAX_DOSSIER_DEPTH) {
+            return Err(DossierParseError::TooDeep { offset });
+        }
+        serde_json::from_str(text).map_err(DossierParseError::Json)
+    }
+}
 
 /// Five-valued verification verdict (the four of the 1F916 Agent Record
 /// draft §3.6 "Anchor Rule", with DIVERGED split per RFC-0002). These are
@@ -994,15 +1134,16 @@ impl std::str::FromStr for KnownHead {
     type Err = String;
     /// `<size>:<64 hex>`.
     fn from_str(s: &str) -> Result<Self, String> {
+        use witness_log_core::echo::quoted;
         let (size, root) = s
             .split_once(':')
-            .ok_or_else(|| format!("expected <size>:<root hex>, got {s:?}"))?;
+            .ok_or_else(|| format!("expected <size>:<root hex>, got {}", quoted(s)))?;
         let tree_size = witness_log_core::c2sp::parse_canonical_u64(size.trim())
-            .ok_or_else(|| format!("size {size:?} is not a canonical decimal integer"))?;
+            .ok_or_else(|| format!("size {} is not a canonical decimal integer", quoted(size)))?;
         let root_hash: [u8; 32] = hex::decode(root.trim())
             .ok()
             .and_then(|v| v.try_into().ok())
-            .ok_or_else(|| format!("root {root:?} is not 32 bytes of hex"))?;
+            .ok_or_else(|| format!("root {} is not 32 bytes of hex", quoted(root)))?;
         Ok(Self {
             tree_size,
             root_hash,
@@ -1549,7 +1690,7 @@ impl Dossier {
             FleetAnchorField::Malformed(v) => {
                 let why = serde_json::from_value::<fleet::FleetAnchor>(v.clone())
                     .err()
-                    .map(|e| e.to_string())
+                    .map(|e| witness_log_core::echo::bounded(&e.to_string()))
                     .unwrap_or_default();
                 report
                     .failures

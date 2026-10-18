@@ -6,7 +6,7 @@ use witness_log_network::VerifyContext;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
-        if let Ok(dossier) = serde_json::from_str::<witness_log_network::Dossier>(s) {
+        if let Ok(dossier) = witness_log_network::Dossier::from_json(s) {
             let _ = dossier.verify(0.66, &VerifyContext::default());
         }
     }

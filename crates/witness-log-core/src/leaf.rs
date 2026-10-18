@@ -160,8 +160,12 @@ impl AuthorizationEventKind {
 
 /// A single committed leaf in the log. `payload_hash` is `H(payload || salt)`
 /// (see `redaction.rs`) — the raw payload itself is never stored in the tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(remote = "Self")]
+///
+/// Serialized as a JSON object with these fields in this order (every
+/// `Option` written, as `null` when `None`), and read only from an object,
+/// never from an array of the field values; a missing `Option` reads as
+/// `None`.
+#[derive(Debug, Clone)]
 pub struct Leaf {
     pub index: u64,
     pub leaf_type: u8,
@@ -223,7 +227,29 @@ pub struct Leaf {
     pub anchor_proof_hash: Option<String>,
 }
 
-crate::object_only_serde!(Leaf);
+/// The serde shape of [`Leaf`]; see `object_only` for why it is a separate,
+/// private type.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Leaf", rename = "Leaf")]
+struct LeafDef {
+    index: u64,
+    leaf_type: u8,
+    timestamp_ms: u64,
+    session_pubkey: String,
+    payload_hash: String,
+    redacted_index: Option<u64>,
+    revoked_identity: Option<String>,
+    handoff_direction: Option<HandoffDirection>,
+    counterparty_pubkey: Option<String>,
+    handoff_state_hash: Option<String>,
+    authorization_event_kind: Option<AuthorizationEventKind>,
+    authorization_scope_hash: Option<String>,
+    anchor_url: Option<String>,
+    anchor_proof_json: Option<String>,
+    anchor_proof_hash: Option<String>,
+}
+
+crate::object_only_serde!(Leaf, LeafDef);
 
 impl Leaf {
     /// Length-prefix a variable-length field: 4-byte BE length, then the
@@ -522,9 +548,9 @@ pub enum LeafValidationError {
     IndexMismatch { expected: u64, actual: u64 },
     #[error("unrecognized leaf_type tag: 0x{0:02x}")]
     UnrecognizedType(u8),
-    #[error("field `{field}` must be exactly 64 lowercase hex characters, got {value:?}")]
+    #[error("field `{field}` must be exactly 64 lowercase hex characters, got {}", crate::echo::quoted(.value))]
     MalformedField { field: &'static str, value: String },
-    #[error("field `{field}` must be an http:// or https:// URL, got {value:?}")]
+    #[error("field `{field}` must be an http:// or https:// URL, got {}", crate::echo::quoted(.value))]
     MalformedUrl { field: &'static str, value: String },
     #[error("leaf_type 0x{leaf_type:02x} requires field `{field}` to be present")]
     MissingMandatoryField { leaf_type: u8, field: &'static str },
@@ -532,9 +558,9 @@ pub enum LeafValidationError {
     /// committed by the root, so it is refused rather than displayed.
     #[error("leaf_type 0x{leaf_type:02x} must not carry field `{field}` (it is not committed by the root)")]
     FieldNotApplicable { leaf_type: u8, field: &'static str },
-    #[error("field `{field}` is invalid: {value:?}")]
+    #[error("field `{field}` is invalid: {}", crate::echo::quoted(.value))]
     InvalidField { field: &'static str, value: String },
-    #[error("anchor_proof_json does not hash to the committed anchor_proof_hash (committed {committed}, actual {actual}); the anchor proof was swapped after the leaf was committed")]
+    #[error("anchor_proof_json does not hash to the committed anchor_proof_hash (committed {}, actual {actual}); the anchor proof was swapped after the leaf was committed", crate::echo::bounded(.committed))]
     AnchorProofMismatch { committed: String, actual: String },
 }
 
