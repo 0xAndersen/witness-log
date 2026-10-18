@@ -569,6 +569,38 @@ def test_the_injected_tools_refuse_arguments(tmp_path):
             httpd.shutdown()
 
 
+def test_the_wrapped_server_does_not_get_the_identity_seed(tmp_path):
+    """Security sweep F2: the wrapped server (often a third party's, the
+    code being audited) inherited the proxy's whole environment, including
+    the raw identity seed of the sealed setup (WITNESS_LOG_IDENTITY_SEED_ENV
+    names AGENT_KEY, AGENT_KEY holds the seed). It could sign as the log
+    that audits it. The child now starts without either variable, after a
+    restart too; the proxy itself still seals its journal with the seed."""
+    seed = os.urandom(32)
+    env = {"WITNESS_LOG_IDENTITY_SEED_ENV": "AGENT_KEY", "AGENT_KEY": seed.hex(), "UNRELATED_SETTING": "kept"}
+    c = ProxyClient(tmp_path, env=env)
+    try:
+        c.handshake()
+        for _ in range(2):
+            r = c.call("tools/call", {"name": "echo", "arguments": {"environ": True}})
+            child_env = json.loads(r["result"]["content"][0]["text"])
+            assert "AGENT_KEY" not in child_env and "WITNESS_LOG_IDENTITY_SEED_ENV" not in child_env
+            assert seed.hex() not in json.dumps(child_env)
+            assert child_env["UNRELATED_SETTING"] == "kept" and child_env["FAKE_MCP_PIDFILE"] == c.pidfile
+            c.call("tools/call", {"name": "echo", "arguments": {"crash": True}}, timeout=20)  # restarted next round
+        st = c.call("tools/call", {"name": "audit__status"})["result"]["structuredContent"]
+        assert st["restarts"] == 2
+    finally:
+        c.close()
+    header = pathlib.Path(c.journal).read_text().splitlines()[0]
+    assert seed.hex() not in header  # sealed: the seed stayed in the proxy's environment
+    log = wl.open(c.journal, identity_seed=seed)  # a sealed journal resumes only with its seed
+    try:
+        assert log.identity_pubkey_hex() == st["identity"]
+    finally:
+        log.close()
+
+
 def test_cli_argument_errors():
     r = subprocess.run([sys.executable, "-m", "witness_log.mcp_proxy", "--name", "x", "--journal", "j"], capture_output=True, text=True)
     assert r.returncode == 2 and "no server command" in r.stderr

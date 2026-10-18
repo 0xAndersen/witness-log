@@ -113,6 +113,18 @@ carry.
   stdin; `audit__status.last_verdict` reports the outcome.
   `witness_log.open` rules apply: `WITNESS_LOG_IDENTITY_SEED_ENV` seals
   the journal, one process per journal.
+- The wrapped server is the code being audited, often someone else's
+  (`npx -y ...`). It is started with the proxy's environment minus
+  `WITNESS_LOG_IDENTITY_SEED_ENV` and the variable it names (the raw
+  seed, `AGENT_KEY=<64 hex>` in the sealed setup), on every restart too,
+  so it cannot sign as the log that audits it by reading its own
+  environment (through 0.6.0 it inherited both). That is hygiene, not
+  isolation: a child running as the same OS user can still read
+  `/proc/<proxy pid>/environ`, attach to the proxy, or read an unsealed
+  journal's header (where the seed lives without sealing). For a server
+  you do not trust, run it as a different OS user, for example with
+  `-- sudo -u mcp-sandbox npx -y ...` or a container, and keep the
+  journal and the seed readable only by the proxy's user.
 - Newline-delimited JSON-RPC over stdio only. HTTP transports are not
   proxied; put the proxy in front of a stdio server, or use the
   [MCP server](MCP-Integration) tools instead.

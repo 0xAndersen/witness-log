@@ -62,6 +62,15 @@ head witnesses last cosigned is checked as a known head, so a journal
 rewritten after witnessing is ``diverged`` and one truncated below it is
 a tamper alert).
 
+The wrapped server is the code being audited, often a third party's
+(``npx -y ...``), so it is started without the identity seed: the
+proxy's environment minus ``WITNESS_LOG_IDENTITY_SEED_ENV`` and the
+variable it names (see :func:`child_environment`). That keeps the seed
+out of the child's environment, not out of its reach: a child running as
+the same OS user can still read ``/proc/<proxy pid>/environ`` or an
+unsealed journal's header. Run the wrapped server as a different OS user
+for isolation.
+
 The trust anchor is the operator's: the only directory the proxy uses is
 ``--directory``, given on its command line, and the injected tools take no
 arguments, so nothing the host's model passes can change whom the
@@ -82,7 +91,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from . import canonical_json
+from . import IDENTITY_SEED_ENV, canonical_json
 from . import open as open_journal
 
 PROFILE = "mcp.tools/call v1"
@@ -114,6 +123,21 @@ INJECTED_TOOLS: List[Dict[str, Any]] = [
 
 def _sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+def child_environment(environ: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """The environment the wrapped server is started with: the proxy's,
+    minus the identity seed. ``WITNESS_LOG_IDENTITY_SEED_ENV`` names the
+    variable holding the raw seed (``AGENT_KEY=<64 hex>``); both are
+    removed, since the server under audit has no business signing as the
+    log it is audited by. (These are the only secret-bearing variables
+    witness-log reads; ``WITNESS_LOG_HOME``, ``WITNESS_LOG_CA_FILE`` and
+    ``WITNESS_LOG_TRUSTED_DIRECTORY`` are paths and are kept.)"""
+    env = dict(os.environ if environ is None else environ)
+    name = env.pop(IDENTITY_SEED_ENV, None)
+    if name:
+        env.pop(name, None)
+    return env
 
 
 class _Pending:
@@ -519,7 +543,12 @@ class Proxy:
 
     def _spawn(self) -> None:
         self.child = subprocess.Popen(  # noqa: S603 -- the operator's own command line
-            self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, bufsize=0
+            self.command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            bufsize=0,
+            env=child_environment(),
         )
 
     def _read_child(self) -> None:
