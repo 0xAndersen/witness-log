@@ -268,3 +268,31 @@ def test_non_public_or_disguised_ip_literals_are_refused(tmp_path, url):
 def test_public_ip_literals_are_fine(tmp_path, url):
     _, problems, _ = run(tmp_path, entry(url=url), offline=True)
     assert problems == [], problems
+
+
+# Hosts that clients decode differently from the text (third check of the
+# 0.6.1 fixes). The same list is in directory_cmd.rs's tests.
+DISGUISED_URLS = ["https://10.\t0.0.1/", "https://10.0.0.1\n/", "https://1\r0.0.0.1/", "https://10.0.0.%31/",
+                  "https://１０.０.０.１/", "https://10．0．0．1/",
+                  "https://10。0。0。1/", "https://10.0.0.1\\@evil.example/", "https://a@b.example/",
+                  "https://[2606:4700::1%25eth0]/", "https://:443/", "https:///x", "https://x.example:99999/",
+                  "https://x.example:/", "HTTPS://x.example/", " https://x.example/", "https://0x+a.0.0.1/",
+                  "https://[3fff::1]/", "https://[::1]x/", "https://1.2.3.4:5:6/"]
+
+
+@pytest.mark.parametrize("url", DISGUISED_URLS)
+def test_urls_clients_would_read_differently_are_refused(tmp_path, url):
+    _, problems, _ = run(tmp_path, entry(url=url), offline=True)
+    assert any("url" in p for p in problems), problems
+
+
+def test_a_list_valued_name_is_a_problem_not_a_crash(tmp_path):
+    _, problems, _ = run(tmp_path, entry(name=["a"]), entry(name=["a"], pubkey="cd" * 32), offline=True)
+    assert any("name must be a string" in p for p in problems)
+
+
+@pytest.mark.parametrize("url", ["https://xn--mller-kva.example/", "https://1.2.3.4.sslip.io/",
+                                 "https://W1.Example.org:8443/x?y#z"])
+def test_ordinary_urls_still_pass(tmp_path, url):
+    _, problems, _ = run(tmp_path, entry(url=url), offline=True)
+    assert problems == [], problems
