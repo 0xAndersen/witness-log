@@ -549,8 +549,12 @@ async def verify_chain_integrity(
     it cannot be checked against it, which is a tamper alert too.
 
     Returns: verdict (witnessed / consistent_unwitnessed / unanchored /
-    diverged / invalid), the full check report, and a list of tamper
-    alerts (empty when the chain is intact).
+    diverged / invalid), `split_view_unsafe` (true when the verdict is
+    witnessed but the cosigning witnesses are not a strict majority of the
+    directory, so the rest could have cosigned a conflicting history; the
+    CLI exits 11 for it), the full check report, and a list of tamper
+    alerts (empty when the chain is intact). `witnessed_split_view_unsafe`
+    is the same for `witnessed_verdict`.
     """
     if min_witnesses is not None and min_witnesses < 1:
         raise ValueError("min_witnesses must be at least 1")
@@ -592,12 +596,17 @@ async def verify_chain_integrity(
         ]
         + ([unreadable] if unreadable else [])
     )
-    out: Dict[str, Any] = {"verdict": report.get("verdict"), "tamper_alerts": alerts, "report": report}
+    out: Dict[str, Any] = {
+        "verdict": report.get("verdict"),
+        "split_view_unsafe": bool(report.get("split_view_unsafe")),
+        "tamper_alerts": alerts,
+        "report": report,
+    }
     if on_disk is not None:
         out["witnessed_size"] = on_disk["checkpoint"]["tree_size"]
-        out["witnessed_verdict"] = json.loads(
-            wl.verify_dossier_json(json.dumps(on_disk), DEFAULT_THRESHOLD, ident, td, min_witnesses)
-        ).get("verdict")
+        wr = json.loads(wl.verify_dossier_json(json.dumps(on_disk), DEFAULT_THRESHOLD, ident, td, min_witnesses))
+        out["witnessed_verdict"] = wr.get("verdict")
+        out["witnessed_split_view_unsafe"] = bool(wr.get("split_view_unsafe"))
     return out
 
 
@@ -723,6 +732,10 @@ async def submit_to_witnesses(
     kept, so export_dossier and verify_chain_integrity include its
     cosignatures afterwards.
 
+    `split_view_unsafe` is true when the verdict is witnessed but the
+    cosigning witnesses are not a strict majority of `directory`: the rest
+    could have cosigned a conflicting history (the CLI exits 11 for it).
+
     Only `max_witnesses` witnesses are contacted, chosen for operator
     diversity first (one per operator, then round-robin), so a directory
     the size of a registry does not mean a hundred requests per checkpoint.
@@ -771,6 +784,7 @@ async def submit_to_witnesses(
         "tree_size": r.tree_size,
         "outcomes": r.outcomes,
         "verdict": report.get("verdict"),
+        "split_view_unsafe": bool(report.get("split_view_unsafe")),
         "dossier": doc,
     }
 

@@ -437,6 +437,9 @@ def test_periodic_witnessing(tmp_path):
         # whenever the call count was not a multiple of --submit-every).
         ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
         assert ex["verdict"] == "witnessed", ex
+        # Two of eight is not a strict majority: another two could have
+        # cosigned a conflicting history (security review 3, F11).
+        assert ex["split_view_unsafe"] is True
     finally:
         assert c.close() == 0
         for httpd, _ in ws:
@@ -505,6 +508,7 @@ def test_export_flags_a_journal_rewritten_or_truncated_after_witnessing(tmp_path
             c.call("tools/call", {"name": "echo", "arguments": {"n": 2}})
             ex = c.call("tools/call", {"name": "audit__export"}, timeout=30)["result"]["structuredContent"]
             assert ex["verdict"] == "witnessed" and not ex.get("tamper_alerts"), ex
+            assert ex.get("split_view_unsafe", False) is False  # two of two
         finally:
             assert c.close() == 0
         cosigned = json.loads((tmp_path / "proxy.jsonl.witnesses.json").read_text())["cosigned_size"]
