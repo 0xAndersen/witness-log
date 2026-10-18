@@ -181,6 +181,22 @@ take over) and `journal.jsonl.witnessed.json` (the latest witnessed
 dossier). Session ids are restricted to `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`
 and never touch paths outside the home. Witness URLs must be http(s).
 
+What a witness URL may reach: `submit_to_witnesses` sends a witness the
+checkpoint and nothing else, and never follows a redirect (a 3xx is a
+failed outcome for that witness: urllib used to follow a 301/302/303 with
+a GET to wherever `Location` pointed, and part of a non-200 answer went
+back to the model). For a directory passed in the call
+(`directory_source: "caller"`) the server resolves each witness host
+first and refuses it if any address is link-local (`169.254.0.0/16`,
+`fe80::/10`) or a cloud metadata address, and, unless the operator set
+`WITNESS_LOG_ALLOW_PRIVATE_WITNESSES=1`, if any is loopback, private or
+otherwise not globally routable; the connection then goes only to the
+addresses it checked, so a second DNS answer cannot redirect it. A
+refused witness is an outcome with the reason; nothing is sent to it. The
+operator's own directories (pinned, or `$WITNESS_LOG_HOME/witnesses.json`)
+may name anything, so a local testnet on `127.0.0.1` works there without
+the switch.
+
 Identity: by default each session id gets its own identity, stored in its
 journal header (`0600`). Set `WITNESS_LOG_IDENTITY_SEED_ENV` in the
 server's `env` to the name of a variable holding a 32-byte hex seed and

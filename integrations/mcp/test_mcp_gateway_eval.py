@@ -67,7 +67,7 @@ def _params(home, **env):
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "witness_log.mcp_server"],
-        env={"WITNESS_LOG_HOME": str(home), **env},
+        env={"WITNESS_LOG_HOME": str(home), "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES": "1", **env},
     )
 
 

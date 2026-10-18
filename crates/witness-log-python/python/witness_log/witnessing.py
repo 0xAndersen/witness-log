@@ -27,13 +27,18 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import functools
+import http.client
+import ipaddress
 import json
 import os
 import queue
 import random
+import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -47,18 +52,144 @@ __all__ = ["Witnesser", "WitnessStatus", "RoundResult", "submit_round", "load_st
 MAX_RETRY_AFTER_S = 60
 ATTEMPTS_PER_WITNESS = 6
 
-Post = Callable[[str, str, float], Tuple[int, str, int]]
+Post = Callable[..., Tuple[int, str, int]]
+#: ``guard(host, port)`` vets where a witness URL may be sent: it returns
+#: the resolved addresses the connection may use, or raises ``ValueError``.
+Guard = Callable[[str, int], List[Tuple[Any, ...]]]
+
+# Addresses that are never a witness, whoever supplied the directory entry:
+# cloud instance-metadata services, reached over a link-local or provider
+# address, hand out credentials to whatever asks.
+METADATA_ADDRESSES = frozenset(
+    ipaddress.ip_address(a)
+    for a in (
+        "169.254.169.254",  # AWS, GCP, Azure, OpenStack, ...
+        "169.254.170.2",  # AWS ECS task metadata
+        "fd00:ec2::254",  # AWS IPv6
+        "100.100.100.200",  # Alibaba Cloud
+    )
+)
 
 
-def _post(url: str, body: str, timeout: float) -> Tuple[int, str, int]:
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A witness answers ``add-checkpoint`` itself. urllib follows a 301,
+    302 or 303 to a POST with a GET to wherever ``Location`` points, which
+    lets a directory entry bounce the client to an address no entry could
+    name directly; a redirect is a failure for that witness instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001,D102
+        return None
+
+
+def _pinned_connection(base: type, addresses: List[Tuple[Any, ...]]) -> type:
+    """An ``http.client`` connection class that connects only to
+    ``addresses`` (what the guard vetted), never resolving the host again:
+    a second lookup could answer differently (DNS rebinding). TLS still
+    verifies the certificate against the host name."""
+
+    def create(address: Tuple[str, int], timeout: Any = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: Any = None) -> socket.socket:
+        err: Optional[OSError] = None
+        for family, socktype, proto, _canon, sockaddr in addresses:
+            s = socket.socket(family, socktype, proto)
+            try:
+                if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                    s.settimeout(timeout)
+                if source_address:
+                    s.bind(source_address)
+                s.connect(sockaddr)
+                return s
+            except OSError as e:
+                err = e
+                s.close()
+        raise err or OSError(f"no address to connect to for {address[0]}")
+
+    class Pinned(base):  # type: ignore[valid-type,misc]
+        def __init__(self, *a: Any, **kw: Any) -> None:
+            super().__init__(*a, **kw)
+            self._create_connection = create
+
+    return Pinned
+
+
+#: The operator's switch that lets a caller-supplied directory name
+#: loopback and private addresses (a local testnet). Link-local and
+#: metadata addresses stay refused.
+ALLOW_PRIVATE_ENV = "WITNESS_LOG_ALLOW_PRIVATE_WITNESSES"
+
+
+def witness_address_guard(allow_private: bool = False) -> Guard:
+    """A guard for witness URLs from a directory nobody vetted (one an MCP
+    caller passed). Resolves the host and refuses it if ANY address is
+    link-local (169.254.0.0/16, fe80::/10), a cloud metadata address,
+    unspecified or multicast; and, unless ``allow_private``, if any is
+    loopback, private or otherwise not globally routable. Returns the
+    addresses, which :func:`_post` then connects to without resolving
+    again."""
+
+    def guard(host: str, port: int) -> List[Tuple[Any, ...]]:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as e:
+            raise ValueError(f"witness host {host!r} does not resolve: {e}") from e
+        for info in infos:
+            ip = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+            mapped = getattr(ip, "ipv4_mapped", None)
+            ip = mapped or ip
+            if ip in METADATA_ADDRESSES or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+                raise ValueError(
+                    f"witness host {host!r} resolves to {ip}, a link-local, metadata or otherwise "
+                    "non-routable address; refused for a directory passed in a tool call"
+                )
+            if not ip.is_global and not allow_private:
+                raise ValueError(
+                    f"witness host {host!r} resolves to {ip}, a loopback or private address; refused for "
+                    f"a directory passed in a tool call (pin the directory with WITNESS_LOG_TRUSTED_DIRECTORY, "
+                    f"or set {ALLOW_PRIVATE_ENV}=1 for a local testnet)"
+                )
+        return infos
+
+    return guard
+
+
+def _uses_proxy(scheme: str, host: str) -> bool:
+    proxies = urllib.request.getproxies()
+    return scheme in proxies and not urllib.request.proxy_bypass(host)
+
+
+def _post(url: str, body: str, timeout: float, guard: Optional[Guard] = None) -> Tuple[int, str, int]:
     """POST ``body`` to ``<url>/add-checkpoint``. Returns
     ``(status, response_text, retry_after_seconds)``. Only http(s): a
     directory entry is caller-supplied, and ``urllib`` would otherwise
     happily read ``file://`` URLs (found by the 0.3.5 hostile-input
     evaluation against the MCP server, which returned the file's first
-    200 bytes to the caller)."""
+    200 bytes to the caller). Redirects are not followed (a 3xx is
+    returned as the status). With a ``guard``, the host is vetted first
+    and, unless a proxy carries the request, the connection goes only to
+    the addresses the guard returned."""
     if not (url.startswith("http://") or url.startswith("https://")):
         raise ValueError(f"witness url must be http:// or https://, got {url!r}")
+    handlers: List[Any] = [_NoRedirect()]
+    if guard is not None:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        addresses = guard(host, parts.port or (443 if parts.scheme == "https" else 80))
+        if not _uses_proxy(parts.scheme, host):
+            pinned_http = _pinned_connection(http.client.HTTPConnection, addresses)
+            pinned_https = _pinned_connection(http.client.HTTPSConnection, addresses)
+
+            class PinnedHTTP(urllib.request.HTTPHandler):
+                def http_open(self, req):  # noqa: ANN001,D102
+                    return self.do_open(pinned_http, req)
+
+            class PinnedHTTPS(urllib.request.HTTPSHandler):
+                def https_open(self, req):  # noqa: ANN001,D102
+                    kw: Dict[str, Any] = {"context": self._context}
+                    if hasattr(self, "_check_hostname"):  # Python < 3.12
+                        kw["check_hostname"] = self._check_hostname
+                    return self.do_open(pinned_https, req, **kw)
+
+            handlers += [PinnedHTTP(), PinnedHTTPS()]
+    opener = urllib.request.build_opener(*handlers)
     req = urllib.request.Request(
         url.rstrip("/") + "/add-checkpoint",
         data=body.encode(),
@@ -66,9 +197,11 @@ def _post(url: str, body: str, timeout: float) -> Tuple[int, str, int]:
         headers={"Content-Type": "text/plain; charset=utf-8"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 -- scheme checked above
+        with opener.open(req, timeout=timeout) as r:  # noqa: S310 -- scheme checked above
             return r.status, r.read(1 << 20).decode("utf-8", "replace"), 0
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            return e.code, "redirect not followed: a witness must answer add-checkpoint itself", 0
         try:
             retry = int(e.headers.get("Retry-After") or 0)
         except ValueError:
@@ -170,13 +303,18 @@ def submit_round(
     max_wait: float = MAX_RETRY_AFTER_S,
     post: Post = _post,
     sleep: Callable[[float], None] = time.sleep,
+    url_guard: Optional[Guard] = None,
 ) -> RoundResult:
     """One round: pin the current head, ask up to ``max_witnesses``
     diversity-selected witnesses to cosign it, return a dossier for that
     head carrying every cosignature that verifies. Raises only on bad
     arguments (``ValueError``); network failures are per-witness
-    ``outcomes``."""
+    ``outcomes``. ``url_guard`` (see :func:`witness_address_guard`) vets
+    each witness URL before anything is sent to it; a refused one is an
+    outcome with status 0 and the reason."""
     directory = _parse_directory(directory)
+    if url_guard is not None:
+        post = functools.partial(post, guard=url_guard)
     if max_witnesses < 1:
         raise ValueError("max_witnesses must be at least 1")
     ident = log.identity_pubkey_hex()
