@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Validate registry/witnesses/*.json. Exit 1 on any problem.
 
-Offline checks (always): shape, 64 lowercase hex pubkey, a real
-operator_org, runtime, https URL that is not a loopback address, C2SP key
-name, no duplicate key or name.
+Offline checks (always): shape and types, 64 lowercase hex pubkey, a real
+operator_org, runtime, https URL that is not a loopback or other
+non-public address (an IP literal must be a public address in ordinary
+dotted or IPv6 notation), C2SP key name, no invisible or control
+characters in the name, operator_org or compute_provider, no duplicate
+key or name.
 
 Live checks (unless --offline): GET <url>/ is what `witness-log witness
 serve` answers with its public key and directory entry. The served
@@ -43,6 +46,103 @@ def is_loopback(host: str) -> bool:
     return host in LOOPBACK or host.startswith("127.") or host.endswith(".localhost")
 
 
+# Characters that render as nothing (or as a space that is not U+0020): a
+# label with one looks identical to a label without it, yet the verifier
+# compares labels exactly, so one operator could register as two
+# "independent" ones. Kept as an explicit list, not unicodedata, so this
+# script and `witness-log directory build` refuse exactly the same text:
+# C0 and C1 controls, format characters (Cf), invisible fillers and
+# variation selectors, private use and noncharacters.
+INVISIBLE = (
+    (0x0000, 0x001F), (0x007F, 0x009F), (0x00AD, 0x00AD), (0x034F, 0x034F),
+    (0x0600, 0x0605), (0x061C, 0x061C), (0x06DD, 0x06DD), (0x070F, 0x070F),
+    (0x0890, 0x0891), (0x08E2, 0x08E2), (0x115F, 0x1160), (0x17B4, 0x17B5),
+    (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),
+    (0x2800, 0x2800), (0x3164, 0x3164), (0xE000, 0xF8FF), (0xFDD0, 0xFDEF),
+    (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFFB),
+    (0x110BD, 0x110BD), (0x110CD, 0x110CD), (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+    (0xF0000, 0x10FFFF),
+)
+
+
+def invisible_chars(text: str) -> list:
+    """The code points in ``text`` from INVISIBLE (or U+xFFFE/U+xFFFF)."""
+    bad = []
+    for c in text:
+        o = ord(c)
+        if (o & 0xFFFE) == 0xFFFE or any(lo <= o <= hi for lo, hi in INVISIBLE):
+            bad.append(f"U+{o:04X}")
+    return bad
+
+
+def numeric_ipv4(host: str):
+    """``host`` read as inet_aton reads it (what socket.getaddrinfo, curl
+    and browsers accept: ``2130706433``, ``0x7f.1``, ``127.1``), as a
+    32-bit int, or None if it is not a numeric IPv4 address."""
+    parts = host.split(".")
+    if not 1 <= len(parts) <= 4 or any(p == "" for p in parts):
+        return None
+    vals = []
+    for p in parts:
+        # Exact ASCII digit classes: int() would also take "_", spaces and
+        # non-ASCII digits, which the Rust twin of this check does not.
+        if re.fullmatch(r"0[xX][0-9a-fA-F]*", p):
+            v = int(p[2:], 16) if p[2:] else 0
+        elif re.fullmatch(r"0[0-7]+", p):
+            v = int(p, 8)
+        elif re.fullmatch(r"[0-9]+", p) and not (len(p) > 1 and p[0] == "0"):
+            v = int(p)
+        else:
+            return None
+        vals.append(v)
+    last_bits = 8 * (5 - len(vals))
+    if any(v > 255 for v in vals[:-1]) or vals[-1] >= 1 << last_bits:
+        return None
+    n = 0
+    for v in vals[:-1]:
+        n = n << 8 | v
+    return n << last_bits | vals[-1]
+
+
+# Address blocks no public witness URL may name (RFC 6890 special-purpose
+# registries; IPv6 forms that carry an IPv4 address are refused outright).
+BLOCKED_V4 = ((0x00000000, 8), (0x0A000000, 8), (0x64400000, 10), (0x7F000000, 8),
+              (0xA9FE0000, 16), (0xAC100000, 12), (0xC0000000, 24), (0xC0000200, 24),
+              (0xC0586300, 24), (0xC0A80000, 16), (0xC6120000, 15), (0xC6336400, 24),
+              (0xCB007100, 24), (0xE0000000, 4), (0xF0000000, 4))
+BLOCKED_V6 = (("::", 96), ("::ffff:0:0", 96), ("64:ff9b::", 96), ("64:ff9b:1::", 48),
+              ("100::", 64), ("2001::", 23), ("2001:db8::", 32), ("2002::", 16),
+              ("fc00::", 7), ("fe80::", 10), ("fec0::", 10), ("ff00::", 8))
+
+
+def ip_literal_problem(host: str):
+    """None if ``host`` is a name or a public IP address written the
+    ordinary way; otherwise why a registry URL may not use it."""
+    import ipaddress
+
+    host = host[:-1] if host.endswith(".") else host  # "1.2.3.4." resolves like 1.2.3.4
+    if ":" in host:
+        try:
+            ip = ipaddress.IPv6Address(host)
+        except ValueError:
+            return f"host {host!r} is not a valid IPv6 address"
+        for net, plen in BLOCKED_V6:
+            if ip in ipaddress.IPv6Network(f"{net}/{plen}"):
+                return f"host {host} is a non-public or IPv4-embedding IPv6 address"
+        return None
+    n = numeric_ipv4(host)
+    if n is None:
+        return None
+    dotted = ".".join(str(n >> s & 255) for s in (24, 16, 8, 0))
+    if host != dotted:
+        return f"host {host!r} is the IPv4 address {dotted} in another notation; write it as {dotted} (or use a name)"
+    for net, plen in BLOCKED_V4:
+        if n >> (32 - plen) == net >> (32 - plen):
+            return f"host {host} is not a public IPv4 address"
+    return None
+
+
 def check_entry(e, rel, allow_insecure=False):
     """Offline checks for one entry. Returns a list of problem strings."""
     problems = []
@@ -54,6 +154,20 @@ def check_entry(e, rel, allow_insecure=False):
     extra = set(e) - REQUIRED - OPTIONAL
     if extra:
         problems.append(f"{rel}: unknown fields {sorted(extra)}")
+    for field in ("name", "operator_org", "url", "pubkey"):
+        if not isinstance(e[field], str):
+            problems.append(f"{rel}: {field} must be a string")
+    if e.get("compute_provider") is not None and not isinstance(e["compute_provider"], str):
+        problems.append(f"{rel}: compute_provider must be a string or null")
+    if problems and any("must be a string" in p for p in problems):
+        return problems
+    for field in ("name", "operator_org", "compute_provider"):
+        bad = invisible_chars(e.get(field) or "")
+        if bad:
+            problems.append(
+                f"{rel}: {field} contains invisible or control characters ({', '.join(bad)}); "
+                "labels are compared exactly, so they would make two labels that look the same differ"
+            )
     pubkey = str(e["pubkey"])
     if not HEX32.fullmatch(pubkey.lower()):
         problems.append(f"{rel}: pubkey must be 64 hex")
@@ -86,6 +200,10 @@ def check_entry(e, rel, allow_insecure=False):
         # entry must be reachable by other people's clients.
         if is_loopback(host) and not allow_insecure:
             problems.append(f"{rel}: url {url} is a loopback address; give the public URL clients reach")
+        elif not allow_insecure:
+            why = ip_literal_problem(host)
+            if why:
+                problems.append(f"{rel}: url {url}: {why}")
     name = str(e["name"])
     if "+" in name or any(c.isspace() for c in name) or not name:
         problems.append(f"{rel}: name is a C2SP key name: non-empty, no whitespace, no '+'")

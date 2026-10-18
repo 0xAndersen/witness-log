@@ -416,8 +416,10 @@ Project-operated entries are left out unless `--include-project`. Every
 entry, project-operated or not, must pass the offline checks of
 `registry/validate.py`: only the known fields, all required ones present,
 a 64 lowercase hex key, a real `operator_org` with no stray whitespace,
-`runtime` `human` or `agent`, an `https://` URL that is not loopback, a
-C2SP key name, no duplicate key or name. Otherwise every problem is
+`runtime` `human` or `agent`, an `https://` URL that is not loopback or
+another non-public address (an IP host must be a public address in
+ordinary notation), a C2SP key name, no invisible or control characters
+in the name or organisation, no duplicate key or name. Otherwise every problem is
 printed with the file (or `URL#index`) it is in, nothing is written, and
 the exit status is 1. `--allow-insecure` accepts `http://` and loopback
 URLs, in entries and for `--url`, for local tests. Exit 2 on usage

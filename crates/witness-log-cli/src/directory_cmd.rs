@@ -123,6 +123,162 @@ fn is_loopback(host: &str) -> bool {
         || host.ends_with(".localhost")
 }
 
+/// Code points that render as nothing, or as a space that is not U+0020:
+/// a label with one looks identical to one without it, yet the verifier
+/// compares labels exactly. The same explicit list as `INVISIBLE` in
+/// `registry/validate.py` (controls, format characters, invisible fillers,
+/// variation selectors, private use, noncharacters), so both refuse exactly
+/// the same text.
+const INVISIBLE: [(u32, u32); 31] = [
+    (0x0000, 0x001F),
+    (0x007F, 0x009F),
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x0600, 0x0605),
+    (0x061C, 0x061C),
+    (0x06DD, 0x06DD),
+    (0x070F, 0x070F),
+    (0x0890, 0x0891),
+    (0x08E2, 0x08E2),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x2800, 0x2800),
+    (0x3164, 0x3164),
+    (0xE000, 0xF8FF),
+    (0xFDD0, 0xFDEF),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFFB),
+    (0x110BD, 0x110BD),
+    (0x110CD, 0x110CD),
+    (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+    (0xF0000, 0x10FFFF),
+];
+
+/// The code points of `text` in [`INVISIBLE`] (or U+xFFFE / U+xFFFF), as
+/// `U+XXXX`.
+fn invisible_chars(text: &str) -> Vec<String> {
+    text.chars()
+        .map(u32::from)
+        .filter(|&o| {
+            o & 0xFFFE == 0xFFFE || INVISIBLE.iter().any(|&(lo, hi)| (lo..=hi).contains(&o))
+        })
+        .map(|o| format!("U+{o:04X}"))
+        .collect()
+}
+
+/// `host` read as `inet_aton` reads it (`2130706433`, `0x7f.1` and `127.1`
+/// are all 127.0.0.1 to getaddrinfo, curl and browsers), or `None` if it is
+/// not a numeric IPv4 address. `numeric_ipv4` in `registry/validate.py`.
+fn numeric_ipv4(host: &str) -> Option<u32> {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 || parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    let mut vals = Vec::with_capacity(parts.len());
+    for p in &parts {
+        let v = if let Some(hex) = p.strip_prefix("0x").or_else(|| p.strip_prefix("0X")) {
+            if hex.is_empty() {
+                0
+            } else {
+                u64::from_str_radix(hex, 16).ok()?
+            }
+        } else if p.len() > 1 && p.starts_with('0') {
+            u64::from_str_radix(p, 8).ok()?
+        } else {
+            if !p.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            p.parse::<u64>().ok()?
+        };
+        vals.push(v);
+    }
+    let last_bits = 8 * (5 - vals.len() as u32);
+    let (last, init) = vals.split_last()?;
+    if init.iter().any(|&v| v > 255) || *last >= 1u64 << last_bits {
+        return None;
+    }
+    let mut n: u64 = 0;
+    for &v in init {
+        n = n << 8 | v;
+    }
+    Some((n << last_bits | last) as u32)
+}
+
+/// Why a registry URL may not name `host`, or `None` for a name or a public
+/// address written the ordinary way. `ip_literal_problem` in
+/// `registry/validate.py`, with the same RFC 6890 blocks.
+fn ip_literal_problem(host: &str) -> Option<String> {
+    const BLOCKED_V4: [(u32, u32); 15] = [
+        (0x0000_0000, 8),
+        (0x0A00_0000, 8),
+        (0x6440_0000, 10),
+        (0x7F00_0000, 8),
+        (0xA9FE_0000, 16),
+        (0xAC10_0000, 12),
+        (0xC000_0000, 24),
+        (0xC000_0200, 24),
+        (0xC058_6300, 24),
+        (0xC0A8_0000, 16),
+        (0xC612_0000, 15),
+        (0xC633_6400, 24),
+        (0xCB00_7100, 24),
+        (0xE000_0000, 4),
+        (0xF000_0000, 4),
+    ];
+    const BLOCKED_V6: [(&str, u32); 12] = [
+        ("::", 96),
+        ("::ffff:0:0", 96),
+        ("64:ff9b::", 96),
+        ("64:ff9b:1::", 48),
+        ("100::", 64),
+        ("2001::", 23),
+        ("2001:db8::", 32),
+        ("2002::", 16),
+        ("fc00::", 7),
+        ("fe80::", 10),
+        ("fec0::", 10),
+        ("ff00::", 8),
+    ];
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.contains(':') {
+        let Ok(ip) = host.parse::<std::net::Ipv6Addr>() else {
+            return Some(format!("host {host:?} is not a valid IPv6 address"));
+        };
+        let ip = u128::from(ip);
+        for (net, plen) in BLOCKED_V6 {
+            let net = u128::from(net.parse::<std::net::Ipv6Addr>().expect("constant"));
+            if ip >> (128 - plen) == net >> (128 - plen) {
+                return Some(format!(
+                    "host {host} is a non-public or IPv4-embedding IPv6 address"
+                ));
+            }
+        }
+        return None;
+    }
+    let n = numeric_ipv4(host)?;
+    let dotted = std::net::Ipv4Addr::from(n).to_string();
+    if host != dotted {
+        return Some(format!(
+            "host {host:?} is the IPv4 address {dotted} in another notation; write it as {dotted} (or use a name)"
+        ));
+    }
+    for (net, plen) in BLOCKED_V4 {
+        if n >> (32 - plen) == net >> (32 - plen) {
+            return Some(format!("host {host} is not a public IPv4 address"));
+        }
+    }
+    None
+}
+
 /// Every problem `registry/validate.py` reports for one entry offline, in
 /// its words where it has them. `directory build` writes nothing unless
 /// every entry has none: the directory is the trust anchor of each verdict
@@ -151,6 +307,22 @@ fn registry_entry_problems(v: &serde_json::Value, allow_insecure: bool) -> Vec<S
         problems.push(format!("unknown fields {unknown:?}"));
     }
     let text = |k: &str| obj.get(k).and_then(serde_json::Value::as_str);
+    if !matches!(
+        obj.get("compute_provider"),
+        None | Some(serde_json::Value::Null | serde_json::Value::String(_))
+    ) {
+        problems.push("compute_provider must be a string or null".into());
+    }
+    for field in ["name", "operator_org", "compute_provider"] {
+        let bad = invisible_chars(text(field).unwrap_or(""));
+        if !bad.is_empty() {
+            problems.push(format!(
+                "{field} contains invisible or control characters ({}); labels are compared \
+                 exactly, so they would make two labels that look the same differ",
+                bad.join(", ")
+            ));
+        }
+    }
     match text("pubkey") {
         Some(k) if k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()) => {
             if k.bytes().any(|b| b.is_ascii_uppercase()) {
@@ -192,6 +364,10 @@ fn registry_entry_problems(v: &serde_json::Value, allow_insecure: bool) -> Vec<S
                 problems.push(format!(
                     "url {url} is a loopback address; give the public URL clients reach"
                 ));
+            } else if !allow_insecure {
+                if let Some(why) = ip_literal_problem(&host) {
+                    problems.push(format!("url {url}: {why}"));
+                }
             }
         }
         _ => problems.push("url must be http(s)".into()),
@@ -484,4 +660,122 @@ fn cmd_add(args: &[String]) -> ExitCode {
         }
     );
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod registry_check_tests {
+    //! Re-audit of the 0.6.1 fixes: `directory build` and
+    //! `registry/validate.py` must refuse the same entries. The cases and
+    //! answers here are the ones registry/tests/test_validate.py checks.
+    use super::*;
+
+    fn entry(field: &str, value: serde_json::Value) -> serde_json::Value {
+        let mut e = serde_json::json!({
+            "name": "w1.example.org/w",
+            "operator_org": "Org A",
+            "url": "https://w1.example.org",
+            "pubkey": "ab".repeat(32),
+            "runtime": "human",
+            "is_project_operated": false,
+        });
+        e[field] = value;
+        e
+    }
+
+    #[test]
+    fn numeric_ipv4_reads_what_inet_aton_reads() {
+        for (host, want) in [
+            ("2130706433", Some(0x7F00_0001)),
+            ("0x7f.1", Some(0x7F00_0001)),
+            ("127.1", Some(0x7F00_0001)),
+            ("0177.0.0.1", Some(0x7F00_0001)),
+            ("0x", Some(0)),
+            ("0.0x0.0.0", Some(0)),
+            ("0x7_f.1", None),
+            ("09.1.1.1", None),
+            ("1.2.3.4.5", None),
+            ("256.1.1.1", None),
+            ("deadbeef", None),
+            ("w1.example.org", None),
+        ] {
+            assert_eq!(numeric_ipv4(host), want, "{host}");
+        }
+    }
+
+    #[test]
+    fn non_public_or_disguised_ip_literals_are_refused() {
+        for url in [
+            "https://169.254.169.254/",
+            "https://2130706433/",
+            "https://0x7f.1/",
+            "https://127.1/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://[64:ff9b::a9fe:a9fe]/",
+            "https://10.0.0.5/",
+            "https://100.64.0.1/",
+            "https://[fe80::1]/",
+            "https://[fc00::1]/",
+            "https://169.254.169.254./",
+            "https://01.2.3.4/",
+        ] {
+            let p = registry_entry_problems(&entry("url", url.into()), false);
+            assert!(p.iter().any(|p| p.contains("url")), "{url}: {p:?}");
+            assert!(
+                registry_entry_problems(&entry("url", url.into()), true).is_empty(),
+                "{url} with --allow-insecure"
+            );
+        }
+        for url in [
+            "https://93.184.216.34/",
+            "https://[2606:4700::1]:8443/",
+            "https://deadbeef.example/",
+        ] {
+            let p = registry_entry_problems(&entry("url", url.into()), false);
+            assert!(p.is_empty(), "{url}: {p:?}");
+        }
+    }
+
+    #[test]
+    fn invisible_characters_in_a_label_are_refused() {
+        for org in [
+            "Org\u{200b}A",
+            "Org A\u{200d}",
+            "\u{feff}Org A",
+            "Org\u{ad}A",
+            "Org\u{2066}A\u{2069}",
+            "Org\u{3164}A",
+            "Org A\u{fe0f}",
+            "Org\u{7}A",
+            "Org\u{e000}A",
+        ] {
+            let p = registry_entry_problems(&entry("operator_org", org.into()), false);
+            assert!(
+                p.iter()
+                    .any(|p| p.contains("invisible or control characters")),
+                "{org:?}: {p:?}"
+            );
+        }
+        assert!(registry_entry_problems(
+            &entry("operator_org", "株式会社 Ejemplo Ñandú".into()),
+            false
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn fields_must_have_their_json_type() {
+        for (field, value) in [
+            ("operator_org", serde_json::json!(["Org A"])),
+            ("name", serde_json::json!(7)),
+            ("url", serde_json::Value::Null),
+            ("pubkey", serde_json::json!(1)),
+            ("compute_provider", serde_json::json!(123)),
+        ] {
+            let p = registry_entry_problems(&entry(field, value.clone()), false);
+            assert!(
+                p.iter().any(|p| p.contains(field)),
+                "{field}={value}: {p:?}"
+            );
+        }
+    }
 }
