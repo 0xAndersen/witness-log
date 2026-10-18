@@ -51,10 +51,10 @@ jobs:
         run: go test ./... -count=1
       - name: staticcheck
         shell: bash
-        # setup-go v6 exports GOTOOLCHAIN=local; staticcheck needs a newer
-        # Go than the module's floor (go 1.22) to build, so let go fetch it
-        # for this one install. Pinned so a staticcheck release cannot turn
-        # main red overnight.
+        # setup-go exports GOTOOLCHAIN=local and installs the go.mod
+        # toolchain line (go1.26.9); auto lets go fetch a newer one should a
+        # staticcheck release need it. Pinned so a staticcheck release
+        # cannot turn main red overnight.
         env:
           GOTOOLCHAIN: auto
         run: |
