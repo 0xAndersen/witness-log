@@ -163,6 +163,221 @@ fn directory_build_matches_the_registry_script_schema() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// An edit that makes a valid registry entry invalid.
+type Mutation = Box<dyn Fn(&mut serde_json::Value)>;
+
+/// `directory build` applies every offline check of `registry/validate.py`
+/// (outside review III, P1). Before, it took plain-http and loopback URLs,
+/// upper-case or space-padded keys, labels with stray whitespace, entries
+/// missing `runtime` or `is_project_operated` (serde filled them in),
+/// unknown fields and duplicate names, all of which the registry refuses.
+#[test]
+fn directory_build_applies_the_registry_checks() {
+    let root = tmpdir("strict");
+    let reg = root.join("witnesses");
+    std::fs::create_dir_all(&reg).unwrap();
+    let reg_s = reg.display().to_string();
+    let (_, good) = entry("good.example/w", "Org Good", false);
+    std::fs::write(reg.join("a-good.json"), good.to_string()).unwrap();
+    let build = |extra: &[&str]| {
+        let mut args = vec![
+            "directory",
+            "build",
+            "--registry",
+            &reg_s,
+            "--out",
+            "t.json",
+        ];
+        args.extend_from_slice(extra);
+        wl(&root, &args)
+    };
+    let out = build(&[]);
+    assert_eq!(code(&out), 0, "{}", err(&out));
+
+    let cases: Vec<(&str, Mutation)> = vec![
+        (
+            "plain http",
+            Box::new(|e| e["url"] = "http://b.example".into()),
+        ),
+        (
+            "loopback",
+            Box::new(|e| e["url"] = "https://127.0.0.1:7380".into()),
+        ),
+        (
+            "loopback",
+            Box::new(|e| e["url"] = "https://[::1]:7380".into()),
+        ),
+        (
+            "loopback",
+            Box::new(|e| e["url"] = "https://witness.localhost".into()),
+        ),
+        ("http(s)", Box::new(|e| e["url"] = "ftp://b.example".into())),
+        (
+            "lowercase",
+            Box::new(|e| e["pubkey"] = e["pubkey"].as_str().unwrap().to_uppercase().into()),
+        ),
+        (
+            "64 hex",
+            Box::new(|e| e["pubkey"] = format!(" {}", e["pubkey"].as_str().unwrap()).into()),
+        ),
+        ("64 hex", Box::new(|e| e["pubkey"] = "ab".repeat(31).into())),
+        ("operator_org", Box::new(|e| e["operator_org"] = "".into())),
+        (
+            "operator_org",
+            Box::new(|e| e["operator_org"] = "Unspecified".into()),
+        ),
+        (
+            "whitespace",
+            Box::new(|e| e["operator_org"] = " Org B".into()),
+        ),
+        (
+            "whitespace",
+            Box::new(|e| e["operator_org"] = "Org  B".into()),
+        ),
+        (
+            "C2SP key name",
+            Box::new(|e| e["name"] = "b.example+w".into()),
+        ),
+        (
+            "human or agent",
+            Box::new(|e| e["runtime"] = "robot".into()),
+        ),
+        (
+            "missing",
+            Box::new(|e| {
+                e.as_object_mut().unwrap().remove("runtime");
+            }),
+        ),
+        (
+            "missing",
+            Box::new(|e| {
+                e.as_object_mut().unwrap().remove("is_project_operated");
+            }),
+        ),
+        ("unknown fields", Box::new(|e| e["extra"] = 1.into())),
+    ];
+    for (want, mutate) in &cases {
+        let (_, mut bad) = entry("b.example/w", "Org B", false);
+        mutate(&mut bad);
+        std::fs::write(reg.join("b-bad.json"), bad.to_string()).unwrap();
+        let _ = std::fs::remove_file(root.join("t.json"));
+        let out = build(&[]);
+        let e = err(&out);
+        assert_eq!(code(&out), 1, "{want}: {bad}\n{e}");
+        assert!(e.contains("b-bad.json") && e.contains(want), "{want}: {e}");
+        assert!(e.contains("refusing to build"), "{e}");
+        assert!(!root.join("t.json").exists(), "{want}: nothing is written");
+    }
+
+    // A project-operated entry is checked even though it is left out.
+    let (_, mut bad) = entry("p.example/w", "Project", true);
+    bad["url"] = "http://p.example".into();
+    std::fs::write(reg.join("b-bad.json"), bad.to_string()).unwrap();
+    assert_eq!(code(&build(&[])), 1);
+
+    // Every problem is reported, not only the first: a duplicate name
+    // (validate.py refuses it too) and a bad key in another file.
+    let (_, mut same_name) = entry("good.example/w", "Org C", false);
+    same_name["url"] = "https://c.example".into();
+    std::fs::write(reg.join("b-bad.json"), same_name.to_string()).unwrap();
+    let (_, mut bad_key) = entry("d.example/w", "Org D", false);
+    bad_key["pubkey"] = "zz".into();
+    std::fs::write(reg.join("c-bad.json"), bad_key.to_string()).unwrap();
+    let out = build(&[]);
+    let e = err(&out);
+    assert_eq!(code(&out), 1);
+    assert!(e.contains("b-bad.json: duplicate name, also in"), "{e}");
+    assert!(e.contains("c-bad.json: pubkey"), "{e}");
+    assert!(e.contains("2 problem(s) in 3 entries"), "{e}");
+    std::fs::remove_file(reg.join("c-bad.json")).unwrap();
+
+    // --allow-insecure accepts http:// and loopback URLs (local fleets, tests).
+    let (_, mut local) = entry("l.example/w", "Org L", false);
+    local["url"] = "http://127.0.0.1:7380".into();
+    std::fs::write(reg.join("b-bad.json"), local.to_string()).unwrap();
+    assert_eq!(code(&build(&[])), 1);
+    let out = build(&["--allow-insecure"]);
+    assert_eq!(code(&out), 0, "{}", err(&out));
+    let t: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("t.json")).unwrap()).unwrap();
+    assert_eq!(t, serde_json::json!({ "witnesses": [good, local] }));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `directory build --url` fetches the trust anchor itself: over plain
+/// http it is refused unless --allow-insecure, and the fetched entries
+/// get the same checks as registry files.
+#[test]
+fn directory_build_from_a_url() {
+    use std::io::{Read, Write};
+    let root = tmpdir("url");
+    let (_, a) = entry("a.example/w", "Org A", false);
+    let (_, mut b) = entry("b.example/w", "Org B", false);
+    b["url"] = "http://127.0.0.1:7381".into();
+    let serve = |doc: serde_json::Value| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/directory.json", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let body = doc.to_string();
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    };
+    // Plain http is refused before anything is fetched.
+    let url = serve(serde_json::json!({ "witnesses": [a.clone()] }));
+    let out = wl(
+        &root,
+        &["directory", "build", "--url", &url, "--out", "t.json"],
+    );
+    assert_eq!(code(&out), 2, "{}", err(&out));
+    assert!(err(&out).contains("plain http"), "{}", err(&out));
+    // With --allow-insecure the document is fetched and its entries checked.
+    let out = wl(
+        &root,
+        &[
+            "directory",
+            "build",
+            "--url",
+            &url,
+            "--allow-insecure",
+            "--out",
+            "t.json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", err(&out));
+    let t: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("t.json")).unwrap()).unwrap();
+    assert_eq!(t, serde_json::json!({ "witnesses": [a.clone()] }));
+    // A fetched entry with an unknown field is refused like a registry file.
+    let mut odd = a.clone();
+    odd["trusted"] = true.into();
+    let url = serve(serde_json::json!({ "witnesses": [odd, b] }));
+    let out = wl(
+        &root,
+        &[
+            "directory",
+            "build",
+            "--url",
+            &url,
+            "--allow-insecure",
+            "--out",
+            "u.json",
+        ],
+    );
+    assert_eq!(code(&out), 1, "{}", err(&out));
+    assert!(err(&out).contains("#0: unknown fields"), "{}", err(&out));
+    assert!(!root.join("u.json").exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn directory_add_by_vkey() {
     let root = tmpdir("add");

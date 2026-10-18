@@ -102,7 +102,7 @@ one command is planned for 0.4.0.
 
 ```sh
 git clone https://github.com/0xAndersen/witness-log && cd witness-log
-witness-log directory build --out trusted.json           # every registered witness
+witness-log directory build --out trusted.json           # every registered independent witness
 jq '.witnesses | length' trusted.json                     # 0 today
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json --min 2
 witness-log verify dossier.json --identity "$AGENT_IDENTITY" --directory trusted.json \
@@ -115,7 +115,8 @@ holds more than three witnesses, two cosignatures are not a majority of
 it: `verify` reports WITNESSED and exits 11 (split view possible) unless
 you verify against the subset you submit to or pass `--allow-sub-majority`. That is the honest
 state of the network, not a bug in your setup. (`python3
-registry/build_directory.py > trusted.json` builds the same file.) If
+registry/build_directory.py --exclude-project > trusted.json` builds the same file;
+both refuse to build from an entry `registry/validate.py` would reject.) If
 your organisation runs one of the registered witnesses, `--subject-org`
 keeps it from counting as independent of your own agent. Live status of registered witnesses:
 [STATUS.md](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md).

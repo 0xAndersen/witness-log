@@ -56,8 +56,31 @@ the same `--org` string on every machine one organisation operates.
 ```sh
 python registry/build_directory.py > directory.json     # every registered witness
 python registry/build_directory.py --exclude-project    # independents only
+witness-log directory build --out directory.json        # the same, independents only
+witness-log directory build --include-project --out directory.json   # every registered witness
 witness-log verify dossier.json --identity <hex> --directory directory.json
 ```
+
+The directory is the trust anchor of every verdict computed against it,
+so both builders refuse to write one unless every entry passes the offline
+checks of `validate.py`: only the known fields, all required ones present,
+a 64 lowercase hex `pubkey`, a real `operator_org` with no leading,
+trailing or repeated whitespace, `runtime` `human` or `agent`,
+`is_project_operated` a boolean, an `https://` URL that is not a loopback
+address, a C2SP key name, and no duplicate key or name. A failing build
+prints every problem on stderr, writes nothing (`build_directory.py`
+prints nothing on stdout) and exits 1. `--allow-insecure` accepts
+`http://` and loopback URLs, for tests and local fleets.
+
+The live check (`GET /` serves the entry's key and organisation) needs the
+network, so builds skip it by default: CI and offline verifiers still
+work. `build_directory.py --live` runs it (an unreachable URL is a note;
+`--require-live` makes it an error). `witness-log directory build --url`
+fetches a directory document instead of reading the registry; it must be
+`https://` (or `--allow-insecure`), and its entries get the same checks.
+`build_directory.py` keeps project-operated entries unless
+`--exclude-project`; `witness-log directory build` leaves them out unless
+`--include-project`. Either way they are checked.
 
 A verifier is free to use a subset. WITNESSED needs cosignatures from at
 least two distinct `operator_org` values in the directory *you* pass, so
