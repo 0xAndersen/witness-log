@@ -23,6 +23,11 @@ compare() {
   python3 -I - "$label" "$rust_exit" "$go_exit" "${TMPDIR:-/tmp}/wl-rust.json" "${TMPDIR:-/tmp}/wl-go.json" <<'EOF'
 import json, sys
 label, rust_exit, go_exit = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+if 2 in (rust_exit, go_exit):
+    # A usage error (exit 2) prints no report: the exit codes alone must agree.
+    ok = rust_exit == go_exit
+    print(("ok   " if ok else "DIFF ") + f"{label}: rust exit {rust_exit}, go exit {go_exit}")
+    sys.exit(0 if ok else 1)
 r = json.load(open(sys.argv[4])); g = json.load(open(sys.argv[5]))
 # Failure wording is per-implementation; whether a check failed is not.
 rf = r["report"].pop("failures", None); gf = g["report"].pop("failures", None)
@@ -78,4 +83,41 @@ for d in "$fleet"/*.dossier.json; do
   compare "fleet $n, --accept-fleet-anchor" "$d" --directory "$fleet/trusted.json" --min-witnesses 2 --subject-org corpus-fleet-org --accept-fleet-anchor || fail=1
   compare "fleet $n, --accept-fleet-anchor, no directory" "$d" --subject-org corpus-fleet-org --accept-fleet-anchor || fail=1
 done
+# Argument parsing (security review of 0.5.0, F6): every flag is known or
+# the run is a usage error; a value flag takes the next argument; a repeated
+# single-value flag keeps its last value; the last of --strict/--no-strict
+# wins. (compare appends --json, so a value flag given last consumes it.)
+native_id="$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['identity_pubkey'])" native/dossier.json)"
+args() { compare "args: $*" "$@" || fail=1; }
+args native/dossier.json --known-heads "1:$wrong_identity"
+args native/dossier.json --evidance c2sp/a.json
+args native/dossier.json --directory native/trusted.json --jsn
+args native/dossier.json -x
+args native/dossier.json native/dossier.json
+args native/dossier.json --identity "$wrong_identity" --identity "$native_id"
+args native/dossier.json --identity "$native_id" --identity "$wrong_identity"
+args native/dossier.json --identity zz
+args native/dossier.json --identity "${native_id:0:62}"
+args "$two_of_four" --directory native/trusted.json --min-witnesses 2 --no-strict --strict
+args "$two_of_four" --directory native/trusted.json --min-witnesses 2 --strict --no-strict
+args "$two_of_four" --directory native/trusted.json --min-witnesses 5 --min-witnesses 2
+args "$two_of_four" --directory native/trusted.json --min-witnesses +2
+args native/dossier.json --directory native/trusted.json --min-witnesses 0
+args native/dossier.json --directory native/trusted.json --min-witnesses -1
+args native/dossier.json --directory native/trusted.json --min-witnesses 2.0
+args "$two_of_four" --directory native/trusted.json --threshold 0
+args "$two_of_four" --directory native/trusted.json --threshold +.5
+args "$two_of_four" --directory native/trusted.json --threshold 5e-1
+args native/dossier.json --directory native/trusted.json --threshold 0x1p-1
+args native/dossier.json --directory native/trusted.json --threshold 1_0
+args native/dossier.json --directory native/trusted.json --threshold nan
+args native/dossier.json --directory native/trusted.json --threshold
+args native/dossier.json --directory /nonexistent/trusted.json --directory native/trusted.json
+args native/dossier.json --directory native/trusted.json --directory /nonexistent/trusted.json
+args native/dossier.json --directory ""
+args native/dossier.json --directory native/trusted.json --subject-org nobody --subject-org "Example-University"
+args native/dossier.json --directory native/trusted.json --subject-org --json
+args native/dossier.json --directory native/trusted.json --subject-org "  "
+args native/dossier.json --directory native/trusted.json --explain
+args native/dossier.json --known-head "1:$wrong_identity" --evidence
 exit $fail

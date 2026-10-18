@@ -17,9 +17,12 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -52,6 +55,11 @@ USAGE:
       --accept-fleet-anchor  EXPERIMENTAL (RFC-0001): also count witnesses that
                    cosigned the fleet log holding this checkpoint (needs --subject-org)
       --json       machine-readable report (same fields as witness-log verify --json)
+      --explain    accepted, as witness-log verify accepts it; prints nothing extra here
+
+    Flags are parsed as witness-log verify parses them: an unknown flag is
+    a usage error (exit 2), a repeated flag keeps its last value, and the
+    last of --strict / --no-strict wins.
 
   witness-log-verify bind <a.json> <b.json> [--json]
       Two different agents' dossiers: match their HandoffAttestation and
@@ -82,15 +90,6 @@ func readInput(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-func flagValue(args []string, flag string) (string, bool) {
-	for i, a := range args {
-		if a == flag && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
-			return args[i+1], true
-		}
-	}
-	return "", false
-}
-
 func hasFlag(args []string, flag string) bool {
 	for _, a := range args {
 		if a == flag {
@@ -100,69 +99,199 @@ func hasFlag(args []string, flag string) bool {
 	return false
 }
 
-// switches take no value; every other --flag consumes the next argument.
-var switches = map[string]bool{
-	"--json": true, "--strict": true, "--no-strict": true, "--allow-sub-majority": true,
-	"--accept-fleet-anchor": true,
-}
-
-func positional(args []string) []string {
+// positional returns the arguments that are not --flags, or an error
+// naming the first --flag not in allowed (switches only), as the reference
+// CLI's `bind` does. Unknown flags used to be skipped together with the
+// argument after them (security review of 0.5.0, F6).
+func positional(args []string, allowed ...string) ([]string, error) {
 	var out []string
-	skip := false
 	for _, a := range args {
-		if skip {
-			skip = false
+		if !strings.HasPrefix(a, "--") {
+			out = append(out, a)
 			continue
 		}
-		if strings.HasPrefix(a, "--") {
-			if !switches[a] {
-				skip = true
-			}
-			continue
+		known := false
+		for _, f := range allowed {
+			known = known || a == f
 		}
-		out = append(out, a)
+		if !known {
+			return nil, fmt.Errorf("unrecognized flag: %s", a)
+		}
 	}
-	return out
-}
-
-// flagValues returns every value of a repeatable flag, and false if the
-// flag appears without one.
-func flagValues(args []string, flag string) ([]string, bool) {
-	var out []string
-	for i, a := range args {
-		if a != flag {
-			continue
-		}
-		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
-			return nil, false
-		}
-		out = append(out, args[i+1])
-	}
-	return out, true
+	return out, nil
 }
 
 // readEvidence reads a witness evidence file as `witness-log witness serve`
-// writes it ({"kind": "equivocation", "proof": {...}}) or a bare proof.
+// writes it ({"kind": "equivocation", "proof": {...}}) or a bare proof,
+// by the rule every verifier applies (witnesslog.ParseEvidence).
 func readEvidence(path string) (witnesslog.EquivocationProof, error) {
-	var p witnesslog.EquivocationProof
 	raw, err := readInput(path)
 	if err != nil {
-		return p, err
+		return witnesslog.EquivocationProof{}, err
 	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return p, err
-	}
-	if inner, ok := doc["proof"]; ok {
-		raw = inner
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
+	p, err := witnesslog.ParseEvidence(raw)
+	if err != nil {
 		return p, fmt.Errorf("not an equivocation proof: %v", err)
 	}
-	if p.Origin == "" || p.EarlierNote == "" || p.ConflictingNote == "" {
-		return p, fmt.Errorf("not an equivocation proof: missing origin or notes")
-	}
 	return p, nil
+}
+
+// verifyArgs is what `verify` was asked to do, parsed exactly as the
+// reference CLI's parse_options parses it (crates/witness-log-cli): every
+// flag is known or the run is a usage error (exit 2); a value flag takes
+// the next argument whatever it looks like; a repeated single-value flag
+// keeps its last value; --strict and --no-strict, the last one given.
+// Before this, unknown flags were skipped with the argument after them
+// and the first of a repeated flag won, so a typo such as --evidance or
+// --known-heads ran without the evidence the caller supplied (security
+// review of 0.5.0, F6).
+type verifyArgs struct {
+	path            string
+	threshold       float64
+	thresholdSet    bool
+	minWitnesses    *int
+	json            bool
+	identity        string
+	directoryPath   *string
+	revocationsPath *string
+	strict          bool
+	allowSub        bool
+	knownHeads      []witnesslog.KnownHead
+	evidencePaths   []string
+	subjectOrg      string
+	acceptFleet     bool
+}
+
+// rustFloat is the grammar of Rust's f64::from_str for finite decimal
+// values (the only ones --threshold accepts): no hex floats, underscores
+// or spaces, which strconv.ParseFloat would otherwise take.
+var rustFloat = regexp.MustCompile(`^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$`)
+
+// rustUsize is the grammar of Rust's usize::from_str: digits, optionally
+// after one '+'.
+var rustUsize = regexp.MustCompile(`^\+?[0-9]+$`)
+
+func isHex32(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+func parseVerifyArgs(args []string) (*verifyArgs, error) {
+	a := &verifyArgs{threshold: witnesslog.DefaultThreshold, strict: true}
+	havePath := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value := func(missing string) (string, error) {
+			if i+1 >= len(args) {
+				return "", errors.New(missing)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
+		case "--threshold":
+			v, err := value("--threshold requires a value between 0.0 and 1.0")
+			if err != nil {
+				return nil, err
+			}
+			f, perr := strconv.ParseFloat(v, 64)
+			if !rustFloat.MatchString(v) || perr != nil {
+				return nil, fmt.Errorf("--threshold value '%s' is not a valid number", v)
+			}
+			if !(f >= 0 && f <= 1) {
+				return nil, fmt.Errorf("--threshold must be between 0.0 and 1.0, got %s", v)
+			}
+			a.threshold, a.thresholdSet = f, true
+		case "--revocations":
+			v, err := value("--revocations requires a path")
+			if err != nil {
+				return nil, err
+			}
+			a.revocationsPath = &v
+		case "--min-witnesses":
+			v, err := value("--min-witnesses requires a positive integer")
+			if err != nil {
+				return nil, err
+			}
+			n, perr := strconv.ParseUint(strings.TrimPrefix(v, "+"), 10, 64)
+			if !rustUsize.MatchString(v) || perr != nil || n > math.MaxInt {
+				return nil, fmt.Errorf("--min-witnesses value '%s' is not a positive integer", v)
+			}
+			if n == 0 {
+				return nil, errors.New("--min-witnesses must be at least 1")
+			}
+			m := int(n)
+			a.minWitnesses = &m
+		case "--json":
+			a.json = true
+		case "--explain":
+			// Accepted as the reference accepts it; this verifier prints no
+			// per-check explanations (`witness-log explain` does).
+		case "--strict":
+			a.strict = true
+		case "--no-strict":
+			a.strict = false
+		case "--allow-sub-majority":
+			a.allowSub = true
+		case "--accept-fleet-anchor":
+			a.acceptFleet = true
+		case "--known-head":
+			v, err := value("--known-head requires <size>:<root hex>")
+			if err != nil {
+				return nil, err
+			}
+			kh, perr := witnesslog.ParseKnownHead(v)
+			if perr != nil {
+				return nil, fmt.Errorf("--known-head: %v", perr)
+			}
+			a.knownHeads = append(a.knownHeads, kh)
+		case "--evidence":
+			v, err := value("--evidence requires a path to a witness evidence file")
+			if err != nil {
+				return nil, err
+			}
+			a.evidencePaths = append(a.evidencePaths, v)
+		case "--identity":
+			v, err := value("--identity requires a hex-encoded public key")
+			if err != nil {
+				return nil, err
+			}
+			if !isHex32(v) {
+				return nil, fmt.Errorf("--identity must be a 32-byte Ed25519 public key as 64 hex characters, got '%s'", v)
+			}
+			a.identity = v
+		case "--directory":
+			v, err := value("--directory requires a path to a trusted witness directory JSON file")
+			if err != nil {
+				return nil, err
+			}
+			a.directoryPath = &v
+		case "--subject-org":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") || strings.TrimSpace(args[i+1]) == "" {
+				return nil, errors.New("--subject-org requires the organisation that operates this log")
+			}
+			i++
+			a.subjectOrg = args[i]
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return nil, fmt.Errorf("unrecognized flag: %s", arg)
+			}
+			if havePath {
+				return nil, fmt.Errorf("unexpected extra argument: '%s' (path already set)", arg)
+			}
+			a.path, havePath = arg, true
+		}
+	}
+	if !havePath {
+		return nil, errors.New(strings.TrimSpace(usage))
+	}
+	if a.acceptFleet && a.subjectOrg == "" {
+		return nil, errors.New("--accept-fleet-anchor requires --subject-org ORG: the organisation that runs the fleet log (and its agents), whose own witnesses never count as independent")
+	}
+	return a, nil
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -183,86 +312,55 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runVerify(args []string, stdout, stderr io.Writer) int {
-	pos := positional(args)
-	if len(pos) != 1 {
-		fmt.Fprint(stderr, usage)
+	// As the reference: --help or -h anywhere prints the usage.
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+	}
+	a, err := parseVerifyArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return witnesslog.ExitUsage
 	}
-	path := pos[0]
-	opts := witnesslog.Options{}
-	if v, ok := flagValue(args, "--identity"); ok {
-		opts.ExpectedIdentityPubkey = v
-	} else if hasFlag(args, "--identity") {
-		fmt.Fprintln(stderr, "--identity needs a hex public key")
-		return witnesslog.ExitUsage
-	}
-	if v, ok := flagValue(args, "--threshold"); ok {
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f < 0 || f > 1 {
-			fmt.Fprintln(stderr, "--threshold: expected a fraction between 0 and 1")
-			return witnesslog.ExitUsage
-		}
-		opts.Threshold = f
-	}
-	if v, ok := flagValue(args, "--min-witnesses"); ok {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			fmt.Fprintln(stderr, "--min-witnesses: expected a non-negative integer")
-			return witnesslog.ExitUsage
-		}
-		opts.MinReceipts = &n
+	path := a.path
+	opts := witnesslog.Options{
+		ExpectedIdentityPubkey: a.identity,
+		Threshold:              a.threshold,
+		ThresholdSet:           true,
+		MinReceipts:            a.minWitnesses,
+		KnownHeads:             a.knownHeads,
+		SubjectOrg:             a.subjectOrg,
+		AcceptFleetAnchor:      a.acceptFleet,
 	}
 	var directory *witnesslog.Directory
-	if dirPath, ok := flagValue(args, "--directory"); ok {
-		raw, err := readInput(dirPath)
+	if p := a.directoryPath; p != nil {
+		raw, err := readInput(*p)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", dirPath, err)
+			fmt.Fprintf(stderr, "%s: %v\n", *p, err)
 			return witnesslog.ExitUsage
 		}
 		directory, err = witnesslog.ParseDirectory(raw)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", dirPath, err)
+			fmt.Fprintf(stderr, "%s: %v\n", *p, err)
 			return witnesslog.ExitUsage
 		}
-	} else if hasFlag(args, "--directory") {
-		fmt.Fprintln(stderr, "--directory needs a path")
-		return witnesslog.ExitUsage
 	}
-	if revPath, ok := flagValue(args, "--revocations"); ok {
-		raw, err := readInput(revPath)
+	if p := a.revocationsPath; p != nil {
+		raw, err := readInput(*p)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", revPath, err)
+			fmt.Fprintf(stderr, "%s: %v\n", *p, err)
 			return witnesslog.ExitUsage
 		}
 		revs, err := witnesslog.ParseRevocations(raw)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", revPath, err)
+			fmt.Fprintf(stderr, "%s: %v\n", *p, err)
 			return witnesslog.ExitUsage
 		}
 		opts.Revocations = revs
-	} else if hasFlag(args, "--revocations") {
-		fmt.Fprintln(stderr, "--revocations needs a path")
-		return witnesslog.ExitUsage
 	}
-	heads, ok := flagValues(args, "--known-head")
-	if !ok {
-		fmt.Fprintln(stderr, "--known-head requires <size>:<root hex>")
-		return witnesslog.ExitUsage
-	}
-	for _, h := range heads {
-		kh, err := witnesslog.ParseKnownHead(h)
-		if err != nil {
-			fmt.Fprintf(stderr, "--known-head: %v\n", err)
-			return witnesslog.ExitUsage
-		}
-		opts.KnownHeads = append(opts.KnownHeads, kh)
-	}
-	evidencePaths, ok := flagValues(args, "--evidence")
-	if !ok {
-		fmt.Fprintln(stderr, "--evidence requires a path to a witness evidence file")
-		return witnesslog.ExitUsage
-	}
-	for _, ep := range evidencePaths {
+	for _, ep := range a.evidencePaths {
 		p, err := readEvidence(ep)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", ep, err)
@@ -270,19 +368,8 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		}
 		opts.Evidence = append(opts.Evidence, p)
 	}
-	if v, ok := flagValue(args, "--subject-org"); ok && strings.TrimSpace(v) != "" {
-		opts.SubjectOrg = v
-	} else if hasFlag(args, "--subject-org") {
-		fmt.Fprintln(stderr, "--subject-org requires the organisation that operates this log")
-		return witnesslog.ExitUsage
-	}
-	opts.AcceptFleetAnchor = hasFlag(args, "--accept-fleet-anchor")
-	if opts.AcceptFleetAnchor && opts.SubjectOrg == "" {
-		fmt.Fprintln(stderr, "--accept-fleet-anchor requires --subject-org ORG: the organisation that runs the fleet log (and its agents), whose own witnesses never count as independent")
-		return witnesslog.ExitUsage
-	}
-	strict := !hasFlag(args, "--no-strict")
-	allowSubFlag := hasFlag(args, "--allow-sub-majority")
+	strict := a.strict
+	allowSubFlag := a.allowSub
 	allowSub := allowSubFlag || !strict
 	raw, err := readInput(path)
 	if err != nil {
@@ -294,11 +381,8 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", path, err)
 		return witnesslog.ExitUsage
 	}
-	if hasFlag(args, "--json") {
-		threshold := opts.Threshold
-		if threshold == 0 {
-			threshold = witnesslog.DefaultThreshold
-		}
+	if a.json {
+		threshold := a.threshold
 		var claimed struct {
 			IdentityPubkey string `json:"identity_pubkey"`
 		}
@@ -417,8 +501,11 @@ func loadDossier(path string, stderr io.Writer) (*witnesslog.Dossier, bool) {
 }
 
 func runBind(args []string, stdout, stderr io.Writer) int {
-	pos := positional(args)
-	if len(pos) != 2 {
+	pos, err := positional(args, "--json")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+	}
+	if err != nil || len(pos) != 2 {
 		fmt.Fprintln(stderr, "usage: witness-log-verify bind <a.json> <b.json> [--json]")
 		return witnesslog.ExitUsage
 	}
@@ -467,8 +554,11 @@ func runBind(args []string, stdout, stderr io.Writer) int {
 }
 
 func runDisclose(args []string, stdout, stderr io.Writer) int {
-	pos := positional(args)
-	if len(pos) != 4 {
+	pos, err := positional(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+	}
+	if err != nil || len(pos) != 4 {
 		fmt.Fprintln(stderr, "usage: witness-log-verify disclose <dossier.json> <leaf-index> <payload-file> <salt-hex>")
 		return witnesslog.ExitUsage
 	}

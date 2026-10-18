@@ -168,3 +168,91 @@ func TestSplitViewUnsafeExitsEleven(t *testing.T) {
 		}
 	}
 }
+
+// TestFlagsParseAsTheReferenceParsesThem: security review of 0.5.0, F6.
+// Unknown flags were skipped together with the argument after them, the
+// first of a repeated flag won, and --no-strict won wherever it stood, so
+// a typo such as --evidance ran without the evidence it named.
+// compare-with-rust.sh checks the same cases against the Rust CLI.
+func TestFlagsParseAsTheReferenceParsesThem(t *testing.T) {
+	a := filepath.Join(testdata, "c2sp/a.json")
+	dir := filepath.Join(testdata, "c2sp/trusted.json")
+	raw, err := os.ReadFile(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		IdentityPubkey string `json:"identity_pubkey"`
+	}
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Repeat("ab", 32)
+	cases := []struct {
+		args []string
+		exit int
+	}{
+		{[]string{a, "--known-heads", "1:" + other}, 2},
+		{[]string{a, "--evidance", a}, 2},
+		{[]string{a, "--directory", dir, "--jsn"}, 2},
+		{[]string{a, a}, 2},
+		{[]string{"", a}, 2},
+		{[]string{a, "--identity", other, "--identity", d.IdentityPubkey}, 20},
+		{[]string{a, "--identity", d.IdentityPubkey, "--identity", other}, 40},
+		{[]string{a, "--identity", "zz"}, 2},
+		{[]string{a, "--directory", dir, "--min-witnesses", "0"}, 2},
+		{[]string{a, "--directory", dir, "--min-witnesses", "9", "--min-witnesses", "1"}, 0},
+		{[]string{a, "--directory", dir, "--min-witnesses", "+1"}, 0},
+		{[]string{a, "--directory", dir, "--threshold", "0x1p-1"}, 2},
+		{[]string{a, "--directory", dir, "--threshold"}, 2},
+		{[]string{a, "--directory", "does-not-exist.json", "--directory", dir}, 0},
+		{[]string{a, "--directory", dir, "--directory", "does-not-exist.json"}, 2},
+		{[]string{a, "--directory", ""}, 2},
+		{[]string{a, "--directory", dir, "--subject-org", "--json"}, 2},
+		{[]string{a, "--directory", dir, "--explain"}, 0},
+		{[]string{a, "--directory", dir, "-h"}, 0},
+		{[]string{"bind", a, a, "--jsn"}, 2},
+		{[]string{"disclose", a, "0", a, strings.Repeat("00", 32), "--x"}, 2},
+	}
+	for _, c := range cases {
+		var stdout, stderr bytes.Buffer
+		if got := run(c.args, &stdout, &stderr); got != c.exit {
+			t.Errorf("%v: exit %d, want %d (stderr: %s)", c.args, got, c.exit, stderr.String())
+		}
+	}
+}
+
+// TestLastOfStrictAndNoStrictWins: --no-strict --strict is strict (11),
+// --strict --no-strict is not (0), and --threshold 0 is a zero fraction,
+// not the default, as in the reference CLI.
+func TestLastOfStrictAndNoStrictWins(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(testdata, "native/dossier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	d["witness_receipts"] = d["witness_receipts"].([]any)[:2]
+	out, _ := json.Marshal(d)
+	path := filepath.Join(t.TempDir(), "two-of-four.json")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{path, "--directory", filepath.Join(testdata, "native/trusted.json")}
+	for _, c := range []struct {
+		extra []string
+		exit  int
+	}{
+		{[]string{"--min-witnesses", "2", "--no-strict", "--strict"}, 11},
+		{[]string{"--min-witnesses", "2", "--strict", "--no-strict"}, 0},
+		{[]string{"--threshold", "0"}, 11},
+		{nil, 10},
+	} {
+		var stdout, stderr bytes.Buffer
+		if got := run(append(append([]string{}, base...), c.extra...), &stdout, &stderr); got != c.exit {
+			t.Errorf("%v: exit %d, want %d (stderr: %s)", c.extra, got, c.exit, stderr.String())
+		}
+	}
+}
