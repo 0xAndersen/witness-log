@@ -23,12 +23,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          # The token goes in a header for each git call, never in a URL
-          # (which git would store in /tmp/wiki/.git/config).
+          # The token reaches git as a header through its environment: never
+          # in a URL (which git would store in /tmp/wiki/.git/config), argv
+          # or a config file.
           WIKI="https://github.com/${GITHUB_REPOSITORY}.wiki.git"
-          echo "::add-mask::$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          trap 'git config --global --unset-all http.https://github.com/.extraheader || true' EXIT
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           if ! git ls-remote "$WIKI" >/dev/null 2>&1; then
             echo "::warning::Wiki repository does not exist yet. Create any page at https://github.com/${GITHUB_REPOSITORY}/wiki once, then re-run this workflow."
             exit 0

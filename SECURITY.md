@@ -62,7 +62,8 @@ the release workflow built it from the tagged commit:
 
 ```sh
 gh attestation verify SHA256SUMS --repo 0xAndersen/witness-log \
-  --signer-workflow 0xAndersen/witness-log/.github/workflows/release.yml
+  --signer-workflow 0xAndersen/witness-log/.github/workflows/release.yml \
+  --deny-self-hosted-runners
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
