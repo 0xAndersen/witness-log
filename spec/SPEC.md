@@ -931,7 +931,7 @@ says so explicitly (`--allow-sub-majority`).
 
 **Exit codes.** `witness-log verify` returns the verdict as its exit
 status: `0` Witnessed (split-view safe, or accepted under
-`--allow-sub-majority` or `--no-strict`), `11` Witnessed with `split_view_unsafe`, `10`
+`--allow-sub-majority`), `11` Witnessed with `split_view_unsafe`, `10`
 ConsistentUnwitnessed, `20` Unanchored, `30` Diverged, `40` Invalid, `2`
 a usage error or unreadable input. `/corpus/13_verdicts.json` is a
 verification vector: whole dossiers, a trusted directory, equivocation

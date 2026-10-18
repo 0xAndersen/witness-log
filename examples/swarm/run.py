@@ -1752,7 +1752,7 @@ def t101():
     return "same head 0; contradicted 30; larger head listed unchecked"
 
 
-@test("T102", "cli-verify", "WITNESSED by fewer than a strict majority exits 11 by default; --allow-sub-majority / --no-strict accept it", since="0.5.0")
+@test("T102", "cli-verify", "WITNESSED by fewer than a strict majority exits 11 by default; --allow-sub-majority accepts it; --no-strict is gone (0.6.0)", since="0.5.0")
 def t102():
     if len(WS) < 4:
         return f"skipped: {len(WS)} witnesses (need 4)"
@@ -1763,8 +1763,8 @@ def t102():
     assert code == 11 and rep["verdict"] == "WITNESSED" and rep["report"]["split_view_unsafe"] is True, (code, rep.get("report"))
     assert rep["exit_code"] == 11 and rep["strict"] is True
     assert verify(path, ident, extra=("--min-witnesses", "2", "--allow-sub-majority"))[0] == 0
-    assert verify(path, ident, extra=("--min-witnesses", "2", "--no-strict"))[0] == 0
-    return f"2 of {len(WS)}: exit 11; accepted as 0 under either flag"
+    assert verify(path, ident, extra=("--min-witnesses", "2", "--no-strict"))[0] == 2
+    return f"2 of {len(WS)}: exit 11; accepted as 0 under --allow-sub-majority; --no-strict exits 2"
 
 
 @test("T103", "python-api", "corpus vector 13 through verify_dossier_json (known heads and evidence)", since="0.5.0")

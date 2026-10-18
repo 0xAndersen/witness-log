@@ -51,7 +51,7 @@ const VERDICTS: &[VerdictDoc] = &[
         does_not_prove: &[
             "that no other history for this identity was cosigned by witnesses in your directory that did not cosign this one",
         ],
-        next_step: "Verify against the directory the log actually submitted to (a curated subset, not a whole registry), have the log submit to more of your directory (`witness-log submit` asks a majority by default), or accept the weaker guarantee explicitly with --allow-sub-majority (exit 0, warning printed). --no-strict restores the 0.4 behaviour for one release.",
+        next_step: "Verify against the directory the log actually submitted to (a curated subset, not a whole registry), have the log submit to more of your directory (`witness-log submit` asks a majority by default), or accept the weaker guarantee explicitly with --allow-sub-majority (exit 0, warning printed).",
     },
     VerdictDoc {
         name: "CONSISTENT-UNWITNESSED",

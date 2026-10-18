@@ -28,7 +28,7 @@ func TestExitCodesAreTheVerdict(t *testing.T) {
 		{[]string{a, "--known-head", "1"}, 2, ""},
 		{[]string{a, "--known-head"}, 2, ""},
 		{[]string{a, "--evidence", "does-not-exist.json"}, 2, ""},
-		{[]string{a, "--directory", dir, "--no-strict"}, 0, "Verdict: WITNESSED"},
+		{[]string{a, "--directory", dir, "--no-strict"}, 2, ""},
 		{[]string{a, "--directory", dir, "--strict"}, 0, "Verdict: WITNESSED"},
 		{[]string{a, "--directory", dir, "--min-witnesses", "3"}, 10, "Verdict: CONSISTENT-UNWITNESSED"},
 		{[]string{a, "--directory", dir, "--json"}, 0, `"verdict": "WITNESSED"`},
@@ -116,7 +116,8 @@ func TestDisclose(t *testing.T) {
 }
 
 // RFC-0002: WITNESSED by fewer than a strict majority of the directory
-// exits 11 by default; --allow-sub-majority and --no-strict accept it.
+// exits 11 by default; --allow-sub-majority accepts it (--no-strict, kept
+// for 0.5.x, is a usage error since 0.6.0).
 func TestSplitViewUnsafeExitsEleven(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(testdata, "native/dossier.json"))
 	if err != nil {
@@ -146,7 +147,6 @@ func TestSplitViewUnsafeExitsEleven(t *testing.T) {
 	}{
 		{nil, 11, "Exit 11"},
 		{[]string{"--allow-sub-majority"}, 0, "Accepted as exit 0 under --allow-sub-majority"},
-		{[]string{"--no-strict"}, 0, "Accepted as exit 0 under --no-strict"},
 	}
 	for _, c := range cases {
 		args := append([]string{path, "--directory", dir, "--min-witnesses", "2"}, c.extra...)
@@ -222,10 +222,10 @@ func TestFlagsParseAsTheReferenceParsesThem(t *testing.T) {
 	}
 }
 
-// TestLastOfStrictAndNoStrictWins: --no-strict --strict is strict (11),
-// --strict --no-strict is not (0), and --threshold 0 is a zero fraction,
-// not the default, as in the reference CLI.
-func TestLastOfStrictAndNoStrictWins(t *testing.T) {
+// TestNoStrictIsGoneAndThresholdZero: --no-strict is a usage error
+// wherever it stands (it was kept for one release after 0.5.0), and
+// --threshold 0 is a zero fraction, not the default, as in the reference CLI.
+func TestNoStrictIsGoneAndThresholdZero(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(testdata, "native/dossier.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -245,8 +245,9 @@ func TestLastOfStrictAndNoStrictWins(t *testing.T) {
 		extra []string
 		exit  int
 	}{
-		{[]string{"--min-witnesses", "2", "--no-strict", "--strict"}, 11},
-		{[]string{"--min-witnesses", "2", "--strict", "--no-strict"}, 0},
+		{[]string{"--min-witnesses", "2", "--no-strict", "--strict"}, 2},
+		{[]string{"--min-witnesses", "2", "--strict", "--no-strict"}, 2},
+		{[]string{"--min-witnesses", "2", "--strict"}, 11},
 		{[]string{"--threshold", "0"}, 11},
 		{nil, 10},
 	} {

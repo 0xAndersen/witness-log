@@ -45,8 +45,8 @@ cosigned by the rest without any witness seeing both (split view). Strict
 is the default since 0.5.0. Submit to more of your directory, verify
 against a smaller directory you actually expect cosignatures from, or, if
 a sub-majority is what you meant, pass `--allow-sub-majority` (exit 0,
-warning still printed). `--no-strict` restores the 0.4 reading for one
-release.
+warning still printed). `--no-strict` was removed in 0.6.0; a script
+that used it gets exit 2 and should pass `--allow-sub-majority`.
 
 **`Verdict: INVALID` (exit 40).**
 A check failed; the file establishes nothing about the identity. Up to

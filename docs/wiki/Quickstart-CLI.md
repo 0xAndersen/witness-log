@@ -121,8 +121,8 @@ pipeline branches on an integer. The codes are spaced so a shell can test
 `-ge 20` for "do not trust this" without parsing text, and `2` is kept
 for usage so a typo cannot be mistaken for a verdict. Before 0.5.0 a
 failed check exited 30 and 11 needed `--strict`; since 0.5.0 a failed
-check is 40 and 11 is the default (`--no-strict` restores the 0.4 reading
-of 11 as 0 for one release).
+check is 40 and 11 is the default (`--allow-sub-majority` accepts 11 as
+0; `--no-strict`, kept for 0.5.x, is gone).
 
 **What each verdict proves, in one sentence each:**
 
