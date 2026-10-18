@@ -1084,7 +1084,6 @@ const MAX_FLEET_NOTE_BYTES = 64 * 1024;
 const MAX_FLEET_NOTE_SIGNATURES = 64;
 const MAX_INCLUSION_PROOF_HASHES = 64;
 const SIG_TYPE_COSIGNATURE_V1 = 0x04;
-const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
 /** The field as the reference's serde reads it: all five fields with the right types; anything else is malformed. */
 function parseFleetAnchor(raw: unknown): FleetAnchor | string {
