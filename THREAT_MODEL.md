@@ -232,7 +232,10 @@ accused log and self-consistent: `diff` and `compare_checkpoints` verify
 both checkpoints' signatures and that each copy's leaves reproduce its own
 root before calling a difference equivocation; a witness records
 equivocation only when it holds two log-signed roots for one size; a
-silence proof requires a log-signed `WriteReceipt` naming the exact event.
+silence proof requires a log-signed `WriteReceipt` naming the exact event,
+checkpoints cosigned by two independent operators, and leaves that
+reproduce those checkpoints' roots (since 0.6.1; before, an accuser could
+drop the event from the leaf list it supplied — review III, H1).
 Anything less — an unverified checkpoint, an edited copy, a junk proof, a
 plain checkpoint standing in for a receipt — is reported as a bad input,
 not as misbehaviour. The final pre-publish review found three paths that

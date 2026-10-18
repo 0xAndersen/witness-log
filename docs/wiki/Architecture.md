@@ -181,8 +181,9 @@ cryptographic; speaking the existing protocol inherits an installed base.
 
 **Write receipts.** A log can hand back a signed statement "I accepted
 this payload hash at size N". If witnessed checkpoints later pass N and the
-leaf is absent, that is portable proof of censorship-by-omission, something
-a plain checkpoint cannot provide.
+log's leaves, which must reproduce those checkpoints' roots, lack the
+event, that is portable proof of censorship-by-omission, something a
+plain checkpoint cannot provide.
 
 **Offline, file-shaped verification with exit codes.** The proof is a
 file; the verifier is a static binary; the verdict is an integer. No
