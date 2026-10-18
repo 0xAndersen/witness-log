@@ -7,7 +7,7 @@ module github.com/0xAndersen/witness-log/clients/go/interop
 
 go 1.24.0
 
-toolchain go1.24.7
+toolchain go1.26.9
 
 require (
 	github.com/transparency-dev/formats v0.1.0
