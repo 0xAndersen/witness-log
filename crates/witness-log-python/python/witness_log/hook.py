@@ -48,8 +48,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -98,13 +100,44 @@ def normalize(event: Any, kind: Optional[str] = None) -> Tuple[str, Dict[str, An
     return kind or "memory", {"profile": PROFILE_GENERIC, "event": event}
 
 
+def peer_uid(s: socket.socket) -> Optional[int]:
+    """The uid of the process at the other end of a connected Unix
+    socket (Linux ``SO_PEERCRED``), or None where it is not available."""
+    if not hasattr(socket, "SO_PEERCRED"):
+        return None
+    _pid, uid, _gid = struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    return uid
+
+
+def _check_owner(socket_path: str) -> None:
+    """Refuse a socket file another user owns: whoever listens on it would
+    receive every tool call's input and output."""
+    if not hasattr(os, "getuid"):
+        return
+    st = os.stat(socket_path)
+    if st.st_uid != os.getuid():
+        raise OSError(
+            f"refusing {socket_path}: the socket is owned by uid {st.st_uid}, not you (uid {os.getuid()}); "
+            "another user may be listening for your tool calls"
+        )
+
+
 def request(socket_path: str, req: Dict[str, Any], timeout: float = 10.0) -> Dict[str, Any]:
     """One request/reply on the daemon's socket. Raises ``OSError`` when
-    nothing is listening and ``ValueError`` on a malformed reply."""
+    nothing is listening, when the socket or (on Linux) the process
+    listening on it belongs to another user (nothing is sent then), and
+    ``ValueError`` on a malformed reply."""
+    _check_owner(socket_path)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         s.settimeout(timeout)
         s.connect(socket_path)
+        uid = peer_uid(s)
+        if uid is not None and uid != os.getuid():
+            raise OSError(
+                f"refusing {socket_path}: the process listening on it runs as uid {uid}, not you "
+                f"(uid {os.getuid()}); nothing was sent"
+            )
         s.sendall(json.dumps(req, separators=(",", ":")).encode() + b"\n")
         f = s.makefile("rb")
         line = f.readline()

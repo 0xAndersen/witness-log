@@ -11,6 +11,7 @@ import pathlib
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -178,6 +179,124 @@ def test_stale_socket_file_is_replaced(tmp_path):
     d.bind()
     d.close()
     assert not sock.exists()
+
+
+# --- where the socket lives and who it talks to (security sweep F8) ---------------
+#
+# Through 0.6.0, without XDG_RUNTIME_DIR the socket was
+# <tmp>/witness-log-hookd-<uid>.sock, a name in a shared directory, and the
+# hook connected to whatever listened there and sent tool_input and
+# tool_response in plaintext: another local user could bind it first.
+
+
+def _fallback(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return hookd.default_socket_path()
+
+
+def test_without_xdg_runtime_dir_the_socket_is_in_a_private_directory(tmp_path, monkeypatch):
+    path = _fallback(monkeypatch, tmp_path)
+    assert path == str(tmp_path / f"witness-log-{os.getuid()}" / "hookd.sock")
+    assert not os.path.exists(os.path.dirname(path))  # computing the default creates nothing
+    d = hookd.Hookd(str(tmp_path / "j.jsonl"))
+    d.bind()
+    t = threading.Thread(target=d.serve_forever, daemon=True)
+    t.start()
+    try:
+        st = os.lstat(os.path.dirname(path))
+        assert st.st_uid == os.getuid() and oct(st.st_mode & 0o777) == "0o700"
+        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+        assert hook.main([], stdin=io.StringIO('{"tool": "x"}')) == 0  # the hook finds it by default
+        assert hook.request(path, {"op": "status"})["leaf_count"] == 1
+    finally:
+        d.shutdown()
+        t.join(5)
+
+
+@pytest.mark.parametrize("planted", ["group/other mode", "symlink", "file"])
+def test_the_daemon_refuses_a_fallback_directory_someone_else_could_use(tmp_path, monkeypatch, planted):
+    path = _fallback(monkeypatch, tmp_path)
+    where = os.path.dirname(path)
+    if planted == "group/other mode":
+        os.mkdir(where)
+        os.chmod(where, 0o755)
+    elif planted == "symlink":
+        os.mkdir(tmp_path / "elsewhere", 0o700)
+        os.symlink(tmp_path / "elsewhere", where)
+    else:
+        open(where, "w").close()
+    d = hookd.Hookd(str(tmp_path / "j.jsonl"))
+    try:
+        with pytest.raises(OSError, match="must be 0700|not a directory"):
+            d.bind()
+    finally:
+        d.close()
+    assert not (tmp_path / "elsewhere" / "hookd.sock").exists()
+
+
+def test_a_directory_owned_by_another_user_is_refused(tmp_path, monkeypatch):
+    where = tmp_path / "witness-log-x"
+    os.mkdir(where, 0o700)
+    real = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: real + 1)  # the directory is now someone else's
+    with pytest.raises(OSError, match="owned by uid"):
+        hookd.private_dir(str(where))
+
+
+def test_the_hook_sends_nothing_to_a_socket_another_user_owns(tmp_path, monkeypatch):
+    sock = str(tmp_path / "planted.sock")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(sock)
+    srv.listen(4)
+    srv.settimeout(0.5)
+    try:
+        real = os.getuid()
+        monkeypatch.setattr(os, "getuid", lambda: real + 1)  # the socket file is now someone else's
+        with pytest.raises(OSError, match="owned by uid"):
+            hook.request(sock, {"op": "append", "leaf": "intent", "payload": {"secret": 1}}, timeout=2.0)
+        event = json.dumps({"tool": "x", "args": {"secret": 1}})
+        assert hook.main(["--socket", sock, "--strict"], stdin=io.StringIO(event)) == 2
+        assert hook.main(["--socket", sock], stdin=io.StringIO(event)) == 0  # never fatal without --strict
+        monkeypatch.undo()
+        with pytest.raises(socket.timeout):  # noqa: UP041
+            srv.accept()  # nobody even connected
+    finally:
+        srv.close()
+
+
+@pytest.mark.skipif(not hasattr(socket, "SO_PEERCRED"), reason="SO_PEERCRED is Linux")
+def test_peer_uid_is_the_daemons(daemon):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(daemon.socket_path)
+        assert hook.peer_uid(s) == os.getuid()
+    finally:
+        s.close()
+
+
+_CHILD_AS_NOBODY = "import os, socket, sys\ns = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.bind(sys.argv[1])\nos.setgid(65534); os.setuid(65534); s.listen(1)\nprint('ready', flush=True); c, _ = s.accept(); c.settimeout(2)\ntry:\n    data = c.recv(65536)\nexcept OSError:\n    data = b''\nprint(len(data), flush=True)\n"
+
+
+@pytest.mark.skipif(
+    not (hasattr(socket, "SO_PEERCRED") and hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs Linux and root to listen as another uid",
+)
+def test_the_hook_refuses_a_listener_running_as_another_user(tmp_path):
+    """The socket file is ours (bound as root), but the process listening on
+    it dropped to uid 65534 before listen(): only SO_PEERCRED can tell, and
+    the hook must send nothing."""
+    sock = str(tmp_path / "s.sock")
+    child = subprocess.Popen([sys.executable, "-c", _CHILD_AS_NOBODY, sock], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        assert os.stat(sock).st_uid == os.getuid()
+        with pytest.raises(OSError, match="runs as uid 65534"):
+            hook.request(sock, {"op": "append", "leaf": "intent", "payload": {"secret": 1}}, timeout=2.0)
+        assert child.stdout.readline().strip() == "0"  # connected, but received nothing
+    finally:
+        child.kill()
+        child.wait(5)
 
 
 # --- install snippets -----------------------------------------------------------
