@@ -11,7 +11,8 @@ output closed. Every call with an `"effect"` argument is appended to the
 file named by FAKE_MCP_EFFECTS (if set) before it is answered, so a test
 can see which calls ran, and where. On a crash the file named by
 FAKE_MCP_REMOVE_ON_CRASH (if set) is deleted first (the wrapper the proxy
-starts the server with, so it cannot be started again)."""
+starts the server with, so it cannot be started again). `{"environ": true}`
+returns the server's own environment as the result text."""
 
 from __future__ import annotations
 
@@ -83,6 +84,9 @@ def main() -> None:
                     f.write(json.dumps({"pid": os.getpid(), "id": mid, "effect": args["effect"]}) + "\n")
             if args.get("sleep"):
                 time.sleep(float(args["sleep"]))
+            if args.get("environ"):
+                _send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": json.dumps(dict(os.environ))}], "isError": False}})
+                continue
             if args.get("rpc_error"):
                 _send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "bad params"}})
                 continue
