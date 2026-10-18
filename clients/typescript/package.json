@@ -1,6 +1,6 @@
 {
   "name": "@witness-log/client",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "TypeScript client for witness-log: an offline dossier verifier in pure TypeScript (node:crypto), typed verdicts from the witness-log CLI, and the witness-log MCP server as step()/forget()/exportDossier()/verify().",
   "license": "Apache-2.0",
   "type": "module",

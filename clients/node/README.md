@@ -51,9 +51,14 @@ that contradicts a head in `knownHeads` (`"<size>:<root hex>"`) or an
 equivocation proof in `evidence` that verifies for this identity. Exit 11
 is a WITNESSED dossier whose cosigners are not a strict majority of the
 directory, unless `allowSubMajority`. Before 0.5.0 failed checks were
-DIVERGED (30). Both verifiers run every case of corpus vector
-`13_verdicts.json` in the test suite. For a decision that matters, run
-both; a disagreement is a bug to report.
+DIVERGED (30). One difference: given text that is not a dossier at all
+(not JSON, a wrong type, a duplicate key; corpus 17),
+`verifyDossier` returns INVALID with a `failures[0]` starting "not a
+dossier:", while `verifyDossierNative` throws, as `witness-log verify`
+exits 2. Both verifiers run every case of corpus vectors
+`13_verdicts.json`, `16_ed25519_strict.json` and `17_dossier_parsing.json`
+in the test suite. For a decision that matters, run both; a disagreement
+is a bug to report.
 
 ## What a payload is
 

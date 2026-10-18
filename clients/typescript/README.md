@@ -70,13 +70,20 @@ comes from the canonical origin, and the proof's own `log_vkey` must be
 that key), `parseKnownHead` (`"<size>:<root hex>"`), `EXIT_CODES` (one per
 verdict, `INVALID: 40` included) and `EXIT_SPLIT_VIEW_UNSAFE` (11).
 
-One stated difference from the reference verifier: SPEC §6 asks for
-strict Ed25519 (reject small-order components). `node:crypto` rejects
-non-canonical scalars but not small-order points, so a deliberately
-degenerate signature the Rust verifier refuses could pass here. Honest
-signatures are identical under both; for a load-bearing decision run the
-Rust verifier as well (`WitnessLogCLI.verify`, or `verifyDossierNative`
-from `@witness-log/node`).
+Signatures are checked as strictly as the reference verifier
+(ed25519-dalek's `verify_strict`, SPEC §6): a small-order key or `R` in
+any encoding, `s ≥ L`, or a key that is not a curve point is refused.
+Before 0.5.0 this verifier used `node:crypto` alone, which accepts
+small-order points; corpus 16 (`corpus/16_ed25519_strict.json`) pins the
+cases, and the TypeScript, Go and Rust verifiers agree on every one.
+
+Pass the dossier as JSON text where you can. It is then read exactly as
+the reference reads it (corpus 17): integers above 2^53 stay exact
+(`u64` fields are `number | bigint`), and duplicate keys, `3.0` for an
+integer, a struct written as an array, or a value of the wrong type make
+the dossier INVALID ("not a dossier: …"). An already-parsed object holding
+a plain number above 2^53 − 1 is INVALID too, since `JSON.parse` has
+already rounded it.
 
 ## Verify with the CLI
 
