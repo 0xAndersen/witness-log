@@ -52,15 +52,22 @@ completed calls and once more when the host closes stdin.
 
 Injected tools, appended to every ``tools/list`` response and answered
 by the proxy: ``audit__status`` -> ``{leaf_count, root, identity,
-journal, calls, restarts, witnessed, last_verdict}``; ``audit__export``
--> writes ``<journal>.dossier.json`` and returns ``{path, sha256,
-bytes, verdict, split_view_unsafe, tamper_alerts}`` (the verdict is
-``unanchored`` unless a directory was given, since a verifier needs a
-directory it trusts; ``split_view_unsafe`` is true for a ``witnessed``
+journal, calls, restarts, witnessed, last_verdict, directory_source}``;
+``audit__export`` -> writes ``<journal>.dossier.json`` and returns
+``{path, sha256, bytes, verdict, directory_source, split_view_unsafe,
+tamper_alerts}`` (the verdict is ``unanchored`` unless a directory was
+given, since a verifier needs a directory it trusts; ``split_view_unsafe`` is true for a ``witnessed``
 verdict whose cosigners are not a strict majority of the directory; the
 head witnesses last cosigned is checked as a known head, so a journal
 rewritten after witnessing is ``diverged`` and one truncated below it is
 a tamper alert).
+
+The trust anchor is the operator's: the only directory the proxy uses is
+``--directory``, given on its command line, and the injected tools take no
+arguments, so nothing the host's model passes can change whom the
+verdicts count as witnesses. ``directory_source`` is ``"pinned"`` when a
+verdict was scored against that file and ``null`` when there was none
+(the same field the MCP server's verdicts carry).
 """
 
 from __future__ import annotations
@@ -303,6 +310,7 @@ class Proxy:
                 "restarts": self.restarts,
                 "witnessed": witnessed,
                 "last_verdict": self.last_verdict,
+                "directory_source": "pinned" if self.last_verdict is not None and self.directory is not None else None,
             }
 
     def _export(self) -> Dict[str, Any]:
@@ -377,14 +385,23 @@ class Proxy:
             "sha256": _sha256(data),
             "bytes": len(data),
             "verdict": report.get("verdict"),
+            "directory_source": "pinned" if td is not None else None,
             # Witnessed, but not by a strict majority of the directory (the
             # CLI's exit 11): the verdict string alone does not say so.
             "split_view_unsafe": bool(report.get("split_view_unsafe")),
             "tamper_alerts": alerts,
         }
 
-    def _answer_local(self, msg_id: Any, tool: str) -> None:
+    def _answer_local(self, msg_id: Any, tool: str, arguments: Any = None) -> None:
         try:
+            if arguments:
+                # Refused, not ignored: a model that passed a directory (from
+                # a document, a tool result, the counterparty) must not come
+                # away believing its directory scored the verdict.
+                raise ValueError(
+                    f"{tool} takes no arguments (got {sorted(arguments) if isinstance(arguments, dict) else arguments!r}); "
+                    "the only witness directory this proxy uses is the operator's --directory"
+                )
             body = self._status() if tool == "audit__status" else self._export()
             result = {"content": [{"type": "text", "text": json.dumps(body)}], "structuredContent": body, "isError": False}
         except Exception as e:  # noqa: BLE001
@@ -412,7 +429,7 @@ class Proxy:
             params = msg.get("params") or {}
             tool = str(params.get("name", ""))
             if tool in ("audit__status", "audit__export"):
-                self._answer_local(msg_id, tool)
+                self._answer_local(msg_id, tool, params.get("arguments"))
                 return
             idx = self._record_intent(tool, params.get("arguments"))
             key = _key(msg_id)

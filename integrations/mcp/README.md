@@ -87,7 +87,12 @@ server over stdio and wraps the tools as `step(name, fn)`, `forget(i)`,
   restored from an old backup), as the CLI does.
 - `verify_chain_integrity` without a trusted directory proves internal
   consistency only (verdict `unanchored`). Independence comes from
-  witnesses *you* choose.
+  witnesses *you* choose, not the model: pin them with
+  `WITNESS_LOG_TRUSTED_DIRECTORY=<file>` or `witness-log-mcp
+  --trusted-directory <file>`, and a directory passed in a tool call is
+  refused. Every verdict carries `directory_source` (`pinned`, `default`,
+  `caller` or null); act only on `pinned` ([MCP
+  integration](../../docs/wiki/MCP-Integration.md#pin-the-trust-anchor)).
 
 Tested end to end over stdio with the official client:
 `pytest -q integrations/mcp -p anyio`.
