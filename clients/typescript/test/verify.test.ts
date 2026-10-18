@@ -24,6 +24,8 @@ import {
   revocationMessage,
   revocationCutOff,
   verifyEquivocationProof,
+  parseEvidence,
+  parseKnownHead,
   type Dossier,
   type Leaf,
   type WitnessDirectory,
@@ -331,5 +333,65 @@ describe("verifyDossier on examples/sample-dossier.json", () => {
     assert.equal(verifyDossier("{}").verdict, "INVALID");
     assert.throws(() => verifyDossier(d, { knownHeads: ["7"] }), TypeError);
     assert.throws(() => verifyDossier(d, { knownHeads: ["007:" + "ab".repeat(32)] }), TypeError);
+  });
+});
+
+describe("corpus 15: evidence items, known heads and labels (security review of 0.5.0)", () => {
+  it("every case: refused (exit 2) or verdict, exit code and report fields", () => {
+    const v = corpus("15_evidence_and_args.json");
+    const exits = new Set<number>();
+    for (const c of v.cases) {
+      const e = c.expect;
+      exits.add(e.exit_code);
+      const run = () =>
+        verifyDossier(v.dossiers[c.dossier], {
+          directory: c.directory === null ? undefined : v.directories[c.directory],
+          identity: c.expected_identity ?? undefined,
+          threshold: c.threshold,
+          minWitnesses: c.min_witnesses ?? undefined,
+          knownHeads: c.known_heads,
+          evidence: c.evidence.map((k: string) => v.evidence[k]),
+          allowSubMajority: c.allow_sub_majority,
+          subjectOrg: c.subject_org ?? undefined,
+        });
+      if (e.exit_code === 2) {
+        assert.throws(run, TypeError, c.name);
+        continue;
+      }
+      const r = run();
+      assert.equal(r.report.verdict, e.verdict, c.name);
+      assert.equal(r.exitCode, e.exit_code, c.name);
+      assert.equal(r.report.split_view_unsafe, e.split_view_unsafe, c.name);
+      assert.equal(r.report.internally_consistent, e.internally_consistent, c.name);
+      assert.equal(r.report.failures.length > 0, e.has_failures, c.name);
+      assert.equal(r.report.contradictions.length, e.contradictions, c.name);
+      assert.equal(r.report.known_heads_unchecked.length, e.known_heads_unchecked, c.name);
+      assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, c.name);
+      assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
+    }
+    assert.deepEqual([...exits].sort((a, b) => a - b), [2, 10, 11, 20, 30, 40]);
+  });
+
+  it("F1: a proof as witness serve writes it counts, as in the reference", () => {
+    const v = corpus("15_evidence_and_args.json");
+    const wrapped = v.evidence.wrapped;
+    assert.deepEqual(parseEvidence(wrapped), v.evidence.bare);
+    assert.equal(verifyDossier(v.dossiers.full, { evidence: [wrapped] }).verdict, "DIVERGED");
+    assert.throws(() => parseEvidence({ kind: "equivocation" }), TypeError);
+    assert.throws(() => verifyDossier(v.dossiers.full, { evidence: {} as never }), TypeError);
+  });
+
+  it("F10: sizes above 2^53 are kept exactly; the BOM is not whitespace", () => {
+    const root = "ab".repeat(32);
+    assert.equal(parseKnownHead(`9007199254740993:${root}`).tree_size, 9007199254740993n);
+    assert.equal(parseKnownHead(`18446744073709551615:${root}`).tree_size, 18446744073709551615n);
+    assert.equal(parseKnownHead(`7:${root}`).tree_size, 7);
+    assert.equal(parseKnownHead({ tree_size: 9007199254740993n, root_hash: root }).tree_size, 9007199254740993n);
+    assert.throws(() => parseKnownHead({ tree_size: 2 ** 60, root_hash: root }), TypeError);
+    assert.throws(() => parseKnownHead(`18446744073709551616:${root}`), TypeError);
+    const bom = String.fromCodePoint(0xfeff);
+    const nel = String.fromCodePoint(0x85);
+    assert.throws(() => parseKnownHead(`${bom}2:${root}`), TypeError);
+    assert.equal(parseKnownHead(`${nel}2:${root}${nel}`).tree_size, 2);
   });
 });

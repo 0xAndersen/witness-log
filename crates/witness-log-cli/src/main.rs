@@ -1077,14 +1077,16 @@ fn verify_exit_code(report: &DossierReport, opts: &Options) -> u8 {
 }
 
 /// A witness evidence file as `witness serve` writes it
-/// (`{"kind": "equivocation", "proof": {...}}`) or a bare proof.
-fn read_evidence(
+/// (`{"kind": "equivocation", "proof": {...}}`) or a bare proof; anything
+/// else (an array, a null proof, a missing field) is a usage error
+/// (`EquivocationProof::from_evidence`).
+pub(crate) fn read_evidence(
     path: &str,
 ) -> Result<witness_log_network::tlog_witness::EquivocationProof, String> {
     let raw = read_input(path).map_err(|e| e.to_string())?;
     let doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let proof = doc.get("proof").cloned().unwrap_or(doc);
-    serde_json::from_value(proof).map_err(|e| format!("not an equivocation proof: {e}"))
+    witness_log_network::tlog_witness::EquivocationProof::from_evidence(&doc)
+        .map_err(|e| format!("not an equivocation proof: {e}"))
 }
 
 fn run_verify(opts: &Options) -> ExitCode {

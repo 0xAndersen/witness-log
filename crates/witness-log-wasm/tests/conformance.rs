@@ -473,3 +473,72 @@ fn corpus_14_fleet_anchor() {
         }
     }
 }
+
+/// Corpus vector 15: evidence items, known heads and directory labels,
+/// read through the wasm verifier's options. A case whose inputs must be
+/// refused (exit_code 2) is an `Err`, never a verdict.
+#[test]
+fn corpus_15_evidence_and_args() {
+    let v = read_json("corpus/15_evidence_and_args.json");
+    let cases = v["cases"].as_array().unwrap();
+    assert!(cases.len() >= 40);
+    for c in cases {
+        let name = c["name"].as_str().unwrap();
+        let dossier = v["dossiers"][c["dossier"].as_str().unwrap()].to_string();
+        let opts = VerifyOptions {
+            expected_identity_pubkey: c["expected_identity"].as_str().map(str::to_string),
+            threshold: c["threshold"].as_f64(),
+            min_receipts: c["min_witnesses"].as_u64().map(|n| n as usize),
+            allow_sub_majority: c["allow_sub_majority"].as_bool().unwrap(),
+            known_heads: serde_json::from_value(c["known_heads"].clone()).unwrap(),
+            evidence: c["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+                .collect(),
+            subject_org: c["subject_org"].as_str().map(str::to_string),
+            ..Default::default()
+        };
+        let dir = c["directory"]
+            .as_str()
+            .map(|d| v["directories"][d].to_string());
+        let e = &c["expect"];
+        let out = match verify_dossier_value(&dossier, dir.as_deref(), &opts) {
+            Ok(out) => out,
+            Err(err) => {
+                assert_eq!(e["exit_code"], json!(2), "{name}: refused: {err}");
+                continue;
+            }
+        };
+        assert_ne!(e["exit_code"], json!(2), "{name}: inputs accepted");
+        let r = &out["report"];
+        assert_eq!(r["verdict"], e["verdict"], "{name}");
+        assert_eq!(out["exit_code"], e["exit_code"], "{name}");
+        assert_eq!(r["split_view_unsafe"], e["split_view_unsafe"], "{name}");
+        assert_eq!(
+            r["internally_consistent"], e["internally_consistent"],
+            "{name}"
+        );
+        assert_eq!(
+            json!(!r["failures"].as_array().unwrap().is_empty()),
+            e["has_failures"],
+            "{name}"
+        );
+        assert_eq!(
+            json!(r["contradictions"].as_array().unwrap().len()),
+            e["contradictions"],
+            "{name}"
+        );
+        assert_eq!(
+            json!(r["known_heads_unchecked"].as_array().unwrap().len()),
+            e["known_heads_unchecked"],
+            "{name}"
+        );
+        assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
+        assert_eq!(
+            r["quorum"]["distinct_independent_operators"], e["independent_operators"],
+            "{name}"
+        );
+    }
+}

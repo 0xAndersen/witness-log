@@ -66,7 +66,9 @@ Neither can raise a verdict; each can only make a valid dossier DIVERGED:
   `witness serve` writes it under `evidence/`, or a bare proof. It counts
   only if it verifies under the key named by the canonical origin
   `witness-log/<identity hex>`; a proof about another identity, or signed
-  by another key under this origin, is ignored.
+  by another key under this origin, is ignored. A file that is neither
+  form (a JSON array, a `null` proof, a missing or non-string field) is a
+  usage error, exit 2, in every verifier.
 
 ## The count gate
 

@@ -211,7 +211,8 @@ export interface DossierReport {
 
 /** A (tree size, root) the verifier already trusts for this identity. */
 export interface KnownHead {
-  tree_size: number;
+  /** Any u64: a bigint when it is above `Number.MAX_SAFE_INTEGER`. */
+  tree_size: number | bigint;
   /** 64 hex. */
   root_hash: string;
 }
@@ -223,6 +224,9 @@ export interface EquivocationProof {
   earlier_note: string;
   conflicting_note: string;
 }
+
+/** An evidence file's contents: a bare proof, or the proof under `"proof"` as `witness serve` writes it. */
+export type EvidenceItem = EquivocationProof | { observed_unix?: number; kind?: string; proof: EquivocationProof };
 
 export interface VerifyDossierOptions {
   /** The identity you expect (64 hex), obtained out of band. Never read it from the dossier. */
@@ -241,8 +245,13 @@ export interface VerifyDossierOptions {
    * reproduce one is DIVERGED (RFC-0002).
    */
   knownHeads?: Array<KnownHead | string>;
-  /** Witness equivocation proofs. One that verifies for this identity makes the verdict DIVERGED. */
-  evidence?: EquivocationProof[];
+  /**
+   * Witness equivocation proofs, bare or as `witness serve` writes them
+   * (`{"kind": "equivocation", "proof": {...}}`). One that verifies for this
+   * identity makes the verdict DIVERGED. An item that is neither throws a
+   * TypeError (see `parseEvidence`).
+   */
+  evidence?: EvidenceItem[];
   /**
    * Accept WITNESSED from fewer than a strict majority of the directory as
    * exit 0 instead of 11. Default false (strict, the CLI's default since 0.5.0).
@@ -742,7 +751,34 @@ export function verifyReceipt(r: WitnessReceipt, against: SignedTreeHead): boole
 
 const EM_DASH = "\u2014";
 const SIG_TYPE_ED25519 = 0x01;
-const MAX_NOTE_SIGNATURES = 100;
+/** As the reference and Go verifiers (signed-note: at least 16; 64 bounds hostile input). */
+const MAX_NOTE_SIGNATURES = 64;
+
+/**
+ * Unicode White_Space, exactly: what Rust's `char::is_whitespace` and Go's
+ * `unicode.IsSpace` test. JavaScript's `\s` and `trim()` differ from it
+ * (they include U+FEFF and exclude U+0085), which made labels and known
+ * heads parse differently here (security review of 0.5.0, F10/F12).
+ */
+const WHITE_SPACE = "\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const WHITE_SPACE_RUN = new RegExp(`[${WHITE_SPACE}]+`);
+const WHITE_SPACE_TRIM = new RegExp(`^[${WHITE_SPACE}]+|[${WHITE_SPACE}]+$`, "g");
+const INVALID_KEY_NAME = new RegExp(`[+${WHITE_SPACE}]`);
+
+/** `str::trim` / `strings.TrimSpace`: strip leading and trailing Unicode White_Space only. */
+function trimWhiteSpace(s: string): string {
+  return s.replace(WHITE_SPACE_TRIM, "");
+}
+
+/**
+ * A signed-note key name: non-empty, no Unicode space and no `+` (the
+ * signed-note Format section). A signature line whose name breaks this makes
+ * the note malformed, known key or not, as in the reference parser
+ * (golang.org/x/mod/sumdb/note) and the Rust and Go verifiers.
+ */
+function isValidKeyName(name: string): boolean {
+  return name !== "" && !INVALID_KEY_NAME.test(name);
+}
 
 interface NoteSignature {
   name: string;
@@ -772,7 +808,7 @@ function parseSignedNote(raw: string): { text: string; signatures: NoteSignature
     if (space <= 0) return null;
     const name = rest.slice(0, space);
     const b64 = rest.slice(space + 1);
-    if (name.includes(" ") || name.includes("+")) return null;
+    if (!isValidKeyName(name)) return null;
     const payload = strictBase64(b64);
     if (payload === null || payload.length < 5) return null;
     signatures.push({ name, keyId: payload.slice(0, 4), signature: payload.slice(4) });
@@ -826,9 +862,10 @@ function verifiedCheckpoint(raw: string, name: string, pubkeyHex: string): { ori
 
 /**
  * Verify a witness equivocation proof with the key its canonical origin
- * names: the proof's own `log_vkey` must be exactly that key, and both
- * notes must verify under it, name the origin, and show one tree size with
- * two different roots.
+ * names: the proof's own `log_vkey` must be exactly that key (name, 8-hex
+ * key ID computed from the origin and key, type and key), and both notes
+ * must verify under it, name the origin, and show one tree size with two
+ * different roots. The key ID is never taken from the file.
  */
 export function verifyEquivocationProof(p: EquivocationProof): boolean {
   if (p === null || typeof p !== "object") return false;
@@ -838,6 +875,9 @@ export function verifyEquivocationProof(p: EquivocationProof): boolean {
   const plus1 = vkey.indexOf("+");
   const plus2 = plus1 < 0 ? -1 : vkey.indexOf("+", plus1 + 1);
   if (plus2 < 0 || vkey.slice(0, plus1) !== p.origin) return false;
+  const keyIdHex = vkey.slice(plus1 + 1, plus2);
+  const expectedId = bytesToHex(noteKeyId(p.origin, SIG_TYPE_ED25519, hexToBytes(identity)));
+  if (!/^[0-9a-fA-F]{8}$/.test(keyIdHex) || keyIdHex.toLowerCase() !== expectedId) return false;
   const material = strictBase64(vkey.slice(plus2 + 1));
   if (material === null || material[0] !== SIG_TYPE_ED25519 || bytesToHex(material.slice(1)) !== identity) return false;
   const a = verifiedCheckpoint(String(p.earlier_note ?? ""), p.origin, identity);
@@ -845,30 +885,85 @@ export function verifyEquivocationProof(p: EquivocationProof): boolean {
   return a !== null && b !== null && a.origin === p.origin && b.origin === p.origin && a.size === b.size && a.root !== b.root;
 }
 
-/** Parse `"<size>:<root hex>"` (or pass a `KnownHead` through, checked). */
+/**
+ * One evidence item, read as every verifier reads it: a JSON object that is
+ * the proof itself or, as `witness serve` and the Python WitnessService
+ * write it, carries the proof under `"proof"` (`{"observed_unix", "kind":
+ * "equivocation", "proof": {...}}`). The proof must be an object whose
+ * `origin`, `log_vkey`, `earlier_note` and `conflicting_note` are strings;
+ * other keys are ignored. Throws a TypeError for anything else (the CLI's
+ * exit 2), as the reference and Go verifiers refuse it. Before this, a
+ * wrapped item was silently ignored here and counted by the reference
+ * (security review of 0.5.0, F1).
+ */
+export function parseEvidence(item: unknown): EquivocationProof {
+  const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!isObject(item)) {
+    throw new TypeError('evidence: an item must be a JSON object, a proof or {"proof": {...}} as witness serve writes it');
+  }
+  let proof: Record<string, unknown> = item;
+  if (Object.prototype.hasOwnProperty.call(item, "proof")) {
+    const inner = item.proof;
+    if (!isObject(inner)) throw new TypeError('evidence: the item\'s "proof" must be a JSON object');
+    proof = inner;
+  }
+  const field = (k: keyof EquivocationProof): string => {
+    if (!Object.prototype.hasOwnProperty.call(proof, k)) throw new TypeError(`evidence: equivocation proof is missing field ${k}`);
+    const v = proof[k];
+    if (typeof v !== "string") throw new TypeError(`evidence: equivocation proof field ${k} must be a string`);
+    return v;
+  };
+  return {
+    origin: field("origin"),
+    log_vkey: field("log_vkey"),
+    earlier_note: field("earlier_note"),
+    conflicting_note: field("conflicting_note"),
+  };
+}
+
+/** 2^64 - 1: a tree size is a u64 in the reference and Go verifiers. */
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
+
+/**
+ * Parse `"<size>:<root hex>"` (or pass a `KnownHead` through, checked).
+ * Surrounding Unicode White_Space is ignored (U+FEFF is not White_Space and
+ * is refused, as the reference refuses it). A size is any u64; one above
+ * `Number.MAX_SAFE_INTEGER` comes back as a bigint, and is always larger
+ * than a dossier, so it is reported unchecked rather than refused.
+ */
 export function parseKnownHead(h: KnownHead | string): KnownHead {
   let size: string;
   let root: string;
   if (typeof h === "string") {
     const i = h.indexOf(":");
     if (i < 0) throw new TypeError(`known head: expected <size>:<root hex>, got ${JSON.stringify(h)}`);
-    size = h.slice(0, i).trim();
-    root = h.slice(i + 1).trim();
+    size = trimWhiteSpace(h.slice(0, i));
+    root = trimWhiteSpace(h.slice(i + 1));
   } else {
+    if (typeof h.tree_size === "number" && !Number.isSafeInteger(h.tree_size)) {
+      throw new TypeError(`known head: size ${h.tree_size} is not a safe integer; pass a bigint or "<size>:<root>"`);
+    }
     size = String(h.tree_size);
     root = String(h.root_hash);
   }
-  if (!/^(0|[1-9][0-9]*)$/.test(size) || !Number.isSafeInteger(Number(size))) {
+  if (!/^(0|[1-9][0-9]*)$/.test(size) || BigInt(size) > U64_MAX) {
     throw new TypeError(`known head: size ${JSON.stringify(size)} is not a canonical decimal integer`);
   }
   if (!/^[0-9a-fA-F]{64}$/.test(root)) throw new TypeError(`known head: root ${JSON.stringify(root)} is not 32 bytes of hex`);
-  return { tree_size: Number(size), root_hash: root.toLowerCase() };
+  const n = Number(size);
+  return { tree_size: Number.isSafeInteger(n) ? n : BigInt(size), root_hash: root.toLowerCase() };
 }
 
 // ---------------------------------------------------------------- quorum
 
+/**
+ * The reference's `normalize_label`, exactly: split on Unicode White_Space
+ * runs, join with one space, then Unicode full default lowercasing
+ * (`toLowerCase` applies SpecialCasing, Final_Sigma included, as Rust's
+ * `str::to_lowercase` does). spec/SPEC.md §7.
+ */
 function normalizeLabel(s: string): string {
-  return s.split(/\s+/).filter((x) => x !== "").join(" ").toLowerCase();
+  return s.split(WHITE_SPACE_RUN).filter((x) => x !== "").join(" ").toLowerCase();
 }
 
 function operatorKey(w: WitnessEntry): string {
@@ -1233,7 +1328,8 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   }
   const trusted = asDirectory(opts.directory);
   const knownHeads = (opts.knownHeads ?? []).map(parseKnownHead);
-  const evidence = opts.evidence ?? [];
+  if (opts.evidence !== undefined && !Array.isArray(opts.evidence)) throw new TypeError("evidence must be an array of evidence items");
+  const evidence = (opts.evidence ?? []).map((item) => parseEvidence(item));
 
   const failures: string[] = [];
   const checkpoint = d.checkpoint ?? ({} as SignedTreeHead);
@@ -1292,7 +1388,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
         knownHeadsUnchecked.push(`${kh.tree_size}:${kh.root_hash}`);
         continue;
       }
-      const prefix = bytesToHex(merkleRoot(leafHashes.slice(0, kh.tree_size)));
+      const prefix = bytesToHex(merkleRoot(leafHashes.slice(0, Number(kh.tree_size))));
       if (prefix !== kh.root_hash) {
         contradictions.push(
           `known head ${kh.tree_size}:${kh.root_hash} is not what this dossier's first ${kh.tree_size} leaves produce (${prefix})`,
@@ -1301,7 +1397,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     }
     const origin = ed25519Key(String(d.identity_pubkey ?? "")) === null ? null : canonicalOrigin(String(d.identity_pubkey));
     for (const proof of evidence) {
-      if (origin !== null && proof?.origin === origin && verifyEquivocationProof(proof)) {
+      if (origin !== null && proof.origin === origin && verifyEquivocationProof(proof)) {
         contradictions.push(`witness evidence: this identity signed two different roots for one tree size (${proof.origin})`);
       }
     }

@@ -121,6 +121,7 @@ jobs:
           cargo run -p witness-log-core --example generate_corpus
           cargo run -p witness-log-network --example generate_verdict_corpus
           cargo run -p witness-log-network --example generate_fleet_corpus
+          cargo run -p witness-log-network --example generate_evidence_corpus
       - name: Fail if corpus drifted from committed vectors
         run: |
           git diff --exit-code corpus/ || \

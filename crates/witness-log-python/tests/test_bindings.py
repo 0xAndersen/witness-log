@@ -562,3 +562,5 @@ def test_sync_releases_the_gil_and_threads_share_a_log_safely(tmp_path):
     again, _ = witness_log.JournaledLog.resume(str(tmp_path / "shared.jsonl"))
     assert again.tree_size() == 2 * n_per + 1
     again.close()
+
+

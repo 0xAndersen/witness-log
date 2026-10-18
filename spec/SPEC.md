@@ -567,6 +567,27 @@ distinct, individually valid signatures for the same checkpoint by
 resigning at different timestamps, and counting receipts rather than
 distinct keys would let one witness masquerade as several.
 
+Operators and compute providers are counted by **normalised label**, so
+case and spacing variants of one name are one operator. The
+normalisation is exact, because two verifiers that bucket labels
+differently count different numbers of independent operators and so
+reach different verdicts: split the label on runs of Unicode White_Space
+characters (the `White_Space` property: U+0009–U+000D, U+0020, U+0085,
+U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000;
+not U+FEFF), drop empty pieces, join the rest with one U+0020, then apply
+Unicode full default lowercasing (`toLowercase(X)`, Unicode §3.13): the
+`UnicodeData.txt` mapping plus the locale-independent mappings of
+`SpecialCasing.txt`, so U+0130 becomes `i` U+0307 and a capital sigma
+becomes final `ς` under the Final_Sigma condition and `σ` otherwise.
+Nothing else is folded: no Unicode normalisation form, no confusables
+(see THREAT_MODEL.md). This is Rust's `split_whitespace` then
+`to_lowercase`; JavaScript's `\s` and `trim` are not White_Space, and
+Go's `strings.ToLower` omits SpecialCasing. Characters whose case
+properties changed between Unicode versions (U+0295 is no longer
+Lowercase as of Unicode 17) and characters newer than an
+implementation's Unicode tables can still normalise differently;
+directory curators should not accept labels that depend on them. `/corpus/15_evidence_and_args.json` exercises the rule.
+
 Directory entries also carry `runtime` (`human` or `agent`) and an
 optional `compute_provider`. Diversity is scored on operator identity and
 compute-provider identity as two **separate, unaveraged** numbers — see
@@ -805,8 +826,9 @@ own that the dossier's author does not control:
   directory, never against the dossier's own `witness_directory` field.
 - **`subject_org`** — the organisation the verifier knows operates the
   log being checked, compared with each witness's `operator_org` after
-  the same normalisation (trimmed, case-folded, internal whitespace
-  collapsed). Witnesses of that operator still count as receipts but
+  the same label normalisation (§7: Unicode White_Space runs collapsed
+  and trimmed, then full default lowercasing; a `subject_org` that
+  normalises to the empty string names nobody). Witnesses of that operator still count as receipts but
   never as independent operators. A verifier can otherwise tell that a
   witness shares the log's operator only when the trusted directory lists
   the log's own key as a witness, so an organisation that runs both an
@@ -832,17 +854,30 @@ dossier `Diverged` (§9.2):
   cosignature it saw). A dossier whose first `tree_size` leaves do not
   reproduce `root_hash` contradicts it. A known head larger than the
   dossier's tree cannot be checked against it and is reported in
-  `known_heads_unchecked`, not treated as an error.
+  `known_heads_unchecked`, not treated as an error. Written as
+  `<size>:<root hex>`, the size is any unsigned 64-bit integer in
+  canonical decimal (no sign, no leading zero) and the root 64 hex
+  digits; Unicode White_Space around either is ignored (U+FEFF is not
+  White_Space). Anything else is the caller's error, not a verdict.
 - **`evidence`** — zero or more witness equivocation proofs (§9.3). A
   proof counts only if its origin is this identity's canonical origin
-  `witness-log/<identity hex>` and both of its notes verify under the key
-  that origin names (the proof's own `log_vkey` must be that key): the
-  identity signed two different roots for one tree size.
+  `witness-log/<identity hex>` and both of its notes verify under the
+  verifier key built from that origin: name the origin, key the
+  identity, key ID computed from the two (§9.3, "Verifier keys"). The
+  proof's own `log_vkey` must equal that key field for field, key ID
+  included, and is never used to choose which signature lines count. Then
+  the identity signed two different roots for one tree size.
 
 `witness-log verify` exposes these as `--known-head <size>:<root hex>`
-and `--evidence <file>`, both repeatable; an evidence file is accepted as
-`witness serve` writes it (`{"kind":"equivocation","proof":{...}}`) or as
-a bare proof.
+and `--evidence <file>`, both repeatable. An evidence item is a JSON
+object: either the proof itself or, as `witness serve` writes it, an
+object carrying the proof under `"proof"`
+(`{"observed_unix":…,"kind":"equivocation","proof":{...}}`). The proof is
+an object whose `origin`, `log_vkey`, `earlier_note` and
+`conflicting_note` are strings; other keys are ignored. Any other item (an
+array, a `null` proof, a missing or non-string field) is the caller's
+error (exit 2, an exception from a library), never a proof that silently
+fails to count. `/corpus/15_evidence_and_args.json` pins these rules.
 
 `key_bindings` and `revocations` are treated differently: they are
 checked for internal validity (each entry's own signature verifies, and
@@ -1014,6 +1049,19 @@ verifiers that know only the log's key. A signature from a *known* key
 that fails to verify SHOULD reject the whole note; if no known key
 verifies, the note MUST be rejected.
 
+**Malformed lines are not unknown signatures.** Every witness-log
+verifier parses a note the same way before deciding which keys it knows,
+and rejects the whole note when any signature line is malformed: a line
+that does not start with an em dash and a space; a key name that is
+empty or contains `+` or any Unicode White_Space character (the
+signed-note rule for key names, applied to every line as
+`golang.org/x/mod/sumdb/note` applies it); a payload that is not
+canonical base64 (padding bits zero, so one value has one encoding) or
+is shorter than a key ID plus one byte; or more than 64 signature lines
+(signed-note requires accepting at least 16). The root hash line of a
+checkpoint is canonical base64 too. U+FEFF and U+007F are not
+White_Space: a key name containing them is merely unknown.
+
 **Canonical origin.** For a cosignature to count toward a WitnessLog
 verdict, the checkpoint's origin MUST be the log identity's canonical
 origin:
@@ -1153,7 +1201,8 @@ what makes an implementation a WitnessLog implementation.
 An implementation is conformant with this specification's current version when it reproduces every value in
 the encoding vectors `/corpus/01_*.json` to `/corpus/12_*.json` exactly, byte for byte, from the described inputs,
 and, if it verifies dossiers, returns the expected verdict, exit code and report fields for every case in the
-verification vector `/corpus/13_verdicts.json`. The encoding vectors are enforced in CI via `witness-log conform`
-(see CONTRIBUTING.md); vector 13 is run by each verifier's own test suite. Together they are the actual gate for
+verification vectors `/corpus/13_verdicts.json` and `/corpus/15_evidence_and_args.json` (the latter also says which
+inputs a verifier must refuse). The encoding vectors are enforced in CI via `witness-log conform`
+(see CONTRIBUTING.md); the verification vectors are run by each verifier's own test suite. Together they are the actual gate for
 claiming compatibility — not this document by itself. `/corpus/14_fleet_anchor.json` pins the experimental RFC-0001
 prototype for the verifiers that implement its opt-in and is not part of conformance.

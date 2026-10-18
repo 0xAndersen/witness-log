@@ -467,11 +467,8 @@ fn verify_dossier_json_detached(
             items
                 .into_iter()
                 .map(|v| {
-                    let proof = v.get("proof").cloned().unwrap_or(v);
-                    serde_json::from_value::<witness_log_network::tlog_witness::EquivocationProof>(
-                        proof,
-                    )
-                    .map_err(|e| malformed_err(format!("not an equivocation proof: {e}")))
+                    witness_log_network::tlog_witness::EquivocationProof::from_evidence(&v)
+                        .map_err(|e| malformed_err(format!("not an equivocation proof: {e}")))
                 })
                 .collect::<PyResult<Vec<_>>>()?
         }

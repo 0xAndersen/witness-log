@@ -34,6 +34,7 @@ export {
   verifyEquivocationProof,
   verifyFleetAnchor,
   validFleetOrigin,
+  parseEvidence,
   parseKnownHead,
   EXIT_SPLIT_VIEW_UNSAFE,
   evaluateQuorum,
@@ -69,4 +70,5 @@ export {
   type FleetAnchorReport,
   type PathCount,
   type WitnessPaths,
+  type EvidenceItem,
 } from "./verify.js";

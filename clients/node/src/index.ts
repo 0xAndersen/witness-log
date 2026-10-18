@@ -49,6 +49,7 @@ export {
   EXIT_CODES,
   EXIT_SPLIT_VIEW_UNSAFE,
   parseKnownHead,
+  parseEvidence,
   verifyEquivocationProof,
   LEAF_TYPES,
   type Dossier,
@@ -65,6 +66,7 @@ export {
   type QuorumResult,
   type KnownHead,
   type EquivocationProof,
+  type EvidenceItem,
 } from "@witness-log/client";
 
 /** The raw napi-rs binding, for anything this module does not wrap. */
