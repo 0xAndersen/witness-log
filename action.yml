@@ -75,9 +75,13 @@ inputs:
     required: false
     default: ""
   token:
-    description: Token used only to read the witness-log releases (resolve `latest`, download the CLI).
+    description: Token used only to read the witness-log releases (resolve `latest`, download the CLI, check its build provenance).
     required: false
     default: ${{ github.token }}
+  verify-provenance:
+    description: "For witness-log v0.6.1 and later, check with `gh attestation verify` that SHA256SUMS was built by the project's release workflow before trusting it (`true`; skipped with a notice when there is no gh CLI or token). `false` skips that check, for runners that cannot reach GitHub's attestation API or Sigstore; the SHA-256 check always runs."
+    required: false
+    default: "true"
 
 outputs:
   verdict:
@@ -208,7 +212,7 @@ runs:
 
     - name: Restore the cached witness-log archive
       if: steps.resolve.outputs.present != 'true'
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.resolve.outputs.cache-dir }}
         key: witness-log-cli-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.target }}
@@ -223,6 +227,7 @@ runs:
         WL_EXE: ${{ steps.resolve.outputs.exe }}
         WL_ASSET: ${{ steps.resolve.outputs.asset }}
         WL_CACHE_DIR: ${{ steps.resolve.outputs.cache-dir }}
+        WL_VERIFY_PROVENANCE: ${{ inputs.verify-provenance }}
       run: |
         set -euo pipefail
         repo=0xAndersen/witness-log
@@ -252,6 +257,29 @@ runs:
         # checked exactly like a downloaded one.
         fetch SHA256SUMS "$work" \
           || die "could not download SHA256SUMS of witness-log $WL_VERSION ($release_url). If the release was tagged minutes ago its assets may still be building."
+        # From v0.6.1 every release asset, SHA256SUMS included, carries a
+        # build-provenance attestation from release.yml. Checking it ties
+        # SHA256SUMS (and so the archive) to the workflow that built it, not
+        # only to whoever could upload release assets.
+        core=${WL_VERSION#v}; core=${core%%-*}
+        IFS=. read -r vmaj vmin vpat <<< "$core"
+        provenance="not checked"
+        if [ "$vmaj" -gt 0 ] || [ "$vmin" -gt 6 ] || { [ "$vmin" -eq 6 ] && [ "$vpat" -ge 1 ]; }; then
+          case "${WL_VERIFY_PROVENANCE:-true}" in
+            false) provenance="not checked (verify-provenance: false)" ;;
+            *)
+              if ! command -v gh >/dev/null 2>&1 || [ -z "${GH_TOKEN:-}" ]; then
+                provenance="not checked (needs the gh CLI and a token)"
+                echo "::notice title=witness-log::build provenance of witness-log $WL_VERSION not checked: it needs the gh CLI and a token; relying on SHA256SUMS"
+              else
+                out=$(gh attestation verify "$work/SHA256SUMS" --repo "$repo" \
+                        --signer-workflow "$repo/.github/workflows/release.yml" 2>&1) \
+                  || die "SHA256SUMS of witness-log $WL_VERSION has no valid build-provenance attestation from $repo's release workflow: $(printf '%s' "$out" | tail -3). Refusing to run it. (Set verify-provenance: false only if this runner cannot reach GitHub's attestation API or Sigstore.)"
+                provenance="build provenance verified (release.yml)"
+              fi ;;
+          esac
+        fi
+
         expected=$(tr -d '\r' < "$work/SHA256SUMS" | awk -v f="$WL_ASSET" '$2 == f || $2 == ("*" f) { print $1 }')
         case "$expected" in
           "" | *[!0-9a-fA-F]*) die "SHA256SUMS of witness-log $WL_VERSION has no single entry for $WL_ASSET" ;;
@@ -297,7 +325,7 @@ runs:
           *) die "the $WL_ASSET binary reports '$got', expected witness-log ${WL_VERSION#v}" ;;
         esac
 
-        echo "$got ($WL_TARGET) from $from; SHA-256 $expected matches SHA256SUMS"
+        echo "$got ($WL_TARGET) from $from; SHA-256 $expected matches SHA256SUMS; $provenance"
         to_native "$bindir" >> "$GITHUB_PATH"
         echo "bin=$(to_native "$bin")" >> "$GITHUB_OUTPUT"
 

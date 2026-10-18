@@ -15,13 +15,20 @@ jobs:
   sync:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Publish docs/wiki to the wiki
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          WIKI="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          # The token goes in a header for each git call, never in a URL
+          # (which git would store in /tmp/wiki/.git/config).
+          WIKI="https://github.com/${GITHUB_REPOSITORY}.wiki.git"
+          echo "::add-mask::$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          trap 'git config --global --unset-all http.https://github.com/.extraheader || true' EXIT
           if ! git ls-remote "$WIKI" >/dev/null 2>&1; then
             echo "::warning::Wiki repository does not exist yet. Create any page at https://github.com/${GITHUB_REPOSITORY}/wiki once, then re-run this workflow."
             exit 0

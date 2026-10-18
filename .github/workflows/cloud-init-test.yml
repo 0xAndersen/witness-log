@@ -38,7 +38,9 @@ jobs:
       IMG: noble-server-cloudimg-amd64.img
       SSH: ssh -i id -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR ubuntu@127.0.0.1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: KVM and QEMU
         run: |
@@ -54,14 +56,16 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_IN: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          v="${{ inputs.version }}"
+          v="$VERSION_IN"
+          [[ "$v" = latest || "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::version must be latest or a tag like v1.2.3"; exit 1; }
           if [ "$v" = latest ]; then v=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" -q .tag_name); fi
           echo "tag=$v" >> "$GITHUB_OUTPUT"
           echo "testing release $v"
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.IMG }}
           key: noble-cloudimg-${{ github.run_id }}
@@ -190,7 +194,7 @@ jobs:
           $SSH 'sudo cat /var/log/witness-log-bootstrap.log' > bootstrap.log 2>/dev/null || true
           $SSH 'sudo journalctl -u witness-log-witness -u caddy --no-pager' > journal.log 2>/dev/null || true
           kill "$(cat qemu.pid)" 2>/dev/null || true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: cloud-init-test-logs

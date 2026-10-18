@@ -2,7 +2,7 @@
 
 - driver: `examples/swarm/outside_0_4.py`, updated for the 0.5.0 exit codes (INVALID 40, exit 11 only for a sub-majority WITNESSED, a contradicted `--known-head` is DIVERGED 30); witnesses: four `fleet.py` fleets of five, one organisation each
 - code: `main` at 7050e64 (0.4.3 plus RFC-0002), CLI built from it (it still reported 0.4.3: the version bump came after)
-- target: `/home/claude/witness-log/target/release/witness-log` (witness-log 0.4.3), witness_log 0.4.3, 2 cpu, Linux x86_64
+- target: `target/release/witness-log` (witness-log 0.4.3), witness_log 0.4.3, 2 cpu, Linux x86_64
 - 100,000 agents in 4430 s (22.6 agents/s), 2 x 24 in flight, 4,631,033 operations, 102,111 verdicts
 - agents finished cleanly: 100,000/100,000; operations failed: 206/4,631,033
 - witness add-checkpoint statuses: {200: 247446}

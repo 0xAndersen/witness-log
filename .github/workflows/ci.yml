@@ -12,18 +12,11 @@ on:
 permissions:
   contents: read
 
-# NOTE ON ACTION PINNING: the actions below are pinned to major-version
-# tags (e.g. @v4), not commit SHAs. All are first-party GitHub actions
-# (actions/*) or, for cargo-deny, a widely-used third-party action from a
-# well-known publisher (EmbarkStudios) -- lower marginal supply-chain risk
-# than an arbitrary third-party action, but tag-pinning is still weaker
-# than SHA-pinning, since a compromised or re-pushed tag would be trusted
-# silently. To SHA-pin: run, for each action,
-#   git ls-remote --tags https://github.com/<owner>/<repo> <tag>
-# and replace `@<tag>` with `@<full-40-char-sha> # <tag>`. Left as
-# tag-pins here rather than guessed/unverified SHAs, which would risk
-# silently breaking CI with an incorrect pin. See the pre-launch review,
-# finding 24.
+# Every action is pinned to a full commit SHA, with the tag it was taken
+# from in a comment (`@<sha> # v7`). Dependabot (.github/dependabot.yml)
+# moves the pins monthly. A new action is pinned the same way: resolve the
+# tag with `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`
+# (use the `^{}` line for an annotated tag).
 
 jobs:
   build-and-test:
@@ -37,8 +30,10 @@ jobs:
         os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Build (debug)
         run: cargo build --workspace --verbose
       - name: Test (debug)
@@ -67,7 +62,9 @@ jobs:
     name: Minimum supported Rust version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Read MSRV from Cargo.toml
         id: msrv
         run: |
@@ -77,7 +74,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - name: Build at declared MSRV
@@ -97,8 +94,10 @@ jobs:
     name: Clippy + rustfmt
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: clippy, rustfmt
       - name: Clippy (deny warnings)
@@ -114,8 +113,10 @@ jobs:
     name: Conformance corpus drift check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Regenerate corpus
         run: |
           cargo run -p witness-log-core --example generate_corpus
@@ -146,9 +147,11 @@ jobs:
         # PyO3 "interpreter too new" failure ships unnoticed.
         python: ["3.9", "3.13"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python }}
       - name: Install maturin and pytest
@@ -208,7 +211,7 @@ jobs:
           python examples/swarm/outside.py --agents 200 --directory directory.json --out swarm-report/outside --processes 4 --threads 12 --operator-serve-seconds 60
           kill $(cat a.pid) $(cat b.pid)
         if: matrix.python != '3.9'
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: swarm-report-py${{ matrix.python }}
@@ -231,9 +234,11 @@ jobs:
       matrix:
         env: [langchain-openai-agents, crewai]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -260,8 +265,10 @@ jobs:
     name: Witness registry entries
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
       - run: pip install pytest
@@ -273,15 +280,23 @@ jobs:
     name: Supply chain audit (advisories + licenses)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
       # The Python crate is its own workspace; audit it too, or its
       # dependency tree (PyO3 and friends) is never checked.
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
           manifest-path: crates/witness-log-python/Cargo.toml
+          arguments: --all-features --config deny.toml
+      # So is the Node binding (napi-rs).
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+          manifest-path: clients/node/Cargo.toml
           arguments: --all-features --config deny.toml

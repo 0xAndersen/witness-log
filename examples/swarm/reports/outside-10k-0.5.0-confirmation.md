@@ -1,6 +1,6 @@
 # Outside swarm: 10,000-agent confirmation run of the 0.5.0 fixes (run e), 37 personas, 20 witnesses
 
-- target: `/home/claude/witness-log/target/release/witness-log` (witness-log 0.5.0), witness_log 0.5.0, 2 cpu, Linux x86_64
+- target: `target/release/witness-log` (witness-log 0.5.0), witness_log 0.5.0, 2 cpu, Linux x86_64
 - 10,000 agents in 371 s (27.0 agents/s), 2 x 24 in flight, 463,153 operations, 10,271 verdicts
 - agents finished cleanly: 10,000/10,000; operations failed: 0/463,153
 - witness add-checkpoint statuses: {200: 25377}

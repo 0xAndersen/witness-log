@@ -38,7 +38,9 @@ jobs:
     name: tag matches Cargo.toml version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - shell: bash
         run: |
           v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
@@ -62,17 +64,19 @@ jobs:
           - { os: macos-latest, target: aarch64, manylinux: "" }
           - { os: windows-latest, target: x64, manylinux: "" }
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
           path: dist
@@ -81,12 +85,14 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: PyO3/maturin-action@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           args: --out dist --manifest-path crates/witness-log-python/Cargo.toml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sdist
           path: dist
@@ -108,8 +114,10 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin, exe: witness-log }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, exe: witness-log.exe }
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked -p witness-log-cli --target ${{ matrix.target }}
@@ -120,7 +128,7 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.exe }} out/
           cp LICENSE README.md out/
           tar czf witness-log-${RELEASE_TAG}-${{ matrix.target }}.tar.gz -C out .
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cli-${{ matrix.target }}
           path: witness-log-*.tar.gz
@@ -134,17 +142,17 @@ jobs:
     steps:
       # Python artifacts only, by name: the CLI archives are .tar.gz too and
       # must never reach PyPI.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           merge-multiple: true
           pattern: wheel-*
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: sdist
           path: dist
       - run: ls -la dist && test "$(ls dist | grep -vcE '\.whl$|^witness_log-.*\.tar\.gz$')" = 0
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist
 
@@ -153,14 +161,22 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write     # signs the build provenance (Sigstore)
+      attestations: write # stores it with the repository
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: assets
           merge-multiple: true
       - name: Checksums
         run: cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
-      - uses: softprops/action-gh-release@v3
+      # SLSA build provenance for every asset: `gh attestation verify
+      # <file> --repo 0xAndersen/witness-log` proves it was built by this
+      # workflow from this commit, not uploaded by hand.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: assets/*
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # On manual dispatch there is no tag yet: the action creates it
           # at this commit. Tags created with the Actions token do not

@@ -71,16 +71,26 @@ jobs:
     environment: fleet
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: render cloud-init for this fleet
         shell: bash
+        env:
+          ORG_IN: ${{ inputs.org }}
+          NAME_BASE_IN: ${{ inputs.name_base }}
+          PROVIDER_IN: ${{ inputs.provider }}
+          WL_VERSION_IN: ${{ inputs.wl_version }}
         run: |
           set -euo pipefail
-          org='${{ inputs.org }}'
+          org="$ORG_IN"
           case "$org" in ""|"Your Organisation"|unspecified) echo "::error::org must be a real operator label"; exit 1;; esac
-          compute='${{ inputs.provider }}'
-          python3 - "$org" '${{ inputs.name_base }}' "$compute" '${{ inputs.wl_version }}' <<'EOF'
+          # org and name_base are written into the servers' bootstrap shell
+          # script inside double quotes: refuse anything a shell would expand.
+          [[ ${#org} -le 100 && "$org" =~ ^[A-Za-z0-9\ ._,\'\&()-]+$ ]] || { echo "::error::org may use letters, digits, spaces and . _ , ' & ( ) - (at most 100)"; exit 1; }
+          [[ "$NAME_BASE_IN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || { echo "::error::name_base may use letters, digits and . _ - (at most 63)"; exit 1; }
+          [[ "$WL_VERSION_IN" = latest || "$WL_VERSION_IN" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::wl_version must be latest or a tag like v1.2.3"; exit 1; }
+          case "$PROVIDER_IN" in hetzner|digitalocean) ;; *) echo "::error::unknown provider"; exit 1 ;; esac
+          python3 - "$org" "$NAME_BASE_IN" "$PROVIDER_IN" "$WL_VERSION_IN" <<'EOF'
           import re, sys
           org, name_base, compute, ver = sys.argv[1:]
           s = open("deploy/witness/cloud-init.yaml").read()
@@ -103,12 +113,16 @@ jobs:
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          PROVIDER_IN: ${{ inputs.provider }}
+          COUNT_IN: ${{ inputs.count }}
+          REGIONS_IN: ${{ inputs.regions }}
         run: |
           set -euo pipefail
-          provider='${{ inputs.provider }}'
-          count='${{ inputs.count }}'
+          provider="$PROVIDER_IN"
+          count="$COUNT_IN"
           [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge 1 ] && [ "$count" -le 20 ] || { echo "::error::count must be 1..20"; exit 1; }
-          regions='${{ inputs.regions }}'
+          regions="$REGIONS_IN"
+          [[ "$regions" =~ ^[a-z0-9,]*$ ]] || { echo "::error::regions must be a comma-separated list like fsn1,nbg1"; exit 1; }
           stamp=$(date -u +%Y%m%d%H%M)
           userdata=$(cat fleet-cloud-init.yaml)
           : > servers.txt
@@ -186,6 +200,8 @@ jobs:
 
       - name: commit the registry entries
         shell: bash
+        env:
+          PROVIDER_IN: ${{ inputs.provider }}
         run: |
           set -euo pipefail
           git config user.name "0xAndersen"
@@ -193,12 +209,14 @@ jobs:
           git add registry/witnesses
           if git diff --cached --quiet; then echo "nothing new to commit"; exit 0; fi
           n=$(git diff --cached --name-only | wc -l)
-          git commit -q -m "registry: $n project-operated witnesses from deploy-fleet (${{ inputs.provider }})"
+          git commit -q -m "registry: $n project-operated witnesses from deploy-fleet ($PROVIDER_IN)"
           git pull -q --rebase origin main
           git push -q origin HEAD:main
 
       - name: summary
         shell: bash
+        env:
+          ORG_IN: ${{ inputs.org }}
         run: |
           {
             echo "## Fleet"
@@ -206,7 +224,7 @@ jobs:
             echo "| server | ip | url |"; echo "|---|---|---|"
             while read -r name ip; do echo "| $name | $ip | https://${ip}.sslip.io |"; done < servers.txt
             echo
-            echo "Registered: $(wc -l < urls.txt) of $(wc -l < servers.txt). One operator bucket (\`${{ inputs.org }}\`); independence comes from outside operators."
+            echo "Registered: $(wc -l < urls.txt) of $(wc -l < servers.txt). One operator bucket (\`$ORG_IN\`); independence comes from outside operators."
             echo
             echo "Build a directory: \`witness-log directory build --registry registry/witnesses --include-project --out trusted.json\`"
           } >> "$GITHUB_STEP_SUMMARY"
