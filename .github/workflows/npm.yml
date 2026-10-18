@@ -99,7 +99,7 @@ jobs:
           fi
       - name: Build
         working-directory: clients/typescript
-        run: npm ci && npm run build
+        run: npm ci --ignore-scripts && npm run build
       - name: Publish
         working-directory: clients/typescript
         run: npm publish --provenance --access public

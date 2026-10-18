@@ -155,7 +155,7 @@ jobs:
       - name: npm ci (workspace) and build the TypeScript
         working-directory: clients
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build -w typescript
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -214,7 +214,7 @@ jobs:
       - name: Build
         working-directory: clients
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build -w typescript
           npm run build -w ai-sdk
       - name: Publish
