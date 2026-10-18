@@ -49,7 +49,7 @@ tools refuse; the behaviour changes are listed at the end.
   case-insensitively and accepted nulls and duplicate fields; the Rust
   reference read a struct written as a JSON array. All three now follow
   serde's rule, written out in SPEC §9 and pinned by
-  `17_dossier_parsing.json` (120 texts). A text the reference cannot read
+  `17_dossier_parsing.json`. A text the reference cannot read
   never gets a verdict other than INVALID: `verifyDossier` (TypeScript)
   returns INVALID with "not a dossier: …" and never throws; the CLIs exit
   2; the libraries and bindings return an error.
@@ -147,6 +147,62 @@ audit`). It found the following, now fixed:
   the Node binding; npm publish jobs skip dependency install scripts.
 - Swarm reports no longer record build-machine paths or the kernel.
 
+### A second, independent audit of these fixes
+
+An auditor who had not seen the work re-checked every fix above (including
+a randomized probe of 10,780 tampered-leaf combinations against
+`silence_proof`, none Censored, and 31 header variants against `journal
+serve`) and found six low-severity gaps, and a few hardening points, now closed:
+
+- **The address guard unwraps IPv4 carried in IPv6.** `64:ff9b::a9fe:a9fe`
+  (NAT64 for 169.254.169.254), `64:ff9b::7f00:1` and `::a9fe:a9fe`
+  passed; mapped, compatible, SIIT, NAT64, 6to4 and Teredo forms are now
+  checked as the IPv4 address they deliver to.
+- **Registry entries**: text fields must be JSON strings (validate.py
+  converted them with `str()`); `name`, `operator_org` and
+  `compute_provider` may not contain invisible or control characters (a
+  zero-width space made one operator look like two); an IP-address host
+  must be a public address in ordinary notation (`2130706433`, `127.1`,
+  `[::ffff:127.0.0.1]` and `169.254.169.254` were accepted). validate.py
+  and `directory build` share one explicit list, so they refuse the same
+  entries.
+- **`testnet down` checks the pid on macOS and Windows too**, not only on
+  Linux.
+- **`save_snapshot` creates its temp file exclusively, mode 0600, and
+  removes it if the rename fails**; it held the identity seed and was left
+  behind.
+- **One nesting limit in all three verifiers.** Go refused unknown keys
+  nested 10,000 deep, which Rust and TypeScript read, and the TypeScript
+  parser kept a frame per level: a 10 MB text with an ignored key nested 5
+  million deep took over 1 GB, a fatal out-of-memory on a small heap. A
+  dossier text now nests at most 1000 arrays and objects deep (SPEC §9;
+  honest dossiers nest at most 5, a fleet anchor 127); deeper is not a
+  dossier, everywhere. TypeScript keeps nothing for ignored keys and fails
+  that text in 9 ms.
+- **Numbers at binary64's edge.** The reference refused a `fleet_anchor`
+  holding a finite number near f64::MAX ("number out of range") that Go
+  and TypeScript read; serde_json now rounds correctly (`float_roundtrip`),
+  as Go and JavaScript do. A literal that rounds to infinity is refused by
+  all three.
+- **Echoed input is bounded.** A 10-million-digit `tree_size` took 2.9 s in
+  TypeScript and came back whole in `failures[0]`; Rust and Go echoed
+  10 MB strings in parse errors. Messages quote at most 64 characters of
+  an input, and its length.
+- **The object-only rule cannot be bypassed from another crate.** The wire
+  types' derives sit on private mirror types, so `Dossier::deserialize(d)`
+  called by path no longer reads a struct written as an array.
+- Corpus 17 gains 16 cases for all of the above (136 texts). New API:
+  Rust `Dossier::from_json` (the depth check, then serde; plain
+  `serde_json::from_str::<Dossier>` does not check depth),
+  `DossierParseError`, `MAX_DOSSIER_DEPTH` and `witness_log_core::echo`;
+  Go `MaxDossierDepth`. The depth rule covers dossier text: a trusted
+  directory, evidence or revocation file nested more than 10,000 deep is
+  still refused by Go and read by Rust (files the caller supplies).
+- **Provenance checks pass `--deny-self-hosted-runners`**; the witnessed
+  report keeps no credentials in its checkout; git gets tokens only
+  through its environment; the release image's build context is only its
+  binaries and entrypoint.
+
 ### Behaviour changes
 
 - `silence_proof` returns `Inconclusive` where 0.6.0 returned `Censored`
@@ -157,9 +213,11 @@ audit`). It found the following, now fixed:
   always said; TypeScript `verifyDossier` returns INVALID instead of
   throwing on a non-dossier, and validates the directory and revocations
   passed in its options (a `TypeError` if malformed).
-- `witness-log directory build` refuses entries `validate.py` refuses,
-  and http or loopback URLs (including `--url`) without
-  `--allow-insecure`.
+- A dossier text nesting more than 1000 arrays and objects deep is not a
+  dossier (exit 2; INVALID in TypeScript), in all three verifiers.
+- `witness-log directory build` refuses entries `validate.py` refuses
+  (http, loopback and non-public IP URLs among them) and an http `--url`,
+  unless `--allow-insecure`.
 - `journal serve` and `fleet serve` refuse requests with an `Origin`
   header or a non-loopback `Host` unless `--allow-remote`.
 - The MCP server refuses a tool-call directory that names loopback or
