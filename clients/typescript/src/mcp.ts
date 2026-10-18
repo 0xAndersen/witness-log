@@ -85,7 +85,7 @@ export class WitnessLogMCP {
     Object.assign(env, opts.env ?? {});
     if (opts.home !== undefined) env.WITNESS_LOG_HOME = opts.home;
     const transport = new StdioClientTransport({ command: cmd.command, args: cmd.args, env, stderr: "pipe" });
-    const client = new Client({ name: "@witness-log/client", version: "0.2.0" });
+    const client = new Client({ name: "@witness-log/client", version: "0.4.0" });
     await client.connect(transport);
     try {
       const args: Record<string, unknown> = { session_id: opts.sessionId };

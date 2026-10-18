@@ -19,7 +19,7 @@ import (
 	witnesslog "github.com/0xAndersen/witness-log/clients/go"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 type verifyOptions struct {
 	ExpectedIdentityPubkey *string           `json:"expected_identity_pubkey"`
