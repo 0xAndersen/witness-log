@@ -78,7 +78,7 @@ them itself; the server never sees them.
 | tool | returns |
 |---|---|
 | `audit__status` | `{server, journal, leaf_count, root, identity, calls, restarts, witnessed, last_verdict}` |
-| `audit__export` | writes `<journal>.dossier.json` and returns `{path, sha256, bytes, verdict}`; the verdict is `unanchored` unless `--directory` was given (a verifier needs a directory it trusts) |
+| `audit__export` | writes `<journal>.dossier.json` and returns `{path, sha256, bytes, verdict, split_view_unsafe, tamper_alerts}`; the verdict is `unanchored` unless `--directory` was given (a verifier needs a directory it trusts). The head witnesses last cosigned (`<journal>.witnesses.json`) is checked as a known head: a journal rewritten after witnessing is `diverged`, one truncated below it a tamper alert. `split_view_unsafe` is true for a `witnessed` verdict whose cosigners are not a strict majority of the directory |
 
 A model can call them like any other tool; so can an operator with
 `witness-log verify <journal>.dossier.json --identity <identity> --directory trusted.json`.
@@ -88,11 +88,15 @@ A model can call them like any other tool; so can an operator with
 - `--timeout N` (default 60 s): a call unanswered after `N` seconds gets a
   JSON-RPC error at the host and an `is_error` result leaf; a late answer
   from the server is dropped.
-- If the server exits, every in-flight call fails the same way, the
-  server is restarted (`--max-restarts`, default 3) and the host's
-  `initialize` request and `notifications/initialized` are replayed to it.
-  The new server's `initialize` response is not forwarded. Past the limit
-  the proxy exits with the server's code and the host sees the pipe close.
+- If the server exits, every call it had been sent fails the same way, the
+  server is restarted (`--max-restarts`, default 3; an attempt whose
+  command cannot be started counts too) and the host's `initialize`
+  request and `notifications/initialized` are replayed to it before any
+  call. The new server's `initialize` response is not forwarded. A call
+  that arrives during the restart is held and sent to the new server, and
+  its real result is journaled. Past the limit every pending call fails,
+  and the proxy exits with the server's code and the host sees the pipe
+  close.
 - `--directory trusted.json --submit-every N` submits the journal to those
   witnesses every `N` completed calls and once more when the host closes
   stdin; `audit__status.last_verdict` reports the outcome.
