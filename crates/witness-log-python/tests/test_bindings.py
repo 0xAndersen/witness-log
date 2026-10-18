@@ -564,3 +564,50 @@ def test_sync_releases_the_gil_and_threads_share_a_log_safely(tmp_path):
     again.close()
 
 
+def test_corpus_15_evidence_known_heads_and_labels():
+    """Security review of 0.5.0 (F1, F5, F10, F12) through the binding:
+    evidence items as `witness serve` writes them, malformed ones refused,
+    equivocation proofs at the signed-note edges, known heads past 2^53 or
+    wrapped in Unicode White_Space or a BOM, and operator labels that
+    differ only by Unicode whitespace or case. exit_code 2 means the
+    inputs are refused with an exception, never a verdict."""
+    import os
+
+    import pytest
+
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "corpus", "15_evidence_and_args.json")
+    if not os.path.exists(path):
+        pytest.skip("corpus not available")
+    v = json.load(open(path, encoding="utf-8"))
+    seen = set()
+    for c in v["cases"]:
+        e = c["expect"]
+        seen.add(e["exit_code"])
+        args = (
+            json.dumps(v["dossiers"][c["dossier"]]),
+            c["threshold"],
+            c["expected_identity"],
+            json.dumps(v["directories"][c["directory"]]) if c["directory"] else None,
+            c["min_witnesses"],
+            None,
+            c["known_heads"],
+            json.dumps([v["evidence"][k] for k in c["evidence"]]),
+            c["subject_org"],
+        )
+        if e["exit_code"] == 2:
+            with pytest.raises((ValueError, witness_log.MalformedError)):
+                witness_log.verify_dossier_json(*args)
+            continue
+        r = json.loads(witness_log.verify_dossier_json(*args))
+        exit_code = 11 if r["split_view_unsafe"] and not c["allow_sub_majority"] else {
+            "witnessed": 0, "consistent_unwitnessed": 10, "unanchored": 20, "diverged": 30, "invalid": 40,
+        }[r["verdict"]]
+        assert r["verdict"] == e["verdict"], c["name"]
+        assert exit_code == e["exit_code"], c["name"]
+        assert r["split_view_unsafe"] == e["split_view_unsafe"], c["name"]
+        assert bool(r["failures"]) == e["has_failures"], c["name"]
+        assert len(r["contradictions"]) == e["contradictions"], c["name"]
+        assert len(r["known_heads_unchecked"]) == e["known_heads_unchecked"], c["name"]
+        assert (r["quorum"] or {}).get("valid_receipts") == e["valid_receipts"], c["name"]
+        assert (r["quorum"] or {}).get("distinct_independent_operators") == e["independent_operators"], c["name"]
+    assert seen == {2, 10, 11, 20, 30, 40}
