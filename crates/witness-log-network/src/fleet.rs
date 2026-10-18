@@ -65,6 +65,7 @@ pub const MAX_INCLUSION_PROOF_HASHES: usize = 64;
 /// The dossier field (RFC-0001): where this dossier's checkpoint sits in a
 /// fleet checkpoint log, and that log's cosigned checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct FleetAnchor {
     /// The fleet log's C2SP origin, e.g. `example.com/witness-log/fleet`.
     pub origin: String,
@@ -80,6 +81,8 @@ pub struct FleetAnchor {
     /// the witnesses' `cosignature/v1` lines.
     pub fleet_checkpoint_note: String,
 }
+
+witness_log_core::object_only_serde!(FleetAnchor);
 
 /// `Dossier::fleet_anchor` as read from JSON: the field parsed, or, when it
 /// does not have the [`FleetAnchor`] shape, the raw value kept as it was.

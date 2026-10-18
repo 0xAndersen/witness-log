@@ -506,15 +506,26 @@ signature fails on its own terms as well). No second value has been
 assigned.
 
 **Verification strictness (normative):** verifiers MUST use strict Ed25519
-verification — reject non-canonical scalars per RFC 8032 AND reject
-signatures involving small-order or mixed-order components (the behavior
-of `ed25519-dalek`'s `verify_strict`, equivalent to what "Taming the many
-EdDSAs" calls the strictest verification profile). The reason is
+verification, the behavior of `ed25519-dalek`'s `verify_strict` after
+`VerifyingKey::from_bytes`, for every signature in a dossier (checkpoints,
+key bindings, revocations, receipts, signed notes): the public key A must
+decode (y is read mod p, so an encoding with y ≥ p decodes, as does x = 0
+with the sign bit set); s must be canonical (s < L, RFC 8032); R must
+decode; A and R must not be of small order (order 1, 2, 4 or 8) in any of
+their fourteen encodings; and [s]B − [k]A, with k = SHA-512(R ‖ A ‖ M)
+over the encodings as given, must encode to exactly R's bytes
+(cofactorless, so a non-canonical R never verifies). Mixed-order points
+are not refused: `verify_strict` does not refuse them, and a signature
+with one verifies when the torsion cancels. A key binding's session key
+must decode as a point too, though it signs nothing there. The reason is
 interoperability, not any weakness in honest signatures: Ed25519
 implementations historically disagree on degenerate edge-case signatures,
 and two conformant WitnessLog verifiers disagreeing about whether the same
 dossier is valid would be worse than either answer alone. Honestly
 generated signatures are unaffected by this requirement.
+`/corpus/16_ed25519_strict.json` holds the edge cases (every small-order
+encoding as A and as R, mixed-order points, non-canonical s, R and A) with
+the reference's answer for each, and dossiers that embed them.
 
 **Planned, not implemented: ML-DSA-44** (FIPS 204). This is the
 post-quantum algorithm the C2SP transparency ecosystem chose:
@@ -788,6 +799,28 @@ a trust input on their own — see §9.1.
 
 `witness-log verify <dossier.json>` (see `witness-log-cli`) is the
 reference verifier for this format.
+
+**Reading a dossier (normative).** A verifier reads a dossier exactly as
+the reference deserialises one, or two verifiers can reach different
+verdicts on the same bytes. The text is RFC 8259 JSON in UTF-8, without a
+byte order mark. The dossier and every struct in it (checkpoint, leaf,
+receipt, directory and directory entry, key binding, revocation, custody
+threshold) is a JSON object, never an array. A key that names one of the
+struct's fields appears at most once and matches the field name exactly
+(case-sensitive, after unescaping); any other key is ignored. Every u64
+is an integer literal with no sign, fraction or exponent, at most
+2^64 − 1, and is read exactly (above 2^53 too, where JavaScript's
+`JSON.parse` would round it); `leaf_type` is at most 255. String, boolean
+and list fields have that JSON type; optional fields may be absent or
+`null`, defaulted ones (`witness_receipts`, `witness_directory`,
+`key_bindings`, `revocations`, and an entry's `runtime` and
+`is_project_operated`, a binding's `custody`) may be absent but not
+`null`. A unit enum value is its name or `{"<name>": null}`. A field's
+string and every key of a struct contain no unpaired UTF-16 surrogate
+escape. A text that breaks any of these is not a dossier: the CLI exits
+`2`, and no verifier returns any verdict other than `Invalid` for it.
+`/corpus/17_dossier_parsing.json` pins the cases, including u64 values
+above 2^53 and the case of hex in each field the verdict compares.
 
 **JSON Schema.** `spec/dossier.schema.json` (JSON Schema 2020-12) states
 the exact shape of a dossier and of every object in it: field names,
@@ -1222,8 +1255,10 @@ what makes an implementation a WitnessLog implementation.
 An implementation is conformant with this specification's current version when it reproduces every value in
 the encoding vectors `/corpus/01_*.json` to `/corpus/12_*.json` exactly, byte for byte, from the described inputs,
 and, if it verifies dossiers, returns the expected verdict, exit code and report fields for every case in the
-verification vectors `/corpus/13_verdicts.json` and `/corpus/15_evidence_and_args.json` (the latter also says which
-inputs a verifier must refuse). The encoding vectors are enforced in CI via `witness-log conform`
+verification vectors `/corpus/13_verdicts.json`, `/corpus/15_evidence_and_args.json` (which also says which
+inputs a verifier must refuse), `/corpus/16_ed25519_strict.json` (whose signatures must also each get the stated
+answer from the implementation's Ed25519 check) and `/corpus/17_dossier_parsing.json` (which also says which texts
+are not dossiers). The encoding vectors are enforced in CI via `witness-log conform`
 (see CONTRIBUTING.md); the verification vectors are run by each verifier's own test suite. Together they are the actual gate for
 claiming compatibility — not this document by itself. `/corpus/14_fleet_anchor.json` pins the experimental RFC-0001
 prototype for the verifiers that implement its opt-in and is not part of conformance.

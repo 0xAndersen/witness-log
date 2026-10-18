@@ -51,6 +51,7 @@ export {
   bytesToHex,
   LEAF_TYPES,
   MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED,
+  type U64,
   type Leaf,
   type AuthorizationEventKind,
   type SignedTreeHead,

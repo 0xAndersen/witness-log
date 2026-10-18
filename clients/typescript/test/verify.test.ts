@@ -18,6 +18,7 @@ import {
   verifyCheckpoint,
   verifyDossier,
   verifyInclusion,
+  sha256,
   verifyDisclosure,
   ed25519Verify,
   verifyRevocation,
@@ -393,5 +394,166 @@ describe("corpus 15: evidence items, known heads and labels (security review of 
     const nel = String.fromCodePoint(0x85);
     assert.throws(() => parseKnownHead(`${bom}2:${root}`), TypeError);
     assert.equal(parseKnownHead(`${nel}2:${root}${nel}`).tree_size, 2);
+  });
+});
+
+interface CorpusCase {
+  name: string;
+  dossier: string;
+  directory: string | null;
+  expected_identity: string | null;
+  threshold: number;
+  min_witnesses: number | null;
+  known_heads: string[];
+  evidence: string[];
+  allow_sub_majority: boolean;
+  subject_org: string | null;
+  expect: Record<string, unknown>;
+}
+
+/** A corpus 15/16/17-style case through verifyDossier: verdict, exit code and report fields. */
+function assertCase(
+  v: { dossiers: Record<string, unknown>; directories: Record<string, unknown>; evidence?: Record<string, unknown> },
+  c: CorpusCase,
+  dossier: unknown = v.dossiers[c.dossier],
+) {
+  const e = c.expect;
+  const r = verifyDossier(dossier as Dossier | string, {
+    directory: c.directory === null ? undefined : (v.directories[c.directory] as WitnessDirectory),
+    identity: c.expected_identity ?? undefined,
+    threshold: c.threshold,
+    minWitnesses: c.min_witnesses ?? undefined,
+    knownHeads: c.known_heads,
+    evidence: c.evidence.map((k) => v.evidence![k]) as never,
+    allowSubMajority: c.allow_sub_majority,
+    subjectOrg: c.subject_org ?? undefined,
+  });
+  assert.equal(r.report.verdict, e.verdict, c.name);
+  assert.equal(r.exitCode, e.exit_code, c.name);
+  assert.equal(r.report.split_view_unsafe, e.split_view_unsafe, c.name);
+  assert.equal(r.report.internally_consistent, e.internally_consistent, c.name);
+  assert.equal(r.report.failures.length > 0, e.has_failures, c.name);
+  assert.equal(r.report.contradictions.length, e.contradictions, c.name);
+  assert.equal(r.report.known_heads_unchecked.length, e.known_heads_unchecked, c.name);
+  assert.equal(r.report.quorum?.valid_receipts ?? null, e.valid_receipts, c.name);
+  assert.equal(r.report.quorum?.distinct_independent_operators ?? null, e.independent_operators, c.name);
+  return r;
+}
+
+describe("corpus 16: strict Ed25519 (outside review of 0.6.0, H3/M3)", () => {
+  it("every signature: ed25519Verify answers what the reference's verify_strict answers", () => {
+    const v = corpus("16_ed25519_strict.json");
+    assert.ok(v.signatures.length >= 45);
+    for (const s of v.signatures) {
+      assert.equal(ed25519Verify(s.public_key, hexToBytes(s.message), s.signature), s.valid, s.name);
+    }
+    // What the vector is for: signatures a non-strict check accepts and the
+    // reference refuses (every small-order key and the identity as R).
+    const lax = v.signatures.filter((s: { valid: boolean; cofactorless_non_strict: boolean }) => !s.valid && s.cofactorless_non_strict);
+    assert.ok(lax.length >= 18, `${lax.length}`);
+  });
+
+  it("every case: verdict, exit code and report fields", () => {
+    const v = corpus("16_ed25519_strict.json");
+    const exits = new Set<number>();
+    for (const c of v.cases as CorpusCase[]) {
+      exits.add(c.expect.exit_code as number);
+      assertCase(v, c);
+    }
+    assert.deepEqual([...exits].sort((a, b) => a - b), [10, 20, 40]);
+  });
+
+  it("verifyCheckpoint itself refuses the degenerate checkpoints", () => {
+    const v = corpus("16_ed25519_strict.json");
+    assert.equal(verifyCheckpoint(v.dossiers.honest.checkpoint), true);
+    assert.equal(verifyCheckpoint(v.dossiers.identity_point_checkpoint.checkpoint), false);
+    assert.equal(verifyCheckpoint(v.dossiers.small_order_key_checkpoint.checkpoint), false);
+    assert.equal(verifyCheckpoint(v.dossiers.small_order_r_checkpoint.checkpoint), false);
+    assert.equal(verifyCheckpoint(v.dossiers.mixed_order_key_checkpoint.checkpoint), true);
+  });
+});
+
+describe("corpus 17: reading a dossier (outside review of 0.6.0, H2 and P3)", () => {
+  it("every text: not a dossier (INVALID, never a throw) or the reference's verdict", () => {
+    const v = corpus("17_dossier_parsing.json");
+    assert.ok(v.cases.length >= 100);
+    for (const c of v.cases as Array<CorpusCase & { dossier_json: string }>) {
+      if (c.expect.not_a_dossier) {
+        const r = verifyDossier(c.dossier_json, {
+          directory: c.directory === null ? undefined : v.directories[c.directory],
+          minWitnesses: c.min_witnesses ?? undefined,
+        });
+        assert.equal(r.verdict, "INVALID", c.name);
+        assert.equal(r.exitCode, 40, c.name);
+        assert.match(r.failures[0], /^not a dossier: /, c.name);
+        continue;
+      }
+      const r = assertCase(v, c, c.dossier_json);
+      assert.ok(!r.failures.some((f) => f.startsWith("not a dossier")), c.name);
+    }
+  });
+
+  it("the review's reproductions never throw", () => {
+    const v = corpus("13_verdicts.json");
+    const tries: Record<string, (d: any) => void> = {
+      fractional_tree_size: (d) => (d.checkpoint.tree_size = 3.5),
+      fractional_timestamp: (d) => (d.checkpoint.timestamp_ms = 1.5),
+      negative_tree_size: (d) => (d.checkpoint.tree_size = -1),
+      nan_tree_size: (d) => (d.checkpoint.tree_size = NaN),
+      receipts_object: (d) => (d.witness_receipts = {}),
+      leaves_null: (d) => (d.leaves = null),
+      checkpoint_null: (d) => (d.checkpoint = null),
+      leaf_index_string: (d) => (d.leaves[0].index = "0"),
+      signature_number: (d) => (d.checkpoint.signature = 5),
+      custody_array: (d) => (d.key_bindings = [{ custody: [] }]),
+    };
+    for (const [name, edit] of Object.entries(tries)) {
+      const d = structuredClone(v.dossiers.full);
+      edit(d);
+      const r = verifyDossier(d, { directory: v.trusted_directory });
+      assert.equal(r.verdict, "INVALID", name);
+      assert.match(r.failures[0], /^not a dossier: /, name);
+    }
+    for (const text of ["{not json", "", "null", "[]", "42", '"x"', "﻿{}", "{} x"]) {
+      const r = verifyDossier(text);
+      assert.equal(r.exitCode, 40, JSON.stringify(text));
+      assert.match(r.failures[0], /^not a dossier: /);
+    }
+    for (const value of [null, undefined, 42, "", [], () => 0]) {
+      assert.equal(verifyDossier(value as never).verdict, "INVALID");
+    }
+  });
+
+  it("u64 values: exact from text; a parsed number above 2^53 - 1 is refused, a bigint is not", () => {
+    const v = corpus("17_dossier_parsing.json");
+    const c = v.cases.find((x: { name: string }) => x.name === "checkpoint timestamp_ms 2^53 + 1, signed exactly");
+    assert.equal(verifyDossier(c.dossier_json).verdict, "UNANCHORED");
+    // JSON.parse rounds 2^53 + 1 to 2^53: refused, never verified as the wrong number.
+    const parsed = JSON.parse(c.dossier_json);
+    const r = verifyDossier(parsed);
+    assert.equal(r.verdict, "INVALID");
+    assert.match(r.failures[0], /above 2\^53 - 1/);
+    parsed.checkpoint.timestamp_ms = 2n ** 53n + 1n;
+    const exact = verifyDossier(parsed);
+    assert.equal(exact.verdict, "UNANCHORED");
+    // Below 2^53 a u64 stays a number; above, a bigint.
+    assert.equal(typeof exact.report.claimed_tree_size, "number");
+    const big = v.cases.find((x: { name: string }) => x.name === "checkpoint timestamp_ms 2^64 - 1, signed exactly");
+    assert.equal(verifyDossier(big.dossier_json).verdict, "UNANCHORED");
+  });
+
+  it("inclusion proofs are checked with exact arithmetic above 2^53", () => {
+    const leaf = new Uint8Array(32).fill(1);
+    const sibling = new Uint8Array(32).fill(2);
+    // In a tree of size 2^53 + 2, leaf 2^53 + 1 is the right child of the
+    // last pair: one hash up, then the size-2^53 subtree on the left.
+    const left = new Uint8Array(32).fill(3);
+    const n = 2n ** 53n;
+    const pair = sha256(new Uint8Array([1]), sibling, leaf);
+    const root = sha256(new Uint8Array([1]), left, pair);
+    assert.equal(verifyInclusion(leaf, n + 1n, n + 2n, [sibling, left], root), true);
+    // Number arithmetic would have read 2^53 + 1 as 2^53.
+    assert.equal(verifyInclusion(leaf, n, n + 2n, [sibling, left], root), false);
+    assert.equal(verifyInclusion(leaf, 1.5, 4, [], root), false);
   });
 });

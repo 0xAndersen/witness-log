@@ -69,11 +69,12 @@ func (d HandoffDirection) MarshalJSON() ([]byte, error) {
 	return json.Marshal(name)
 }
 
-// UnmarshalJSON accepts "Sent" or "Received".
+// UnmarshalJSON accepts "Sent" or "Received", or {"Sent": null} and
+// {"Received": null}, the two forms serde reads a unit variant in.
 func (d *HandoffDirection) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return fmt.Errorf("handoff_direction: %w", err)
+	s, err := unitVariant(b, "handoff_direction", []string{"Sent", "Received"})
+	if err != nil {
+		return err
 	}
 	for tag, name := range handoffNames {
 		if name == s {
@@ -145,11 +146,16 @@ func (k AuthorizationEventKind) MarshalJSON() ([]byte, error) {
 	return json.Marshal(name)
 }
 
-// UnmarshalJSON accepts the six CamelCase names.
+// UnmarshalJSON accepts the six CamelCase names, as strings or as
+// {"Name": null} (serde's two forms of a unit variant).
 func (k *AuthorizationEventKind) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return fmt.Errorf("authorization_event_kind: %w", err)
+	names := make([]string, 0, len(authKindNames))
+	for _, n := range authKindNames {
+		names = append(names, n)
+	}
+	s, err := unitVariant(b, "authorization_event_kind", names)
+	if err != nil {
+		return err
 	}
 	for tag, name := range authKindNames {
 		if name == s {
@@ -183,12 +189,9 @@ type Leaf struct {
 
 // ParseLeaf decodes one leaf, requiring the five mandatory fields.
 func ParseLeaf(raw []byte) (*Leaf, error) {
-	if err := requireKeys(raw, "leaf", "index", "leaf_type", "timestamp_ms", "session_pubkey", "payload_hash"); err != nil {
-		return nil, err
-	}
 	var l Leaf
-	if err := json.Unmarshal(raw, &l); err != nil {
-		return nil, fmt.Errorf("leaf: %w", err)
+	if err := decodeStruct(raw, leafSpec, &l); err != nil {
+		return nil, err
 	}
 	return &l, nil
 }

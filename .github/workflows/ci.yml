@@ -123,6 +123,8 @@ jobs:
           cargo run -p witness-log-network --example generate_verdict_corpus
           cargo run -p witness-log-network --example generate_fleet_corpus
           cargo run -p witness-log-network --example generate_evidence_corpus
+          cargo run -p witness-log-network --example generate_ed25519_corpus
+          cargo run -p witness-log-network --example generate_parsing_corpus
       - name: The systemd unit cloud-init installs matches its pinned SHA-256
         run: |
           pin=$(grep -o 'UNIT_SHA256:-[0-9a-f]\{64\}' deploy/witness/cloud-init.yaml | cut -d- -f2)

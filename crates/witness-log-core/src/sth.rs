@@ -26,6 +26,7 @@ pub enum SthError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct SignedTreeHead {
     pub tree_size: u64,
     pub root_hash: String, // hex
@@ -34,6 +35,8 @@ pub struct SignedTreeHead {
     pub signer_pubkey: String, // hex
     pub signature: String,     // hex
 }
+
+crate::object_only_serde!(SignedTreeHead);
 
 impl SignedTreeHead {
     pub fn sign(

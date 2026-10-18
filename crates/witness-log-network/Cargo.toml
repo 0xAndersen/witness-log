@@ -23,6 +23,9 @@ base64ct = { workspace = true }
 [dev-dependencies]
 rand = { workspace = true }
 sha2 = { workspace = true }
+# Only for examples/generate_ed25519_corpus.rs: small-order and mixed-order
+# points. The same version ed25519-dalek already depends on.
+curve25519-dalek = "4.1"
 
 [[bench]]
 name = "overhead"

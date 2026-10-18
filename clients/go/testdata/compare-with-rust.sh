@@ -120,4 +120,42 @@ args native/dossier.json --directory native/trusted.json --subject-org --json
 args native/dossier.json --directory native/trusted.json --subject-org "  "
 args native/dossier.json --directory native/trusted.json --explain
 args native/dossier.json --known-head "1:$wrong_identity" --evidence
+# Corpus 16 (strict Ed25519) and 17 (reading a dossier, outside review of
+# 0.6.0): every case through both CLIs, the dossier as its exact text. A
+# text the reference cannot read is a usage error (exit 2) from both.
+vectors="${TMPDIR:-/tmp}/wl-corpus-16-17"
+rm -rf "$vectors" && mkdir -p "$vectors"
+python3 -I - "$repo/corpus" "$vectors" <<'EOF'
+import json, os, sys
+src, out = sys.argv[1], sys.argv[2]
+rows = []
+for name in ("16_ed25519_strict.json", "17_dossier_parsing.json"):
+    v = json.load(open(os.path.join(src, name), encoding="utf-8"))
+    tag = name[:2]
+    for n, d in v.get("directories", {}).items():
+        json.dump(d, open(os.path.join(out, f"{tag}-dir-{n}.json"), "w"))
+    for k, e in v.get("evidence", {}).items():
+        json.dump(e, open(os.path.join(out, f"{tag}-ev-{k}.json"), "w"))
+    for i, c in enumerate(v["cases"]):
+        path = os.path.join(out, f"{tag}-{i}.json")
+        text = c["dossier_json"] if "dossier_json" in c else json.dumps(v["dossiers"][c["dossier"]])
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        args = [path]
+        if c["directory"]:
+            args += ["--directory", os.path.join(out, f"{tag}-dir-{c['directory']}.json")]
+        if c["min_witnesses"] is not None:
+            args += ["--min-witnesses", str(c["min_witnesses"])]
+        if c["expected_identity"]:
+            args += ["--identity", c["expected_identity"]]
+        for h in c["known_heads"]:
+            args += ["--known-head", h]
+        for k in c["evidence"]:
+            args += ["--evidence", os.path.join(out, f"{tag}-ev-{k}.json")]
+        rows.append("\t".join([f"corpus {tag}: {c['name']}"] + args))
+open(os.path.join(out, "cases.tsv"), "w", encoding="utf-8").write("\n".join(rows) + "\n")
+EOF
+while IFS=$'\t' read -r -a fields; do
+  compare "${fields[0]}" "${fields[@]:1}" || fail=1
+done < "$vectors/cases.tsv"
 exit $fail

@@ -5,28 +5,40 @@
  * procedure, independent of the Rust reference verifier, and it produces
  * the same five verdicts and exit codes for the same inputs.
  *
- * One known difference, stated rather than hidden: SPEC §6 requires strict
- * Ed25519 verification (reject small-order and mixed-order components).
- * `node:crypto` rejects non-canonical scalars but does not reject
- * small-order points, so a deliberately degenerate signature that the
- * reference verifier refuses could pass here. Honestly generated
- * signatures are identical under both. For a load-bearing decision, run
- * the Rust verifier as well (`WitnessLogCLI.verify`, or
- * `verifyDossierNative` in `@witness-log/node`).
+ * Ed25519 is strict, as SPEC §6 requires: `ed25519Verify` refuses a
+ * small-order public key or R in any encoding and a non-canonical s
+ * before `node:crypto` does the cofactorless check, which together decide
+ * what the reference's ed25519-dalek `verify_strict` decides (mixed-order
+ * points are accepted, as there). Up to 0.6.0 the small-order check was
+ * missing here, so degenerate signatures the reference refuses verified
+ * (outside review of 0.6.0, H3); corpus/16_ed25519_strict.json pins every
+ * edge case for all three verifiers.
+ *
+ * Dossiers are read as the reference's serde types read them: a value
+ * that is not a dossier (not JSON, a wrong type, a fraction or a negative
+ * number where a u64 belongs, a duplicate field, a lone surrogate) is
+ * INVALID with the reason in `failures`, never an exception (H2). Given
+ * JSON text, integers are parsed exactly, so a u64 above 2^53 is verified
+ * bit for bit; given an already-parsed object, such a number may have been
+ * rounded by `JSON.parse` and the dossier is INVALID unless the value is a
+ * bigint. corpus/17_dossier_parsing.json pins the cases.
  */
 import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from "node:crypto";
 import { EXIT_CODES, type Verdict } from "./cli.js";
+import { parseJsonExact, readDossier, readRevocation, readWitnessEntry, type FleetAnchorField, type U64 } from "./dossier-json.js";
+
+export type { U64 } from "./dossier-json.js";
 
 // ---------------------------------------------------------------- types
 
 /** A leaf as it appears in a dossier (SPEC §3). */
 export interface Leaf {
-  index: number;
+  index: U64;
   leaf_type: number;
-  timestamp_ms: number;
+  timestamp_ms: U64;
   session_pubkey: string;
   payload_hash: string;
-  redacted_index?: number | null;
+  redacted_index?: U64 | null;
   revoked_identity?: string | null;
   handoff_direction?: "Sent" | "Received" | null;
   counterparty_pubkey?: string | null;
@@ -48,9 +60,9 @@ export type AuthorizationEventKind =
 
 /** SPEC §6. */
 export interface SignedTreeHead {
-  tree_size: number;
+  tree_size: U64;
   root_hash: string;
-  timestamp_ms: number;
+  timestamp_ms: U64;
   sig_alg: string;
   signer_pubkey: string;
   signature: string;
@@ -59,11 +71,13 @@ export interface SignedTreeHead {
 /** SPEC §7 (native) or §9.3 (with `c2sp_origin`). */
 export interface WitnessReceipt {
   witness_pubkey: string;
-  tree_size: number;
+  tree_size: U64;
   root_hash: string;
-  witnessed_at_ms: number;
+  witnessed_at_ms: U64;
   signature: string;
   c2sp_origin?: string | null;
+  /** Display only; never part of a signature. */
+  witness_name?: string | null;
 }
 
 export interface WitnessEntry {
@@ -84,18 +98,18 @@ export interface WitnessDirectory {
 export interface KeyBindingStatement {
   identity_pubkey: string;
   session_pubkey: string;
-  session_number: number;
-  timestamp_ms: number;
+  session_number: U64;
+  timestamp_ms: U64;
   custody?: unknown;
-  not_after_ms?: number | null;
+  not_after_ms?: U64 | null;
   signature: string;
 }
 
 export interface RevocationStatement {
   identity_pubkey: string;
-  as_of_ms: number;
+  as_of_ms: U64;
   /** RFC-0005: the tree size at which the revocation takes effect; absent in v1. */
-  as_of_index?: number | null;
+  as_of_index?: U64 | null;
   reason: string;
   signature: string;
 }
@@ -120,7 +134,7 @@ export interface Dossier {
 /** RFC-0001 (EXPERIMENTAL): the dossier's `fleet_anchor`. */
 export interface FleetAnchor {
   origin: string;
-  entry_index: number;
+  entry_index: U64;
   entry_bytes_b64: string;
   /** Hex hashes, innermost first. */
   inclusion_proof: string[];
@@ -131,9 +145,9 @@ export interface FleetAnchor {
 export interface FleetAnchorReport {
   status: "ignored" | "verified" | "failed";
   origin: string | null;
-  entry_index: number | null;
+  entry_index: U64 | null;
   /** Only for a verified anchor. */
-  fleet_tree_size: number | null;
+  fleet_tree_size: U64 | null;
   /** Why it failed; wording not normative. */
   failures: string[];
 }
@@ -152,7 +166,7 @@ export interface WitnessPaths {
 }
 
 export interface QuorumResult {
-  tree_size: number;
+  tree_size: U64;
   valid_receipts: number;
   total_directory_witnesses: number;
   distinct_operators_represented: number;
@@ -168,7 +182,7 @@ export interface QuorumResult {
   meets_count_threshold: boolean;
   count_gate: string;
   split_view_resistant: boolean;
-  newest_trusted_witness_ms: number | null;
+  newest_trusted_witness_ms: U64 | null;
 }
 
 /** Same fields as the Rust `DossierReport` (what `witness-log verify --json` prints under `report`). */
@@ -179,7 +193,7 @@ export interface DossierReport {
   bindings_valid: boolean;
   bindings_asserted: boolean;
   leaf_count: number;
-  claimed_tree_size: number;
+  claimed_tree_size: U64;
   merkle_continuity_valid: boolean;
   externally_anchored: boolean;
   identity_pinned: boolean;
@@ -316,6 +330,11 @@ export function bytesToHex(b: Uint8Array): string {
   return Buffer.from(b).toString("hex");
 }
 
+/** A u64 as this module carries it: a number up to 2^53 - 1, a bigint above. */
+function canonicalU64(n: bigint): U64 {
+  return n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n;
+}
+
 function u64be(n: number | bigint): Uint8Array {
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, BigInt(n));
@@ -356,7 +375,7 @@ function ed25519Key(pubkeyHex: string): KeyObject | null {
   } catch {
     return null;
   }
-  if (raw.length !== 32) return null;
+  if (raw.length !== 32 || !decodesAsPoint(raw)) return null;
   try {
     return createPublicKey({ key: Buffer.from(concat([SPKI_ED25519_PREFIX, raw])), format: "der", type: "spki" });
   } catch {
@@ -364,17 +383,106 @@ function ed25519Key(pubkeyHex: string): KeyObject | null {
   }
 }
 
-/** Ed25519 verification of `message` under a hex public key and hex signature. False on any malformed input. */
+/** p = 2^255 - 19, the field of edwards25519. */
+const FIELD_P = (1n << 255n) - 19n;
+/** L = 2^252 + 27742317777372353535851937790883648493, the prime group order. */
+const GROUP_L = (1n << 252n) + 27742317777372353535851937790883648493n;
+
+/** A little-endian byte string as an unsigned integer. */
+function leUint(b: Uint8Array): bigint {
+  let x = 0n;
+  for (let i = b.length - 1; i >= 0; i--) x = (x << 8n) | BigInt(b[i]);
+  return x;
+}
+
+/** y of the order-8 points c7176a70…037a and their negations (the other two have p - y). */
+const Y_ORDER_8 = leUint(hexToBytes("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"));
+
+/**
+ * The y-coordinates, mod p, of the eight points of order 1, 2, 4 and 8:
+ * the identity (1), order 2 (p - 1), order 4 (0) and order 8 (±y8). Each
+ * y names at most the two points ±x, of the same order, and each of these
+ * five has points on the curve, so an encoding decodes to a small-order
+ * point exactly when its y mod p is one of them.
+ */
+const SMALL_ORDER_Y: readonly bigint[] = [1n, FIELD_P - 1n, 0n, Y_ORDER_8, FIELD_P - Y_ORDER_8];
+
+function modPow(base: bigint, exp: bigint, m: bigint): bigint {
+  let r = 1n;
+  let b = base % m;
+  for (let e = exp; e > 0n; e >>= 1n) {
+    if ((e & 1n) === 1n) r = (r * b) % m;
+    b = (b * b) % m;
+  }
+  return r;
+}
+
+/** d = -121665/121666, the edwards25519 curve constant. */
+const CURVE_D = (((FIELD_P - 121665n) % FIELD_P) * modPow(121666n, FIELD_P - 2n, FIELD_P)) % FIELD_P;
+
+/**
+ * Whether 32 bytes decode as an edwards25519 point the way ed25519-dalek's
+ * `VerifyingKey::from_bytes` (and OpenSSL) decode one: y is the low 255
+ * bits read mod p (so y >= p is accepted), and a point exists when
+ * x^2 = (y^2 - 1)/(d·y^2 + 1) has a square root; the sign bit picks ±x and
+ * is accepted with x = 0. The reference refuses a key binding whose session
+ * key does not decode, though the session key signs nothing in it.
+ */
+function decodesAsPoint(enc: Uint8Array): boolean {
+  if (enc.length !== 32) return false;
+  let y = leUint(enc) & ((1n << 255n) - 1n);
+  if (y >= FIELD_P) y -= FIELD_P;
+  const y2 = (y * y) % FIELD_P;
+  const u = (y2 - 1n + FIELD_P) % FIELD_P;
+  const v = (CURVE_D * y2 + 1n) % FIELD_P;
+  const w = (u * modPow(v, FIELD_P - 2n, FIELD_P)) % FIELD_P;
+  return w === 0n || modPow(w, (FIELD_P - 1n) / 2n, FIELD_P) === 1n;
+}
+
+/**
+ * Whether a 32-byte point encoding decodes to a point of order 1, 2, 4 or
+ * 8, in any of its encodings: the sign bit is ignored (x = 0 with the sign
+ * bit set decodes, as in ed25519-dalek and OpenSSL) and y >= p is read as
+ * y - p (both decoders reduce it). corpus/16_ed25519_strict.json has all
+ * fourteen such encodings.
+ */
+function isSmallOrderEncoding(enc: Uint8Array): boolean {
+  if (enc.length !== 32) return false;
+  let y = leUint(enc) & ((1n << 255n) - 1n);
+  if (y >= FIELD_P) y -= FIELD_P;
+  return SMALL_ORDER_Y.includes(y);
+}
+
+/**
+ * Ed25519 verification of `message` under a hex public key and hex
+ * signature, under SPEC §6's strict profile: what ed25519-dalek's
+ * `verify_strict` decides, the check every signature in a dossier goes
+ * through in the reference verifier. False on any malformed input; never
+ * throws.
+ *
+ * `node:crypto` (OpenSSL) does the RFC 8032 cofactorless check: s < L, A
+ * decodes (y >= p and x = 0 with the sign bit included, as dalek decodes
+ * them), and [s]B - [k]A must encode to exactly R's bytes, so a
+ * non-canonical or undecodable R never verifies. What it does not do is
+ * refuse small-order points, which dalek does for A and for R; that check
+ * is made here first, along with s < L. Mixed-order points are accepted, as
+ * dalek accepts them. corpus/16_ed25519_strict.json pins every case.
+ */
 export function ed25519Verify(pubkeyHex: string, message: Uint8Array, signatureHex: string): boolean {
-  const key = ed25519Key(pubkeyHex);
-  if (key === null) return false;
+  if (typeof pubkeyHex !== "string" || typeof signatureHex !== "string") return false;
+  let pub: Uint8Array;
   let sig: Uint8Array;
   try {
+    pub = hexToBytes(pubkeyHex);
     sig = hexToBytes(signatureHex);
   } catch {
     return false;
   }
-  if (sig.length !== 64) return false;
+  if (pub.length !== 32 || sig.length !== 64) return false;
+  if (isSmallOrderEncoding(pub) || isSmallOrderEncoding(sig.subarray(0, 32))) return false;
+  if (leUint(sig.subarray(32)) >= GROUP_L) return false;
+  const key = ed25519Key(pubkeyHex);
+  if (key === null) return false;
   try {
     return cryptoVerify(null, message, key, sig);
   } catch {
@@ -467,37 +575,49 @@ export function merkleRoot(leafHashes: Uint8Array[]): Uint8Array {
   return nodeHash(merkleRoot(leafHashes.slice(0, k)), merkleRoot(leafHashes.slice(k)));
 }
 
-/** RFC 6962 §2.1.1 inclusion proof check. All hashes raw bytes. */
+/**
+ * RFC 6962 §2.1.1 inclusion proof check. All hashes raw bytes. Index and
+ * size are any u64 (a number or a bigint) and the arithmetic is exact
+ * (bigint), so a size above 2^53 is checked as the reference checks it.
+ * False for an index or size that is not a non-negative integer.
+ */
 export function verifyInclusion(
   leaf: Uint8Array,
-  leafIndex: number,
-  treeSize: number,
+  leafIndex: U64,
+  treeSize: U64,
   proof: Uint8Array[],
   root: Uint8Array,
 ): boolean {
-  if (leafIndex >= treeSize) return false;
-  let fn = leafIndex;
-  let sn = treeSize - 1;
+  let fn: bigint;
+  let sn: bigint;
+  try {
+    fn = BigInt(leafIndex);
+    sn = BigInt(treeSize);
+  } catch {
+    return false;
+  }
+  if (fn < 0n || fn >= sn) return false;
+  sn -= 1n;
   let r = leaf;
   for (const p of proof) {
-    if (sn === 0) return false;
-    if (fn % 2 === 1 || fn === sn) {
+    if (sn === 0n) return false;
+    if ((fn & 1n) === 1n || fn === sn) {
       r = nodeHash(p, r);
-      while (fn % 2 === 0 && fn !== 0) {
-        fn = Math.floor(fn / 2);
-        sn = Math.floor(sn / 2);
+      while ((fn & 1n) === 0n && fn !== 0n) {
+        fn >>= 1n;
+        sn >>= 1n;
       }
     } else {
       r = nodeHash(r, p);
     }
-    fn = Math.floor(fn / 2);
-    sn = Math.floor(sn / 2);
+    fn >>= 1n;
+    sn >>= 1n;
   }
-  return sn === 0 && Buffer.from(r).equals(Buffer.from(root));
+  return sn === 0n && Buffer.from(r).equals(Buffer.from(root));
 }
 
 /** SPEC §8: `SHA256(bucket_pad(payload) || salt || leaf_index)`. */
-export function payloadHash(payload: Uint8Array, salt: Uint8Array, leafIndex: number): Uint8Array {
+export function payloadHash(payload: Uint8Array, salt: Uint8Array, leafIndex: U64): Uint8Array {
   if (salt.length !== 32) throw new Error("salt must be 32 bytes");
   const bucket = (Math.floor(payload.length / 256) + 1) * 256;
   const padded = new Uint8Array(8 + bucket);
@@ -618,52 +738,61 @@ export function validateLeaves(leaves: Leaf[]): string | null {
 
 // ---------------------------------------------------- signed statements
 
-/** SPEC §6 checkpoint signature. */
-export function verifyCheckpoint(sth: SignedTreeHead): boolean {
-  if (sth.sig_alg !== "ed25519") return false;
-  let root: Uint8Array;
+/**
+ * Run `check`, answering false if it throws: the signature checks below
+ * never throw, whatever shape of value they are given.
+ */
+function never(check: () => boolean): boolean {
   try {
-    root = hexToBytes(sth.root_hash);
+    return check();
   } catch {
     return false;
   }
-  if (root.length !== 32) return false;
-  const msg = concat([
-    utf8.encode("witness-log-sth-v2"),
-    ...lp(utf8.encode(sth.sig_alg)),
-    ...lp(utf8.encode(sth.signer_pubkey)),
-    u64be(sth.tree_size),
-    root,
-    u64be(sth.timestamp_ms),
-  ]);
-  return ed25519Verify(sth.signer_pubkey, msg, sth.signature);
 }
 
-/** SPEC §5 key binding signature (signature only, not expiry). */
+/** SPEC §6 checkpoint signature. False for anything malformed; never throws. */
+export function verifyCheckpoint(sth: SignedTreeHead): boolean {
+  return never(() => {
+    if (sth.sig_alg !== "ed25519") return false;
+    const root = hexToBytes(sth.root_hash);
+    if (root.length !== 32) return false;
+    const msg = concat([
+      utf8.encode("witness-log-sth-v2"),
+      ...lp(utf8.encode(sth.sig_alg)),
+      ...lp(utf8.encode(sth.signer_pubkey)),
+      u64be(sth.tree_size),
+      root,
+      u64be(sth.timestamp_ms),
+    ]);
+    return ed25519Verify(sth.signer_pubkey, msg, sth.signature);
+  });
+}
+
+/**
+ * SPEC §5 key binding signature (signature only, not expiry). As in the
+ * reference, the session key must decode as a curve point. False for
+ * anything malformed; never throws.
+ */
 export function verifyKeyBinding(b: KeyBindingStatement): boolean {
-  let identity: Uint8Array;
-  let session: Uint8Array;
-  try {
-    identity = hexToBytes(b.identity_pubkey);
-    session = hexToBytes(b.session_pubkey);
-  } catch {
-    return false;
-  }
-  if (identity.length !== 32 || session.length !== 32) return false;
-  const parts = [
-    utf8.encode("witness-log-key-bind-v1"),
-    identity,
-    session,
-    u64be(b.session_number),
-    u64be(b.timestamp_ms),
-  ];
-  if (b.not_after_ms !== undefined && b.not_after_ms !== null) parts.push(new Uint8Array([1]), u64be(b.not_after_ms));
-  else parts.push(new Uint8Array([0]));
-  return ed25519Verify(b.identity_pubkey, concat(parts), b.signature);
+  return never(() => {
+    const identity = hexToBytes(b.identity_pubkey);
+    const session = hexToBytes(b.session_pubkey);
+    if (identity.length !== 32 || session.length !== 32 || !decodesAsPoint(session)) return false;
+    const parts = [
+      utf8.encode("witness-log-key-bind-v1"),
+      identity,
+      session,
+      u64be(b.session_number),
+      u64be(b.timestamp_ms),
+    ];
+    if (b.not_after_ms !== undefined && b.not_after_ms !== null) parts.push(new Uint8Array([1]), u64be(b.not_after_ms));
+    else parts.push(new Uint8Array([0]));
+    return ed25519Verify(b.identity_pubkey, concat(parts), b.signature);
+  });
 }
 
 /** SPEC §5 revocation message: v1 without an index, v2 (RFC-0005) with one. */
-export function revocationMessage(identity: Uint8Array, asOfMs: number, asOfIndex: number | null | undefined, reason: string): Uint8Array {
+export function revocationMessage(identity: Uint8Array, asOfMs: U64, asOfIndex: U64 | null | undefined, reason: string): Uint8Array {
   if (asOfIndex === undefined || asOfIndex === null) {
     return concat([utf8.encode("witness-log-revoke-v1"), identity, u64be(asOfMs), utf8.encode(reason)]);
   }
@@ -679,14 +808,11 @@ export function revocationMessage(identity: Uint8Array, asOfMs: number, asOfInde
 
 /** SPEC §5 revocation signature. */
 export function verifyRevocation(r: RevocationStatement): boolean {
-  let identity: Uint8Array;
-  try {
-    identity = hexToBytes(r.identity_pubkey);
-  } catch {
-    return false;
-  }
-  if (identity.length !== 32) return false;
-  return ed25519Verify(r.identity_pubkey, revocationMessage(identity, r.as_of_ms, r.as_of_index, r.reason), r.signature);
+  return never(() => {
+    const identity = hexToBytes(r.identity_pubkey);
+    if (identity.length !== 32) return false;
+    return ed25519Verify(r.identity_pubkey, revocationMessage(identity, r.as_of_ms, r.as_of_index, r.reason), r.signature);
+  });
 }
 
 /**
@@ -696,15 +822,16 @@ export function verifyRevocation(r: RevocationStatement): boolean {
 export function revocationCutOff(
   revocations: RevocationStatement[],
   leaves: Pick<Leaf, "index" | "timestamp_ms">[],
-  checkpointTimestampMs: number,
-  checkpointTreeSize: number,
+  checkpointTimestampMs: U64,
+  checkpointTreeSize: U64,
 ): string | null {
-  let asOf: number | null = null;
-  let atIndex: number | null = null;
+  // Comparisons between numbers and bigints are exact; Math.min is not for bigints.
+  let asOf: U64 | null = null;
+  let atIndex: U64 | null = null;
   for (const r of revocations) {
-    asOf = asOf === null ? r.as_of_ms : Math.min(asOf, r.as_of_ms);
-    if (r.as_of_index !== undefined && r.as_of_index !== null) {
-      atIndex = atIndex === null ? r.as_of_index : Math.min(atIndex, r.as_of_index);
+    if (asOf === null || r.as_of_ms < asOf) asOf = r.as_of_ms;
+    if (r.as_of_index !== undefined && r.as_of_index !== null && (atIndex === null || r.as_of_index < atIndex)) {
+      atIndex = r.as_of_index;
     }
   }
   if (asOf !== null) {
@@ -720,31 +847,31 @@ export function revocationCutOff(
 
 /** SPEC §7 native receipt or §9.3 C2SP cosignature receipt, against the dossier's checkpoint. */
 export function verifyReceipt(r: WitnessReceipt, against: SignedTreeHead): boolean {
-  if (r.tree_size !== against.tree_size || r.root_hash !== against.root_hash) return false;
-  if (r.c2sp_origin !== undefined && r.c2sp_origin !== null) {
-    if (ed25519Key(against.signer_pubkey) === null) return false;
-    if (r.c2sp_origin !== canonicalOrigin(against.signer_pubkey)) return false;
-    if (r.witnessed_at_ms % 1000 !== 0) return false;
-    let root: Uint8Array;
-    try {
-      root = hexToBytes(r.root_hash);
-    } catch {
-      return false;
+  return never(() => {
+    // Sizes are canonical U64s (a bigint only above 2^53), so === is exact.
+    // Root hex is compared as written, case included, as the reference does.
+    if (r.tree_size !== against.tree_size || r.root_hash !== against.root_hash) return false;
+    if (r.c2sp_origin !== undefined && r.c2sp_origin !== null) {
+      if (ed25519Key(against.signer_pubkey) === null) return false;
+      if (r.c2sp_origin !== canonicalOrigin(against.signer_pubkey)) return false;
+      const at = BigInt(r.witnessed_at_ms);
+      if (at % 1000n !== 0n) return false;
+      const root = hexToBytes(r.root_hash);
+      if (root.length !== 32) return false;
+      const body = `${r.c2sp_origin}\n${r.tree_size}\n${Buffer.from(root).toString("base64")}\n`;
+      const msg = `cosignature/v1\ntime ${at / 1000n}\n${body}`;
+      return ed25519Verify(r.witness_pubkey, utf8.encode(msg), r.signature);
     }
-    if (root.length !== 32) return false;
-    const body = `${r.c2sp_origin}\n${r.tree_size}\n${Buffer.from(root).toString("base64")}\n`;
-    const msg = `cosignature/v1\ntime ${r.witnessed_at_ms / 1000}\n${body}`;
-    return ed25519Verify(r.witness_pubkey, utf8.encode(msg), r.signature);
-  }
-  const msg = concat([
-    utf8.encode("witness-log-witness-receipt-v2"),
-    ...lp(utf8.encode(r.witness_pubkey)),
-    ...lp(utf8.encode(against.signer_pubkey)),
-    u64be(r.tree_size),
-    ...lp(utf8.encode(r.root_hash)),
-    u64be(r.witnessed_at_ms),
-  ]);
-  return ed25519Verify(r.witness_pubkey, msg, r.signature);
+    const msg = concat([
+      utf8.encode("witness-log-witness-receipt-v2"),
+      ...lp(utf8.encode(r.witness_pubkey)),
+      ...lp(utf8.encode(against.signer_pubkey)),
+      u64be(r.tree_size),
+      ...lp(utf8.encode(r.root_hash)),
+      u64be(r.witnessed_at_ms),
+    ]);
+    return ed25519Verify(r.witness_pubkey, msg, r.signature);
+  });
 }
 
 // -------------------------------------------- signed notes (c2sp.org)
@@ -988,7 +1115,7 @@ export function evaluateQuorum(
 /** One witness key's verified statement on one path. */
 interface Attestation {
   key: string;
-  atMs: number;
+  atMs: U64;
   fleet: boolean;
 }
 
@@ -1024,7 +1151,7 @@ function scoreAttestations(
   const directIndep = new Set<string>();
   const fleetIndep = new Set<string>();
   let projectOperated = 0;
-  let newest: number | null = null;
+  let newest: U64 | null = null;
   for (const a of atts) {
     const key = a.key;
     const entry = directory.witnesses.find((w) => w.pubkey.toLowerCase() === key);
@@ -1042,7 +1169,7 @@ function scoreAttestations(
     if (indepOp !== null) independent.add(indepOp);
     providers.add(computeProviderKey(entry));
     if (entry.is_project_operated) projectOperated += 1;
-    newest = newest === null ? a.atMs : Math.max(newest, a.atMs);
+    if (newest === null || a.atMs > newest) newest = a.atMs;
   }
   const valid = counted.size;
   const total = Math.max(directory.witnesses.length, 1);
@@ -1084,22 +1211,6 @@ const MAX_FLEET_NOTE_BYTES = 64 * 1024;
 const MAX_FLEET_NOTE_SIGNATURES = 64;
 const MAX_INCLUSION_PROOF_HASHES = 64;
 const SIG_TYPE_COSIGNATURE_V1 = 0x04;
-
-/** The field as the reference's serde reads it: all five fields with the right types; anything else is malformed. */
-function parseFleetAnchor(raw: unknown): FleetAnchor | string {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return "fleet_anchor: expected an object";
-  const a = raw as Record<string, unknown>;
-  if (typeof a.origin !== "string") return "fleet_anchor: origin must be a string";
-  if (typeof a.entry_index !== "number" || !Number.isInteger(a.entry_index) || a.entry_index < 0) {
-    return "fleet_anchor: entry_index must be a non-negative integer";
-  }
-  if (typeof a.entry_bytes_b64 !== "string") return "fleet_anchor: entry_bytes_b64 must be a string";
-  if (!Array.isArray(a.inclusion_proof) || a.inclusion_proof.some((h) => typeof h !== "string")) {
-    return "fleet_anchor: inclusion_proof must be an array of strings";
-  }
-  if (typeof a.fleet_checkpoint_note !== "string") return "fleet_anchor: fleet_checkpoint_note must be a string";
-  return a as unknown as FleetAnchor;
-}
 
 /** A C2SP origin (no space, '+' or control character, at most 255 bytes) that is not a witness-log agent origin. */
 export function validFleetOrigin(origin: string): boolean {
@@ -1155,7 +1266,7 @@ export function verifyFleetAnchor(
   anchor: FleetAnchor,
   sth: SignedTreeHead,
   directory: WitnessDirectory | undefined,
-): { fleetTreeSize: number; cosigners: Array<{ witness_pubkey: string; witnessed_at_ms: number }> } | string {
+): { fleetTreeSize: U64; cosigners: Array<{ witness_pubkey: string; witnessed_at_ms: U64 }> } | string {
   const r = verifyFleetAnchorInternal(anchor, sth, directory);
   if (typeof r === "string") return r;
   return {
@@ -1168,7 +1279,7 @@ function verifyFleetAnchorInternal(
   anchor: FleetAnchor,
   sth: SignedTreeHead,
   directory: WitnessDirectory | undefined,
-): { size: number; atts: Attestation[] } | string {
+): { size: U64; atts: Attestation[] } | string {
   if (!validFleetOrigin(anchor.origin)) {
     return `fleet origin ${JSON.stringify(anchor.origin)} is not a fleet log origin (a C2SP origin that is not witness-log/...)`;
   }
@@ -1200,9 +1311,8 @@ function verifyFleetAnchorInternal(
   if (BigInt(anchor.entry_index) >= fleet.size) {
     return `entry_index ${anchor.entry_index} is not inside the fleet checkpoint (size ${fleet.size})`;
   }
-  if (fleet.size > BigInt(Number.MAX_SAFE_INTEGER)) return "fleet checkpoint size is beyond this verifier's range";
-  const size = Number(fleet.size);
-  if (!verifyInclusion(leafHash(entry), anchor.entry_index, size, anchor.inclusion_proof.map(hexToBytes), fleet.root)) {
+  const size = canonicalU64(fleet.size);
+  if (!verifyInclusion(leafHash(entry), anchor.entry_index, fleet.size, anchor.inclusion_proof.map(hexToBytes), fleet.root)) {
     return `the inclusion proof for entry ${anchor.entry_index} does not verify under the fleet checkpoint's root`;
   }
 
@@ -1216,33 +1326,36 @@ function verifyFleetAnchorInternal(
       const msg = `cosignature/v1\ntime ${ts}\n${note.text}`;
       if (ed25519Verify(w.pubkey, utf8.encode(msg), bytesToHex(sig.signature.slice(8)))) {
         const ms = ts * 1000n > U64_MAX ? U64_MAX : ts * 1000n;
-        atts.push({ key: w.pubkey.toLowerCase(), atMs: Number(ms), fleet: true });
+        atts.push({ key: w.pubkey.toLowerCase(), atMs: canonicalU64(ms), fleet: true });
       }
     }
   }
   return { size, atts };
 }
 
-/** The report on `d.fleet_anchor`, and its cosigners when it fully verifies (null otherwise). */
+/**
+ * The report on the dossier's fleet anchor (as `readDossier` read it), and
+ * its cosigners when it fully verifies (null otherwise).
+ */
 function evaluateFleetAnchor(
-  d: Dossier,
+  field: FleetAnchorField | undefined,
   checkpoint: SignedTreeHead,
   trusted: WitnessDirectory | undefined,
   opts: VerifyDossierOptions,
 ): { report: FleetAnchorReport | undefined; atts: Attestation[] | null } {
-  if (d.fleet_anchor === undefined || d.fleet_anchor === null) return { report: undefined, atts: null };
-  const parsed = parseFleetAnchor(d.fleet_anchor);
+  if (field === undefined) return { report: undefined, atts: null };
+  const parsed = "parsed" in field ? (field.parsed as FleetAnchor) : null;
   const report: FleetAnchorReport = {
     status: "ignored",
-    origin: typeof parsed === "string" ? null : parsed.origin,
-    entry_index: typeof parsed === "string" ? null : parsed.entry_index,
+    origin: parsed === null ? null : parsed.origin,
+    entry_index: parsed === null ? null : parsed.entry_index,
     fleet_tree_size: null,
     failures: [],
   };
   if (!opts.acceptFleetAnchor) return { report, atts: null };
   report.status = "failed";
-  if (typeof parsed === "string") {
-    report.failures.push(`fleet_anchor is not well-formed: ${parsed}`);
+  if (parsed === null) {
+    report.failures.push(`fleet_anchor is not well-formed: ${"malformed" in field ? field.malformed : ""}`);
     return { report, atts: null };
   }
   if (normalizeLabel(opts.subjectOrg ?? "") === "") {
@@ -1268,8 +1381,8 @@ function bindingsAndRevocationsValid(
   identity: string,
   bindings: KeyBindingStatement[],
   revocations: RevocationStatement[],
-  checkpointTimestampMs: number,
-  checkpointTreeSize: number,
+  checkpointTimestampMs: U64,
+  checkpointTreeSize: U64,
 ): string | null {
   if (bindings.length === 0 && revocations.length === 0) return null;
   const id = identity.toLowerCase();
@@ -1293,11 +1406,29 @@ function bindingsAndRevocationsValid(
   return revocationCutOff(revocations, leaves, checkpointTimestampMs, checkpointTreeSize);
 }
 
+/** The caller's directory, entries read as the reference reads `--directory`. Throws a TypeError. */
 function asDirectory(d: WitnessDirectory | WitnessEntry[] | undefined): WitnessDirectory | undefined {
   if (d === undefined) return undefined;
-  if (Array.isArray(d)) return { witnesses: d };
-  if (typeof d === "object" && d !== null && Array.isArray(d.witnesses)) return d;
-  throw new TypeError('directory must be {"witnesses": [...]} or an array of witness entries');
+  let entries: unknown;
+  if (Array.isArray(d)) entries = d;
+  else if (typeof d === "object" && d !== null && Array.isArray(d.witnesses)) entries = d.witnesses;
+  else throw new TypeError('directory must be {"witnesses": [...]} or an array of witness entries');
+  try {
+    return { witnesses: (entries as unknown[]).map((e, i) => readWitnessEntry(e, `directory.witnesses[${i}]`) as unknown as WitnessEntry) };
+  } catch (e) {
+    throw new TypeError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** Out-of-band revocations, read as the reference reads `--revocation`. Throws a TypeError. */
+function asRevocations(r: RevocationStatement[] | undefined): RevocationStatement[] {
+  if (r === undefined) return [];
+  if (!Array.isArray(r)) throw new TypeError("revocations must be an array of revocation statements");
+  try {
+    return r.map((x, i) => readRevocation(x, `revocations[${i}]`) as unknown as RevocationStatement);
+  } catch (e) {
+    throw new TypeError(e instanceof Error ? e.message : String(e));
+  }
 }
 
 const VERDICT_NAME: Record<DossierReport["verdict"], Verdict> = {
@@ -1311,13 +1442,77 @@ const VERDICT_NAME: Record<DossierReport["verdict"], Verdict> = {
 /** Exit status for WITNESSED by fewer than a strict majority of the directory (RFC-0002). */
 export const EXIT_SPLIT_VIEW_UNSAFE = 11;
 
+/** The checked options `verifyDossier` passes on. */
+interface Inputs {
+  opts: VerifyDossierOptions;
+  threshold: number;
+  trusted: WitnessDirectory | undefined;
+  knownHeads: KnownHead[];
+  evidence: EquivocationProof[];
+  revocations: RevocationStatement[];
+}
+
+/** INVALID for an input that could not be verified at all, with the reason. */
+function unverifiable(reason: string, inputs: Inputs): DossierVerification {
+  const failures = [reason];
+  const report: DossierReport = {
+    checkpoint_signature_valid: false,
+    identity_bound: false,
+    leaves_structurally_valid: false,
+    bindings_valid: false,
+    bindings_asserted: false,
+    leaf_count: 0,
+    claimed_tree_size: 0,
+    merkle_continuity_valid: false,
+    externally_anchored: inputs.trusted !== undefined,
+    identity_pinned: inputs.opts.identity !== undefined,
+    internally_consistent: false,
+    quorum: null,
+    split_view_unsafe: false,
+    failures,
+    contradictions: [],
+    known_heads_unchecked: [],
+    verdict: "invalid",
+  };
+  if (inputs.opts.acceptFleetAnchor) {
+    report.witnessed_via = null;
+    report.witness_paths = {
+      direct: { witnesses: 0, independent_operators: 0 },
+      fleet: { witnesses: 0, independent_operators: 0 },
+      on_both: 0,
+    };
+  }
+  return {
+    verdict: "INVALID",
+    exitCode: EXIT_CODES.INVALID,
+    ok: false,
+    splitViewUnsafe: false,
+    identityPubkey: "",
+    identityPinned: inputs.opts.identity !== undefined,
+    directoryPinned: inputs.trusted !== undefined,
+    internallyConsistent: false,
+    failures,
+    contradictions: [],
+    report,
+  };
+}
+
 /**
  * Verify a dossier offline (SPEC §9.1–§9.2). Synchronous; never throws on
- * a hostile dossier (a malformed one is INVALID), only on bad options.
+ * a hostile dossier, only on bad options.
+ *
+ * The dossier is read as the reference reads it (see `readDossier` in
+ * dossier-json.ts and corpus/17_dossier_parsing.json). A value that is not
+ * a dossier — text that is not JSON, a wrong type, a fraction where a u64
+ * belongs, a duplicate field — is INVALID, exit 40, with the reason in
+ * `failures` starting "not a dossier:" (the CLI exits 2 for it; Go's
+ * `VerifyDossier` returns Invalid with the error). Pass the JSON text when
+ * you have it: integers are then read exactly, as the reference reads them.
+ * An already-parsed object holding a number above 2^53 - 1 is INVALID,
+ * because `JSON.parse` may have rounded it (a bigint is read exactly).
  */
 export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOptions = {}): DossierVerification {
-  const d: Dossier = typeof dossier === "string" ? (JSON.parse(dossier) as Dossier) : dossier;
-  if (opts.identity !== undefined && !/^[0-9a-fA-F]{64}$/.test(opts.identity)) {
+  if (opts.identity !== undefined && (typeof opts.identity !== "string" || !/^[0-9a-fA-F]{64}$/.test(opts.identity))) {
     throw new TypeError("identity must be a 32-byte Ed25519 public key as 64 hex characters");
   }
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
@@ -1325,20 +1520,44 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   if (opts.minWitnesses !== undefined && (!Number.isInteger(opts.minWitnesses) || opts.minWitnesses < 1)) {
     throw new RangeError("minWitnesses must be at least 1");
   }
-  const trusted = asDirectory(opts.directory);
-  const knownHeads = (opts.knownHeads ?? []).map(parseKnownHead);
+  if (opts.knownHeads !== undefined && !Array.isArray(opts.knownHeads)) throw new TypeError("knownHeads must be an array");
   if (opts.evidence !== undefined && !Array.isArray(opts.evidence)) throw new TypeError("evidence must be an array of evidence items");
-  const evidence = (opts.evidence ?? []).map((item) => parseEvidence(item));
+  const inputs: Inputs = {
+    opts,
+    threshold,
+    trusted: asDirectory(opts.directory),
+    knownHeads: (opts.knownHeads ?? []).map(parseKnownHead),
+    evidence: (opts.evidence ?? []).map((item) => parseEvidence(item)),
+    revocations: asRevocations(opts.revocations),
+  };
 
+  let read: ReturnType<typeof readDossier>;
+  try {
+    read = readDossier(typeof dossier === "string" ? parseJsonExact(dossier) : dossier);
+  } catch (e) {
+    return unverifiable(`not a dossier: ${e instanceof Error ? e.message : String(e)}`, inputs);
+  }
+  try {
+    return verifyRead(read.dossier as unknown as Dossier, read.fleetAnchor, inputs);
+  } catch (e) {
+    // Not reachable for a dossier readDossier accepted; INVALID rather
+    // than an exception if it ever is.
+    return unverifiable(`could not be verified: ${e instanceof Error ? e.message : String(e)}`, inputs);
+  }
+}
+
+/** SPEC §9.1–§9.2 on a dossier `readDossier` accepted, so every field has its type. */
+function verifyRead(d: Dossier, fleetAnchor: FleetAnchorField | undefined, inputs: Inputs): DossierVerification {
+  const { opts, threshold, trusted, knownHeads, evidence } = inputs;
   const failures: string[] = [];
-  const checkpoint = d.checkpoint ?? ({} as SignedTreeHead);
-  const leaves = Array.isArray(d.leaves) ? d.leaves : [];
-  const signer = String(checkpoint.signer_pubkey ?? "");
+  const checkpoint = d.checkpoint;
+  const leaves = d.leaves;
+  const signer = checkpoint.signer_pubkey;
 
   const checkpointSignatureValid = verifyCheckpoint(checkpoint);
   if (!checkpointSignatureValid) failures.push("checkpoint signature does not verify");
 
-  const selfConsistent = String(d.identity_pubkey ?? "").toLowerCase() === signer.toLowerCase();
+  const selfConsistent = d.identity_pubkey.toLowerCase() === signer.toLowerCase();
   const pinOk = opts.identity === undefined || opts.identity.toLowerCase() === signer.toLowerCase();
   const identityBound = selfConsistent && pinOk;
   if (!selfConsistent) failures.push("identity_pubkey does not match the key that signed the checkpoint");
@@ -1348,32 +1567,29 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   if (leafError !== null) failures.push(`leaf structure: ${leafError}`);
 
   const ownRevocations = d.revocations ?? [];
-  const idLower = String(d.identity_pubkey ?? "").toLowerCase();
+  const idLower = d.identity_pubkey.toLowerCase();
   const allRevocations = ownRevocations.concat(
-    (opts.revocations ?? []).filter(
+    inputs.revocations.filter(
       (r) => r.identity_pubkey.toLowerCase() === idLower && !ownRevocations.some((o) => o.signature === r.signature),
     ),
   );
   const bindingError = bindingsAndRevocationsValid(
     leaves,
-    String(d.identity_pubkey ?? ""),
+    d.identity_pubkey,
     d.key_bindings ?? [],
     allRevocations,
-    Number(checkpoint.timestamp_ms),
-    Number(checkpoint.tree_size),
+    checkpoint.timestamp_ms,
+    checkpoint.tree_size,
   );
   if (bindingError !== null) failures.push(`key bindings or revocations: ${bindingError}`);
   const bindingsAsserted = (d.key_bindings ?? []).length > 0 || allRevocations.length > 0;
 
-  let leafHashes: Uint8Array[] | null = null;
-  try {
-    leafHashes = leaves.map((l) => leafHash(leafCanonicalBytes(l)));
-  } catch {
-    leafHashes = null;
-  }
-  const rebuilt = leafHashes === null ? "" : bytesToHex(merkleRoot(leafHashes));
+  const leafHashes = leaves.map((l) => leafHash(leafCanonicalBytes(l)));
+  // Sizes: a bigint tree_size is above 2^53, never equal to a leaf count.
   const sizeMatches = leaves.length === checkpoint.tree_size;
-  const merkleOk = sizeMatches && rebuilt === checkpoint.root_hash;
+  // As the reference: the lowercase hex of the rebuilt root against
+  // root_hash as written, so an uppercase root_hash does not match.
+  const merkleOk = sizeMatches && bytesToHex(merkleRoot(leafHashes)) === checkpoint.root_hash;
   if (!sizeMatches) failures.push(`${leaves.length} leaves but the checkpoint claims tree_size ${checkpoint.tree_size}`);
   else if (!merkleOk) failures.push("the leaves do not reproduce the signed root");
 
@@ -1381,7 +1597,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
   // for a valid file: an invalid one is INVALID whatever else is true.
   const contradictions: string[] = [];
   const knownHeadsUnchecked: string[] = [];
-  if (failures.length === 0 && leafHashes !== null) {
+  if (failures.length === 0) {
     for (const kh of knownHeads) {
       if (kh.tree_size > leafHashes.length) {
         knownHeadsUnchecked.push(`${kh.tree_size}:${kh.root_hash}`);
@@ -1394,7 +1610,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
         );
       }
     }
-    const origin = ed25519Key(String(d.identity_pubkey ?? "")) === null ? null : canonicalOrigin(String(d.identity_pubkey));
+    const origin = ed25519Key(d.identity_pubkey) === null ? null : canonicalOrigin(d.identity_pubkey);
     for (const proof of evidence) {
       if (origin !== null && proof.origin === origin && verifyEquivocationProof(proof)) {
         contradictions.push(`witness evidence: this identity signed two different roots for one tree size (${proof.origin})`);
@@ -1404,9 +1620,9 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
 
   const externallyAnchored = trusted !== undefined;
   let quorum: QuorumResult | null = null;
-  const receipts = Array.isArray(d.witness_receipts) ? d.witness_receipts : [];
+  const receipts = d.witness_receipts ?? [];
   // RFC-0001 (experimental): read only with the opt-in.
-  const fleet = evaluateFleetAnchor(d, checkpoint, trusted, opts);
+  const fleet = evaluateFleetAnchor(fleetAnchor, checkpoint, trusted, opts);
   let paths: WitnessPaths = {
     direct: { witnesses: 0, independent_operators: 0 },
     fleet: { witnesses: 0, independent_operators: 0 },
@@ -1445,7 +1661,7 @@ export function verifyDossier(dossier: Dossier | string, opts: VerifyDossierOpti
     bindings_valid: bindingError === null,
     bindings_asserted: bindingsAsserted,
     leaf_count: leaves.length,
-    claimed_tree_size: Number(checkpoint.tree_size ?? 0),
+    claimed_tree_size: checkpoint.tree_size,
     merkle_continuity_valid: merkleOk,
     externally_anchored: externallyAnchored,
     identity_pinned: opts.identity !== undefined,

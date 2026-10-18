@@ -542,3 +542,81 @@ fn corpus_15_evidence_and_args() {
         );
     }
 }
+
+/// Corpus 16 and 17 cases through the wasm entry point: a dossier the
+/// reference cannot read is an error (the page shows it), anything else
+/// the corpus verdict, exit code and report fields.
+fn run_verdict_case(v: &Value, c: &Value, dossier: &str) {
+    let name = c["name"].as_str().unwrap();
+    let opts = VerifyOptions {
+        expected_identity_pubkey: c["expected_identity"].as_str().map(str::to_string),
+        threshold: c["threshold"].as_f64(),
+        min_receipts: c["min_witnesses"].as_u64().map(|n| n as usize),
+        allow_sub_majority: c["allow_sub_majority"].as_bool().unwrap(),
+        known_heads: serde_json::from_value(c["known_heads"].clone()).unwrap(),
+        evidence: c["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+            .collect(),
+        subject_org: c["subject_org"].as_str().map(str::to_string),
+        ..Default::default()
+    };
+    let dir = c["directory"]
+        .as_str()
+        .map(|d| v["directories"][d].to_string());
+    let e = &c["expect"];
+    let out = match verify_dossier_value(dossier, dir.as_deref(), &opts) {
+        Ok(out) => out,
+        Err(err) => {
+            assert_eq!(e["not_a_dossier"], json!(true), "{name}: refused: {err}");
+            return;
+        }
+    };
+    assert_ne!(e["not_a_dossier"], json!(true), "{name}: read");
+    let r = &out["report"];
+    assert_eq!(r["verdict"], e["verdict"], "{name}");
+    assert_eq!(out["exit_code"], e["exit_code"], "{name}");
+    assert_eq!(r["split_view_unsafe"], e["split_view_unsafe"], "{name}");
+    assert_eq!(
+        r["internally_consistent"], e["internally_consistent"],
+        "{name}"
+    );
+    assert_eq!(
+        json!(!r["failures"].as_array().unwrap().is_empty()),
+        e["has_failures"],
+        "{name}"
+    );
+    assert_eq!(
+        json!(r["contradictions"].as_array().unwrap().len()),
+        e["contradictions"],
+        "{name}"
+    );
+    assert_eq!(r["quorum"]["valid_receipts"], e["valid_receipts"], "{name}");
+    assert_eq!(
+        r["quorum"]["distinct_independent_operators"], e["independent_operators"],
+        "{name}"
+    );
+}
+
+#[test]
+fn corpus_16_ed25519_strict() {
+    let v = read_json("corpus/16_ed25519_strict.json");
+    let cases = v["cases"].as_array().unwrap();
+    assert!(cases.len() >= 10);
+    for c in cases {
+        let dossier = v["dossiers"][c["dossier"].as_str().unwrap()].to_string();
+        run_verdict_case(&v, c, &dossier);
+    }
+}
+
+#[test]
+fn corpus_17_dossier_parsing() {
+    let v = read_json("corpus/17_dossier_parsing.json");
+    let cases = v["cases"].as_array().unwrap();
+    assert!(cases.len() >= 100);
+    for c in cases {
+        run_verdict_case(&v, c, c["dossier_json"].as_str().unwrap());
+    }
+}

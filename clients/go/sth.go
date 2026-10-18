@@ -100,7 +100,9 @@ func (b *KeyBinding) Verify() error {
 		return ErrMalformed
 	}
 	sessPk, ok := hexN(b.SessionPubkey, 32)
-	if !ok {
+	if !ok || !decodesAsPoint(sessPk) {
+		// The reference decodes the session key as a point and refuses the
+		// binding when it does not decode.
 		return ErrMalformed
 	}
 	sig, ok := hexN(b.Signature, 64)
