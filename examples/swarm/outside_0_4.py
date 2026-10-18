@@ -76,7 +76,8 @@ def cosig_vkey(name: str, pubkey_hex: str) -> str:
     import base64
     pub = bytes.fromhex(pubkey_hex)
     kid = hashlib.sha256(name.encode() + b"\n\x04" + pub).digest()[:4]
-    return f"{name}+{kid.hex()}+{base64.b64encode(b'\x04' + pub).decode()}"
+    key = base64.b64encode(b"\x04" + pub).decode()
+    return f"{name}+{kid.hex()}+{key}"
 
 
 def ident_of(dossier_json: str) -> str:
@@ -982,7 +983,7 @@ def report(out: str, cfg: dict, elapsed: float):
             verdicts[v] += 1
     total_ops = sum(op_total.values())
     lines = [f"# Outside swarm: {n:,} agents, {len(PERSONAS)} personas, {cfg['witness_count']} witnesses (0.4.0)", "",
-             f"- target: `{cfg['cli']}` ({cfg['cli_version']}), witness_log {cfg['py_version']}, {cfg['host']}"
+             f"- target: `{base.display_path(cfg['cli'])}` ({cfg['cli_version']}), witness_log {cfg['py_version']}, {cfg['host']}"
              + (f"; **fault injected: {cfg['inject_fault']}**" if cfg.get("inject_fault") else ""),
              f"- {n:,} agents in {elapsed:.0f} s ({n / max(elapsed, 1):.1f} agents/s), {cfg['processes']} x {cfg['threads']} in flight, {total_ops:,} operations, {sum(verdicts.values()):,} verdicts",
              f"- agents finished cleanly: {n - crashed:,}/{n:,}; operations failed: {sum(op_fail.values()):,}/{total_ops:,}",

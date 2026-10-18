@@ -44,6 +44,21 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+
+def display_path(path: str) -> str:
+    """How a report names a file: relative to the repository when it is in
+    it, else its basename. Reports get committed; an absolute path names
+    the machine and the account that ran them."""
+    if os.sep not in path and (os.altsep is None or os.altsep not in path):
+        return path  # a command on PATH
+    p = os.path.abspath(path)
+    try:
+        if os.path.commonpath([p, REPO]) == REPO:
+            return os.path.relpath(p, REPO)
+    except ValueError:  # another drive on Windows
+        pass
+    return os.path.basename(p)
 sys.path.insert(0, os.path.join(REPO, "examples", "live-network"))
 
 # ----------------------------------------------------------------- target
@@ -1852,8 +1867,10 @@ def main() -> int:
     total = time.time() - t0
     passed = sum(r["passed"] for r in results)
     env = {
-        "cli": ARGS.cli, "cli_version": cli_version, "python_package_version": getattr(wl, "__version__", None),
-        "release": ARGS.release, "python": sys.version.split()[0], "platform": platform.platform(),
+        # Reports get committed: the CLI relative to the repository, and the
+        # platform without the kernel release platform.platform() carries.
+        "cli": display_path(ARGS.cli), "cli_version": cli_version, "python_package_version": getattr(wl, "__version__", None),
+        "release": ARGS.release, "python": sys.version.split()[0], "platform": f"{platform.system()} {platform.machine()}",
         "witnesses": len(WS) + len(AGENT_WS), "agents": ARGS.agents, "seconds": round(total, 1),
         "when": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
