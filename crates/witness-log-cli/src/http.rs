@@ -38,6 +38,58 @@ pub struct Request {
     pub path: String,
     pub body: Vec<u8>,
     pub peer: SocketAddr,
+    /// The `Host` header, if sent.
+    pub host: Option<String>,
+    /// The `Origin` header, if sent. Browsers send it on every cross-origin
+    /// request and every POST; command-line and library clients do not.
+    pub origin: Option<String>,
+}
+
+/// For a server that only loopback clients may use: refuse what a web
+/// page in the user's browser could send. Two attacks get past a
+/// loopback-peer check: a page's `fetch("http://127.0.0.1:<port>/...",
+/// {mode: "no-cors", method: "POST"})` (a CORS "simple request", sent with
+/// no preflight; the peer is loopback because the browser is local), and
+/// DNS rebinding (a page whose host name resolves to 127.0.0.1 reads the
+/// responses). The first carries an `Origin` header, the second a `Host`
+/// that is not a loopback name. Non-browser clients send neither problem,
+/// so this costs them nothing. (Found by the 0.6.0 security sweep, F1.)
+pub fn refuse_browser_request(req: &Request, port: u16) -> Option<Response> {
+    if req.origin.is_some() {
+        return Some(Response::text(
+            403,
+            "requests from web pages are refused (an Origin header was sent); \
+             this server is for local programs only\n",
+        ));
+    }
+    let loopback_host = |h: &str| {
+        let h = h.trim().to_ascii_lowercase();
+        let name = match h.strip_prefix('[') {
+            Some(rest) => match rest.split_once(']') {
+                Some((ip, tail)) if tail.is_empty() || tail == format!(":{port}") => ip.to_string(),
+                _ => return false,
+            },
+            None => match h.rsplit_once(':') {
+                Some((n, p)) if p == port.to_string() => n.to_string(),
+                Some(_) => return false,
+                None => h.clone(),
+            },
+        };
+        name == "localhost"
+            || name
+                .parse::<IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false)
+    };
+    match &req.host {
+        Some(h) if loopback_host(h) => None,
+        // HTTP/1.0 clients may omit Host; nothing to rebind.
+        None => None,
+        Some(_) => Some(Response::text(
+            403,
+            "Host is not a loopback name; refused (this server is for local programs only)\n",
+        )),
+    }
 }
 
 pub struct Response {
@@ -180,6 +232,8 @@ pub fn read_request(stream: &mut TcpStream, peer: SocketAddr) -> Result<Request,
     }
 
     let mut content_length: Option<usize> = None;
+    let mut host: Option<String> = None;
+    let mut origin: Option<String> = None;
     for line in lines {
         // Only CRLF ends a line. A bare CR or LF inside a "line" is the
         // classic way to hide a header from one parser and show it to
@@ -194,6 +248,14 @@ pub fn read_request(stream: &mut TcpStream, peer: SocketAddr) -> Result<Request,
             return Err(Response::text(400, "malformed header name\n"));
         }
         let value = value.trim();
+        if name.eq_ignore_ascii_case("host") {
+            if host.is_some() {
+                return Err(Response::text(400, "duplicate Host\n"));
+            }
+            host = Some(value.to_string());
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = Some(value.to_string());
+        }
         if name.eq_ignore_ascii_case("transfer-encoding") {
             // Chunked request bodies are a classic request-smuggling
             // vector; the protocol never needs them.
@@ -249,6 +311,8 @@ pub fn read_request(stream: &mut TcpStream, peer: SocketAddr) -> Result<Request,
         path,
         body,
         peer,
+        host,
+        origin,
     })
 }
 
@@ -686,6 +750,50 @@ mod tests {
         assert_eq!(client_key(v4), v4);
         let mapped: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
         assert_eq!(client_key(mapped), v4);
+    }
+
+    #[test]
+    fn browser_requests_are_told_apart_from_local_programs() {
+        let req = |host: Option<&str>, origin: Option<&str>| Request {
+            method: "POST".into(),
+            path: "/x".into(),
+            body: vec![],
+            peer: "127.0.0.1:1".parse().unwrap(),
+            host: host.map(str::to_string),
+            origin: origin.map(str::to_string),
+        };
+        for ok in [
+            Some("127.0.0.1:7390"),
+            Some("localhost:7390"),
+            Some("[::1]:7390"),
+            Some("127.0.0.1"),
+            Some("localhost"),
+            None,
+        ] {
+            assert!(
+                refuse_browser_request(&req(ok, None), 7390).is_none(),
+                "{ok:?}"
+            );
+        }
+        for bad in [
+            Some("evil.example:7390"),
+            Some("evil.example"),
+            Some("127.0.0.1:80"),
+            Some("localhost.evil.example:7390"),
+            Some("[::1]:80"),
+            Some("10.0.0.1:7390"),
+        ] {
+            assert!(
+                refuse_browser_request(&req(bad, None), 7390).is_some(),
+                "{bad:?}"
+            );
+        }
+        assert!(refuse_browser_request(&req(Some("127.0.0.1:7390"), Some("null")), 7390).is_some());
+        assert!(refuse_browser_request(
+            &req(Some("127.0.0.1:7390"), Some("http://127.0.0.1:7390")),
+            7390
+        )
+        .is_some());
     }
 
     #[test]

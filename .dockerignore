@@ -1,0 +1,27 @@
+# Build context for deploy/witness/Dockerfile (context: the repository
+# root). The image needs the Rust sources only; keep build output, git
+# history, local journals, keys and agent working directories out of the
+# context sent to the daemon.
+.git
+.github
+.claude
+**/target
+target-*
+**/node_modules
+**/.venv*
+**/__pycache__
+web/pkg
+web/pkg-go
+*.jsonl
+*.wlog
+*.salts
+*.payloads
+*.witnesses.json
+*.key
+*.pem
+*.seed
+.env
+.env.*
+fuzz/corpus
+fuzz/artifacts
+examples/swarm/reports

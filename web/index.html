@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Nothing on this page loads from anywhere but its own origin: the engine
+     (wasm) and the script are local, and a dossier is read from a file you
+     choose. 'wasm-unsafe-eval' is what WebAssembly instantiation needs;
+     inline styles are the page's own. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>witness-log verifier</title>
 <meta name="description" content="Verify a witness-log dossier in your browser. Nothing leaves this page.">

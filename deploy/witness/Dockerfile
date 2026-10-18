@@ -24,7 +24,10 @@ VOLUME ["/state"]
 EXPOSE 7380
 HEALTHCHECK --interval=30s --timeout=3s CMD ["witness-log", "witness", "info", "http://127.0.0.1:7380"]
 ENTRYPOINT ["witness-log"]
-# Inside the container the proxy or compose network is the only client, so
-# per-IP limits are raised; see OPERATORS.md before exposing directly.
-CMD ["witness", "serve", "/state", "--listen", "0.0.0.0:7380", "--open-enrollment", \
-     "--max-conns-per-ip", "256", "--enroll-rate", "6000"]
+# The default per-IP limits apply, because `docker run -p 7380:7380` above
+# exposes the witness directly and a per-IP cap equal to the global one
+# would let one client take every slot. Behind a reverse proxy every client
+# shares the proxy's address; then raise them, as the release image does
+# with WITNESS_BEHIND_PROXY=1 (see OPERATORS.md):
+#   ... --max-conns-per-ip 256 --enroll-rate 6000
+CMD ["witness", "serve", "/state", "--listen", "0.0.0.0:7380", "--open-enrollment"]

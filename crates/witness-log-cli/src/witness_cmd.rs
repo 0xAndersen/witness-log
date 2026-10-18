@@ -218,24 +218,48 @@ fn atomic_write_mode(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()>
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let tmp = dir.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("f"),
-        std::process::id()
-    ));
-    {
-        let mut opts = fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(mode);
+    // A random suffix and an exclusive create: with a predictable name
+    // opened by create+truncate, a local user who planted a symlink at
+    // `.<name>.tmp-<pid>` in a shared directory (an `--out` under /tmp)
+    // had the write follow it to a file of their choosing (security sweep
+    // of 0.6.0, F11). `create_new` (O_CREAT|O_EXCL) never follows a
+    // symlink and never reuses an existing file.
+    let (tmp, mut f) = {
+        use rand::RngCore;
+        let base = path.file_name().and_then(|n| n.to_str()).unwrap_or("f");
+        let mut attempt = 0;
+        loop {
+            let tmp = dir.join(format!(
+                ".{base}.tmp-{}-{:016x}",
+                std::process::id(),
+                rand::rngs::OsRng.next_u64()
+            ));
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(mode);
+            }
+            match opts.open(&tmp) {
+                Ok(f) => break (tmp, f),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 8 => {
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
         }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
+    };
+    let written = f.write_all(data).and_then(|_| f.sync_all());
+    drop(f);
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
-    fs::rename(&tmp, path)?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
     #[cfg(unix)]
     {
         fs::File::open(dir)?.sync_all()?;
@@ -1481,6 +1505,45 @@ pub(crate) fn post_add_checkpoint(
 }
 
 #[cfg(test)]
+mod atomic_write_tests {
+    use super::*;
+
+    /// Security sweep of 0.6.0, F11: a symlink planted where the old,
+    /// predictable temp name would be is never followed, and a symlink at
+    /// the destination is replaced by the rename, not written through.
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_is_not_followed() {
+        let dir = std::env::temp_dir().join(format!(
+            "wl-atomic-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim.txt");
+        fs::write(&victim, b"keep me").unwrap();
+        let out = dir.join("dossier.json");
+        std::os::unix::fs::symlink(
+            &victim,
+            dir.join(format!(".dossier.json.tmp-{}", std::process::id())),
+        )
+        .unwrap();
+        atomic_write_shared(&out, b"{}").unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+        assert_eq!(fs::read(&out).unwrap(), b"{}");
+        let out2 = dir.join("linked.json");
+        std::os::unix::fs::symlink(&victim, &out2).unwrap();
+        atomic_write_shared(&out2, b"new").unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+        assert!(!fs::symlink_metadata(&out2)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
 mod lock_tests {
     use super::*;
 
@@ -1628,6 +1691,8 @@ mod serve_tests {
                 path: "/add-checkpoint".into(),
                 body,
                 peer: "127.0.0.1:9".parse().unwrap(),
+                host: None,
+                origin: None,
             },
         );
         (r.status, String::from_utf8_lossy(&r.body).into_owned())

@@ -141,7 +141,7 @@ witness-log doctor [<journal>] [--directory <trusted.json>] [--subject-org ORG]
 ```
 
 Checks what you give it and prints, for each problem, the command that
-fixes it. Changes nothing. One line per check: `✓` fine, `!` worth
+fixes it. Changes nothing (with `--witness`, it creates and removes one empty probe file in `logs/` to test that it is writable). One line per check: `✓` fine, `!` worth
 fixing, `✗` will not work, `·` information.
 
 | given | checked |
@@ -343,7 +343,10 @@ start with `witness-log/` (that prefix names one agent's log). Witnesses
 enroll it with `witness add-log <their dir> <origin> <vkey>`.
 
 `serve` runs the fleet log over HTTP/1.1, loopback only unless
-`--allow-remote` (it has no authentication):
+`--allow-remote` (it has no authentication). On loopback it also refuses (403) any request carrying an `Origin`
+header or a `Host` other than `localhost`/a loopback address on its own
+port: that is how a web page in the operator's browser (CSRF, DNS
+rebinding) would reach it, and local programs send neither.
 
 | endpoint | what it does |
 |---|---|
@@ -376,7 +379,10 @@ witness-log journal serve <journal> [--listen 127.0.0.1:7390] [--directory trust
 Holds the journal open (its lock is taken; `log append` on the same file
 is refused meanwhile) and serves JSON over HTTP/1.1 for agents in any
 language. Loopback only unless `--allow-remote`: there is no
-authentication. Bodies up to 64 KiB.
+authentication. On loopback it also refuses (403) any request carrying an `Origin`
+header or a `Host` other than `localhost`/a loopback address on its own
+port: that is how a web page in the operator's browser (CSRF, DNS
+rebinding) would reach it, and local programs send neither. Bodies up to 64 KiB.
 
 | method | path | body | response |
 |---|---|---|---|
