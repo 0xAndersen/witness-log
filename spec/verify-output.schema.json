@@ -20,32 +20,81 @@
   "properties": {
     "verdict": {
       "description": "The verdict in the form the text output prints.",
-      "enum": ["WITNESSED", "CONSISTENT-UNWITNESSED", "UNANCHORED", "DIVERGED", "INVALID"]
+      "enum": [
+        "WITNESSED",
+        "CONSISTENT-UNWITNESSED",
+        "UNANCHORED",
+        "DIVERGED",
+        "INVALID"
+      ]
     },
     "exit_code": {
       "description": "0 WITNESSED; 11 WITNESSED by fewer than a strict majority of the trusted directory (split view possible) unless allow_sub_majority or not strict; 10 CONSISTENT-UNWITNESSED; 20 UNANCHORED; 30 DIVERGED; 40 INVALID. Usage errors exit 2 and print no JSON.",
-      "enum": [0, 10, 11, 20, 30, 40]
+      "enum": [
+        0,
+        10,
+        11,
+        20,
+        30,
+        40
+      ]
     },
-    "report": { "$ref": "#/$defs/report" },
-    "path": { "type": "string", "description": "The dossier path as given." },
+    "report": {
+      "$ref": "#/$defs/report"
+    },
+    "path": {
+      "type": "string",
+      "description": "The dossier path as given."
+    },
     "identity_pubkey": {
       "type": "string",
       "description": "The dossier's own identity_pubkey field (claimed by the file, not trusted)."
     },
-    "identity_pinned": { "type": "boolean", "description": "--identity was given." },
-    "directory_pinned": { "type": "boolean", "description": "--directory was given." },
-    "threshold_used": { "type": "number", "minimum": 0, "maximum": 1 },
-    "min_witnesses_used": { "type": ["integer", "null"], "minimum": 1 },
+    "identity_pinned": {
+      "type": "boolean",
+      "description": "--identity was given."
+    },
+    "directory_pinned": {
+      "type": "boolean",
+      "description": "--directory was given."
+    },
+    "threshold_used": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "min_witnesses_used": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
     "subject_org": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "--subject-org as given (since 0.6.0): the organisation that operates the log; its witnesses never count as independent operators."
     },
-    "strict": { "type": "boolean", "description": "Exit 11 for a sub-majority WITNESSED (the default since 0.5.0)." },
-    "allow_sub_majority": { "type": "boolean" }
+    "strict": {
+      "type": "boolean",
+      "description": "Exit 11 for a sub-majority WITNESSED (the default since 0.5.0)."
+    },
+    "allow_sub_majority": {
+      "type": "boolean"
+    },
+    "accept_fleet_anchor": {
+      "type": "boolean",
+      "description": "EXPERIMENTAL (RFC-0001): present and true only when --accept-fleet-anchor was given."
+    }
   },
   "additionalProperties": true,
   "$defs": {
-    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hex64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "report": {
       "type": "object",
       "required": [
@@ -69,21 +118,37 @@
       ],
       "properties": {
         "verdict": {
-          "enum": ["witnessed", "consistent_unwitnessed", "unanchored", "diverged", "invalid"]
+          "enum": [
+            "witnessed",
+            "consistent_unwitnessed",
+            "unanchored",
+            "diverged",
+            "invalid"
+          ]
         },
-        "checkpoint_signature_valid": { "type": "boolean" },
+        "checkpoint_signature_valid": {
+          "type": "boolean"
+        },
         "identity_bound": {
           "type": "boolean",
           "description": "identity_pubkey equals the checkpoint signer, and the --identity given, if any."
         },
-        "identity_pinned": { "type": "boolean" },
-        "leaves_structurally_valid": { "type": "boolean" },
-        "bindings_valid": { "type": "boolean" },
+        "identity_pinned": {
+          "type": "boolean"
+        },
+        "leaves_structurally_valid": {
+          "type": "boolean"
+        },
+        "bindings_valid": {
+          "type": "boolean"
+        },
         "bindings_asserted": {
           "type": "boolean",
           "description": "The dossier carries key bindings. False is 'not asserted', not a failure."
         },
-        "merkle_continuity_valid": { "type": "boolean" },
+        "merkle_continuity_valid": {
+          "type": "boolean"
+        },
         "internally_consistent": {
           "type": "boolean",
           "description": "Every check above passed: the file does not contradict itself."
@@ -98,24 +163,147 @@
         },
         "failures": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Why INVALID; empty otherwise."
         },
         "contradictions": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Why DIVERGED (a --known-head not reproduced, or an --evidence proof that verifies); empty otherwise."
         },
         "known_heads_unchecked": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Known heads larger than the dossier, which could not be checked (\"<size>:<root>\")."
         },
-        "leaf_count": { "type": "integer", "minimum": 0 },
-        "claimed_tree_size": { "type": "integer", "minimum": 0 },
+        "leaf_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "claimed_tree_size": {
+          "type": "integer",
+          "minimum": 0
+        },
         "quorum": {
-          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }],
-          "description": "Null when no trusted directory was supplied."
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/quorum"
+            }
+          ],
+          "description": "Null when no trusted directory was supplied, or when the dossier carries no witness receipts to score."
+        },
+        "fleet_anchor": {
+          "description": "EXPERIMENTAL (RFC-0001): present only when the dossier carries a fleet_anchor.",
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "ignored",
+                "verified",
+                "failed"
+              ]
+            },
+            "origin": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entry_index": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "fleet_tree_size": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true
+        },
+        "witnessed_via": {
+          "description": "EXPERIMENTAL (RFC-0001): which path the counted cosigners came through; present only with --accept-fleet-anchor; null unless WITNESSED.",
+          "enum": [
+            "direct",
+            "fleet",
+            "both",
+            null
+          ]
+        },
+        "witness_paths": {
+          "description": "EXPERIMENTAL (RFC-0001): counted witnesses per path; present only with --accept-fleet-anchor.",
+          "type": "object",
+          "required": [
+            "direct",
+            "fleet",
+            "on_both"
+          ],
+          "properties": {
+            "direct": {
+              "type": "object",
+              "required": [
+                "witnesses",
+                "independent_operators"
+              ],
+              "properties": {
+                "witnesses": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "independent_operators": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": true
+            },
+            "fleet": {
+              "type": "object",
+              "required": [
+                "witnesses",
+                "independent_operators"
+              ],
+              "properties": {
+                "witnesses": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "independent_operators": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": true
+            },
+            "on_both": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
@@ -142,16 +330,31 @@
         "newest_trusted_witness_ms"
       ],
       "properties": {
-        "tree_size": { "type": "integer", "minimum": 0 },
+        "tree_size": {
+          "type": "integer",
+          "minimum": 0
+        },
         "valid_receipts": {
           "type": "integer",
           "minimum": 0,
           "description": "Distinct keys from the trusted directory whose receipt verifies."
         },
-        "total_directory_witnesses": { "type": "integer", "minimum": 0 },
-        "quorum_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
-        "meets_count_threshold": { "type": "boolean" },
-        "count_gate": { "type": "string", "description": "Human-readable gate, e.g. \"fraction >= 0.66\"." },
+        "total_directory_witnesses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quorum_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "meets_count_threshold": {
+          "type": "boolean"
+        },
+        "count_gate": {
+          "type": "string",
+          "description": "Human-readable gate, e.g. \"fraction >= 0.66\"."
+        },
         "distinct_independent_operators": {
           "type": "integer",
           "minimum": 0,
@@ -159,22 +362,48 @@
         },
         "independent_operators_represented": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Those operators, normalised (trimmed, case-folded, whitespace collapsed)."
         },
-        "distinct_operators_represented": { "type": "integer", "minimum": 0 },
-        "distinct_operators_in_directory": { "type": "integer", "minimum": 0 },
-        "diversity_fraction": { "type": "number", "minimum": 0 },
-        "distinct_compute_providers_represented": { "type": "integer", "minimum": 0 },
-        "distinct_compute_providers_in_directory": { "type": "integer", "minimum": 0 },
-        "compute_diversity_fraction": { "type": "number", "minimum": 0 },
-        "project_operated_receipts": { "type": "integer", "minimum": 0 },
+        "distinct_operators_represented": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distinct_operators_in_directory": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diversity_fraction": {
+          "type": "number",
+          "minimum": 0
+        },
+        "distinct_compute_providers_represented": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distinct_compute_providers_in_directory": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "compute_diversity_fraction": {
+          "type": "number",
+          "minimum": 0
+        },
+        "project_operated_receipts": {
+          "type": "integer",
+          "minimum": 0
+        },
         "split_view_resistant": {
           "type": "boolean",
           "description": "The counted receipts are a strict majority of the directory."
         },
         "newest_trusted_witness_ms": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "description": "Newest witnessed_at_ms among counted receipts: the freshness to trust, rather than the checkpoint's own timestamp."
         }
       },

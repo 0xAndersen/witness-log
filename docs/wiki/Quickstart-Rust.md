@@ -239,6 +239,8 @@ let report = dossier.verify(0.66, &VerifyContext {
     expected_identity_pubkey: Some(&expected_hex),   // the agent you expected
     trusted_directory: Some(&directory),             // the witnesses you trust
     min_receipts: Some(3),                           // absolute gate; use it with large directories
+    subject_org: Some("Example Payments"),           // who operates this log: its own witnesses never count
+    ..Default::default()                             // known_heads, evidence, revocations: none
 });
 match report.verdict {
     Verdict::Witnessed => {}
