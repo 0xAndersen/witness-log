@@ -158,13 +158,24 @@ function render(r) {
         : ["witness quorum", false, "the dossier carries no receipts to score against your directory."]
       : ["witness quorum", null, "not scored: no trusted directory supplied."],
   ];
-  for (const f of rep.failures || []) checks.push(["failed", false, f]);
-  if ((options().known_heads || []).length) {
+  const failures = rep.failures || [];
+  for (const f of failures) checks.push(["failed", false, f]);
+  const contradictions = rep.contradictions || [];
+  const heads = options().known_heads || [];
+  // Known heads are compared only with a dossier that passed every check
+  // (an INVALID one never is), and a head larger than the dossier cannot
+  // be compared at all: neither may show a tick (security review of 0.5.0, F9).
+  if (heads.length && failures.length === 0) {
     const unchecked = rep.known_heads_unchecked || [];
-    checks.push(["consistent with your known heads", (rep.contradictions || []).length === 0,
-      (rep.contradictions || []).join("; ") || (unchecked.length ? `not checked (larger than this dossier): ${unchecked.join(", ")}` : "this dossier's leaves reproduce every head you supplied.")]);
-  } else {
-    for (const c of rep.contradictions || []) checks.push(["contradiction", false, c]);
+    if (contradictions.length) {
+      checks.push(["consistent with your known heads", false, contradictions.join("; ")]);
+    } else if (heads.length > unchecked.length) {
+      checks.push(["consistent with your known heads", true,
+        unchecked.length ? "this dossier's leaves reproduce every head you supplied that it is long enough to check." : "this dossier's leaves reproduce every head you supplied."]);
+    }
+    if (unchecked.length) checks.push(["known heads not checked", null, `larger than this dossier: ${unchecked.join(", ")}`]);
+  } else if (heads.length === 0) {
+    for (const c of contradictions) checks.push(["contradiction", false, c]);
   }
   $("checks").innerHTML = checks
     .map(([name, ok, note]) => `<li class="${ok === null ? "skip" : ok ? "ok" : "bad"}"><span class="mark">${ok === null ? "–" : ok ? "✓" : "✗"}</span><span>${esc(name)}<small>${esc(note)}</small></span></li>`)

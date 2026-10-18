@@ -84,8 +84,27 @@ def run_engine(browser, base, engine, failures):
             except Exception:
                 failures.append(f"{engine} tampered: got {page.text_content('#verdict-word')!r}, status={page.text_content('#status')!r}")
             print("tampered:", page.text_content("#verdict-word"))
+            # An INVALID dossier's known heads are never compared: no tick
+            # for them (security review of 0.5.0, F9).
+            page.fill("#known-heads", "1:" + "ab" * 32)
+            page.click("#verify")
+            page.wait_for_function("document.getElementById('verdict-word').textContent === 'INVALID'", timeout=10000)
+            if "known heads" in (page.text_content("#checks") or ""):
+                failures.append(f"{engine} tampered + known head: the page reports on heads it never compared")
+            page.fill("#known-heads", "")
         finally:
             tmp.unlink(missing_ok=True)
+
+        # A head larger than the dossier is "not checked" (–), never ticked.
+        page.set_input_files("#input-dossier", str(GOLD / "a.json"))
+        page.fill("#known-heads", "999999:" + "ab" * 32)
+        page.click("#verify")
+        page.wait_for_function("document.getElementById('checks').textContent.includes('known heads not checked')", timeout=10000)
+        heads_rows = page.eval_on_selector_all(
+            "#checks li", "els => els.filter(e => e.textContent.includes('known heads')).map(e => e.className)")
+        if heads_rows != ["skip"]:
+            failures.append(f"{engine} unchecked known head: rows {heads_rows}, want one not-checked row")
+        page.fill("#known-heads", "")
 
         # A known head the dossier does not reproduce -> DIVERGED (0.5.0)
         page.set_input_files("#input-dossier", str(GOLD / "a.json"))
