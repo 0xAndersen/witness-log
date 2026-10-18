@@ -25,15 +25,20 @@ jobs:
   register:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: fetch the directory entry
         shell: bash
+        env:
+          URL_IN: ${{ inputs.url }}
+          PROJECT_OPERATED: ${{ inputs.project_operated }}
         run: |
           set -euo pipefail
-          url="${{ inputs.url }}"; url="${url%/}"
+          url="${URL_IN%/}"
+          [[ "$url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]] || { echo "::error::url must be https://host[:port][/path]"; exit 1; }
+          case "$PROJECT_OPERATED" in true|false) ;; *) echo "::error::project_operated must be true or false"; exit 1 ;; esac
           curl -fsS --max-time 20 "$url/" > info.json
           jq -e '.directory_entry.pubkey' info.json >/dev/null || { echo "::error::$url/ did not return a directory_entry"; cat info.json; exit 1; }
-          jq --arg url "$url" --argjson po '${{ inputs.project_operated }}' \
+          jq --arg url "$url" --argjson po "$PROJECT_OPERATED" \
              '.directory_entry | .url = $url | .is_project_operated = $po' info.json > entry.json
           name=$(jq -r .name entry.json)
           slug=$(echo "$name" | tr '/' '-' | tr -c 'A-Za-z0-9._-\n' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')

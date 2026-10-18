@@ -1,7 +1,7 @@
 # Outside swarm: 100,000 agents, 37 personas, 20 witnesses under four organisations (0.4.0)
 
 - driver: `examples/swarm/outside_0_4.py` (the 18 personas of `outside.py` plus 19 for the surfaces shipped in 0.4.0); witnesses: four `fleet.py` fleets of five, one organisation each
-- target: `/home/claude/witness-log/target/release/witness-log` (witness-log 0.4.0), witness_log 0.4.0, 2 cpu, Linux x86_64
+- target: `target/release/witness-log` (witness-log 0.4.0), witness_log 0.4.0, 2 cpu, Linux x86_64
 - 100,000 agents in 3649 s (27.4 agents/s), 2 x 24 in flight, 4,644,419 operations, 102,021 verdicts
 - agents finished cleanly: 99,910/100,000; operations failed: 189/4,644,419
 - witness add-checkpoint statuses: {200: 247419, 422: 24}

@@ -44,7 +44,8 @@ agent's operator prove only that the operator agrees with itself.
 | `allow-sub-majority` | `false` | `--allow-sub-majority` | `true` accepts WITNESSED from fewer than a strict majority of the directory as exit 0 |
 | `fail-on` | `not-witnessed` | | which outcomes fail the step (below) |
 | `version` | | | the CLI release: `v0.5.0` or later, or `latest`. Empty: the action's own tag when it is a version, otherwise the latest release (below) |
-| `token` | `github.token` | | read access to this repository's releases, used only to resolve `latest` and download the CLI |
+| `token` | `github.token` | | read access to this repository's releases, used only to resolve `latest`, download the CLI and check its build provenance |
+| `verify-provenance` | `true` | | from v0.6.1, check the release's build-provenance attestation before trusting `SHA256SUMS` (below); `false` for runners that cannot reach GitHub's attestation API or Sigstore |
 
 Empty inputs are left out of the command line, so the CLI's defaults apply.
 
@@ -146,8 +147,15 @@ fetched fresh on every run, so a cached archive is checked exactly like a
 downloaded one; one that does not match is discarded with a warning and
 downloaded again. The unpacked binary must report the expected version,
 and its directory is added to `PATH` for later steps. `SHA256SUMS` lives in
-the same release as the archive: the check catches a corrupted download, a
-tampered cache or mirror, not a compromised release.
+the same release as the archive: on its own the check catches a corrupted
+download, a tampered cache or mirror, not a compromised release. From
+v0.6.1 every release asset carries a build-provenance attestation, and the
+action first checks with `gh attestation verify` that `SHA256SUMS` was
+built by this repository's `release.yml` (signed through Sigstore), so an
+asset uploaded by hand is refused. Without the `gh` CLI or a token that
+check is skipped with a notice; `verify-provenance: false` skips it on
+purpose. You can run the same check yourself:
+`gh attestation verify witness-log-v0.6.1-x86_64-unknown-linux-gnu.tar.gz --repo 0xAndersen/witness-log`.
 
 **Downloads** go through `gh release download` with `token` (preinstalled
 on GitHub-hosted runners) and fall back to the public release URL. A
