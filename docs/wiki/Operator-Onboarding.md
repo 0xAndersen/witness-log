@@ -66,7 +66,7 @@ From a clone of this repository, with
 explains each step):
 
 ```sh
-git checkout <release tag>     # the newest release that has deploy/fly/; main until one does
+git checkout v0.7.0            # a release tag (v0.7.0 or newer), not main
 cp deploy/fly/fly.toml fly.toml
 fly launch --copy-config --no-deploy --name yourorg-witness --region fra
 fly volumes create witness_state --size 1 --region fra

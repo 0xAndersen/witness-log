@@ -293,7 +293,14 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
         }
         for v in &failed {
             // Name the dossier the unmatched leaf is in: A (first argument) or B.
-            let side = |id: &serde_json::Value| if id.as_str() == Some(ia) { "A" } else { "B" };
+            // The entries carry the reported (possibly cut) identity.
+            let side = |id: &serde_json::Value| {
+                if id.as_str() == Some(ra.as_str()) {
+                    "A"
+                } else {
+                    "B"
+                }
+            };
             let leaf = if let Some(i) = v.get("sender_leaf") {
                 format!("{} leaf {i}", side(&v["sender"]))
             } else if let Some(i) = v.get("receiver_leaf") {

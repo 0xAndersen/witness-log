@@ -138,6 +138,20 @@ def _read_directory_file(path: str) -> Dict[str, Any]:
     return {"witnesses": witnesses}
 
 
+def _directory_json(directory: Dict[str, Any]) -> str:
+    """A directory as JSON text for the verifier. json.dumps recurses once
+    per level, and below Python 3.13 its limit falls short of the 1000
+    levels a verifier reads (SPEC §9), so give it room."""
+    limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(max(limit, 4000))
+        return json.dumps(directory)
+    except RecursionError as e:
+        raise ValueError("the trusted directory is nested too deep to pass to the verifier") from e
+    finally:
+        sys.setrecursionlimit(limit)
+
+
 def pin_directory(path: Optional[str]) -> None:
     """Make ``path`` the only directory the tools use (None: no pin).
     Raises ValueError if the file is unreadable or malformed."""
@@ -736,7 +750,7 @@ async def verify_chain_integrity(
         witnessed = _load_witnessed(session_id, log)
     if witnessed is not None and witnessed["checkpoint"]["tree_size"] == dossier["checkpoint"]["tree_size"]:
         dossier = witnessed
-    td = json.dumps(trusted_directory) if trusted_directory is not None else None
+    td = _directory_json(trusted_directory) if trusted_directory is not None else None
     report = json.loads(
         wl.verify_dossier_json(
             json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known or None, subject_org=subject
@@ -984,7 +998,7 @@ async def submit_to_witnesses(
     doc = json.loads(r.dossier_json or "{}")
     report = json.loads(
         wl.verify_dossier_json(
-            json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory), min_witnesses, subject_org=subject
+            json.dumps(doc), DEFAULT_THRESHOLD, ident, _directory_json(directory), min_witnesses, subject_org=subject
         )
     )
     _last_verdict[session_id] = report.get("verdict")

@@ -195,6 +195,7 @@ USAGE:
   witness-log log export <journal> --out dossier.json
   witness-log log disclose <journal> <index>
   witness-log log info <journal>
+  witness-log log revoke <journal> --reason TEXT [--as-of-ms MS] [--out revocation.json]
   witness-log log receipt <journal> <index> [--out receipt.json]
       An agent's journal from the shell. `append` takes the payload as an
       argument, from @file, or from stdin (-). `disclose` prints the leaf,
@@ -247,7 +248,7 @@ USAGE:
       C2SP verifier key.
 
   witness-log witness-network log-list <logs> (--every SECS | --qpd N) --contact TEXT
-  witness-log witness-network request <logs> (--every SECS | --qpd N) --contact TEXT [--list testing|staging]
+  witness-log witness-network request <logs> (--every SECS | --qpd N) --contact TEXT [--list testing|staging] [--about TEXT]
       <logs>: --fleet <dir> | --identity <hex> | --vkey <log vkey>, each repeatable.
       Describe your log to witnesses that have not enrolled it, in the public
       witness network's formats (witness-network.org): a logs/v0 log list (what

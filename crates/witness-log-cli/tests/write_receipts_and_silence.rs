@@ -1023,6 +1023,37 @@ fn malformed_inputs_are_usage_errors() {
     assert_eq!(code(&o), 30, "{}", err(&o));
 }
 
+/// Release review of 0.7.0: a receipt's text reaches the terminal quoted
+/// and bounded. An unsupported `sig_alg` holding escape sequences was
+/// printed raw, so a hostile receipt could draw a forged line.
+#[test]
+fn a_hostile_receipt_cannot_draw_on_the_terminal() {
+    let s = Setup::new("hostile");
+    let mut receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&s.receipt).unwrap()).unwrap();
+    receipt["sig_alg"] =
+        serde_json::json!(format!("\u{1b}[2J\r\u{2713} PRESENT{}", "x".repeat(10_000)));
+    let hostile = s.t.write("hostile.json", &receipt.to_string());
+    let o = wl(
+        &s.t.0,
+        &[
+            "prove-silence",
+            &hostile,
+            "--dossier",
+            &s.receipt,
+            "--directory",
+            &s.directory,
+        ],
+    );
+    let e = err(&o);
+    assert_eq!(code(&o), 2, "{e}");
+    assert!(
+        !e.contains('\u{1b}') && !e.contains('\r'),
+        "raw control characters: {e:?}"
+    );
+    assert!(e.len() < 2_000, "{} bytes of stderr", e.len());
+}
+
 #[test]
 fn dossiers_of_another_log_or_from_before_the_receipt_do_not_count() {
     let s = Setup::new("ignored");

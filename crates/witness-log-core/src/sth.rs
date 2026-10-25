@@ -19,7 +19,9 @@ pub const SIG_ALG_ED25519: &str = "ed25519";
 pub enum SthError {
     #[error("signature invalid for this tree head")]
     InvalidSignature,
-    #[error("unsupported signature algorithm: {0}")]
+    /// The algorithm as the input spelled it, quoted and bounded: it comes
+    /// from the file being checked and may hold anything.
+    #[error("unsupported signature algorithm: {}", crate::echo::quoted(.0))]
     UnsupportedAlgorithm(String),
     #[error("malformed key or signature bytes")]
     Malformed,

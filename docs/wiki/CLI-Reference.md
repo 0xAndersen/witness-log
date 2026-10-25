@@ -2,7 +2,9 @@
 
 Every `witness-log` subcommand, its flags, and its exit codes. The
 narrative version is [Quickstart: CLI](Quickstart-CLI); this page is the
-lookup table. Every subcommand also answers `--help`.
+lookup table. Every subcommand also answers `--help` (or `-h`) given as its
+only argument, as in `witness-log verify --help`; anywhere else `--help` is
+an ordinary argument, so it can never make a command exit 0 by accident.
 
 ```
 witness-log <command> [args]

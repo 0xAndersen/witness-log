@@ -584,8 +584,17 @@ fn prove_silence_detached(
             "at least one dossier is required: the log's witnessed history to check the receipt against",
         ));
     }
-    let receipt: witness_log_core::sth::WriteReceipt =
-        serde_json::from_str(receipt_json).map_err(malformed_err)?;
+    // As the CLI reads a receipt file: small, nested at most 1000 deep,
+    // and any error about it bounded.
+    if receipt_json.len() > 64 * 1024 {
+        return Err(malformed_err(
+            "receipt_json is larger than 64 KiB: not a write receipt",
+        ));
+    }
+    witness_log_network::check_json_depth(receipt_json)
+        .map_err(|e| malformed_err(format!("receipt_json is not a write receipt: {e}")))?;
+    let receipt: witness_log_core::sth::WriteReceipt = serde_json::from_str(receipt_json)
+        .map_err(|e| malformed_err(witness_log_core::echo::bounded(&e.to_string())))?;
     if let Err(e) = receipt.verify() {
         return Err(SignatureError::new_err(format!(
             "the write receipt does not verify ({e}): it was altered after signing, or is not a write receipt"

@@ -322,6 +322,15 @@ actually mean.
 See `/corpus/08_authorization_event.json` for a worked matching pair and a
 worked mismatch.
 
+**Matching two dossiers (tool behaviour, not a wire rule).** The checks
+above judge one pair of leaves. A tool that binds two whole dossiers (the
+reference `bind`, Go `Bind`, the wasm and Python bindings) matches them one
+to one, in index order: each leaf binds to at most one leaf on the other
+side, and any HandoffAttestation or AuthorizationEvent naming the other
+identity that is left unmatched, on either side, is a mismatch. So a grant,
+re-grant or Received handoff that only one side recorded is reported
+whichever dossier comes first.
+
 ### 3.3 ExternalAnchor
 
 A witness network takes time to bootstrap — recruiting operators

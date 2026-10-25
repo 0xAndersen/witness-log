@@ -8,7 +8,7 @@ account with a payment method, and a clone of this repository.
 
 ```sh
 git clone https://github.com/0xAndersen/witness-log && cd witness-log
-git checkout <release tag>       # the newest release that has deploy/fly/; main until one does
+git checkout v0.7.0              # a release tag (v0.7.0 or newer), not main
 cp deploy/fly/fly.toml fly.toml
 
 fly launch --copy-config --no-deploy --name yourorg-witness --region fra

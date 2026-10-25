@@ -218,6 +218,8 @@ fn read_receipt(path: &str) -> Result<WriteReceipt, String> {
             MAX_RECEIPT_BYTES >> 10
         ));
     }
+    witness_log_network::check_json_depth(&raw)
+        .map_err(|e| format!("{path} is not a write receipt: {e}"))?;
     serde_json::from_str::<WriteReceipt>(&raw).map_err(|e| {
         format!(
             "could not parse write receipt {path}: {} (expected the JSON object `witness-log log receipt` prints)",
@@ -468,14 +470,14 @@ fn verdict_line(receipt: &WriteReceipt, report: &SilenceProofReport) -> String {
     match &report.result {
         SilenceProofResult::Present { leaf_index } => format!(
             "PRESENT: the event (payload_hash {}) is leaf {leaf_index} of the log's witnessed history, where the receipt promised it: the leaves reproduce every witnessed checkpoint supplied, up to {bound}, each cosigned by at least {min} independent operators from your directory. It was not left out.",
-            receipt.payload_hash
+            witness_log_core::echo::quoted(&receipt.payload_hash)
         ),
         SilenceProofResult::Censored {
             witnessed_checkpoints_after,
             ..
         } => format!(
             "CENSORED: the log signed a write receipt for this event (payload_hash {}) at tree size {}, and {witnessed_checkpoints_after} later checkpoints of the same log, each cosigned by at least {min} independent operators from your directory, do not contain it, up to {bound}. The receipt, these dossiers and your directory are the evidence: anyone who checks them reaches this result.",
-            receipt.payload_hash, receipt.tree_size
+            witness_log_core::echo::quoted(&receipt.payload_hash), receipt.tree_size
         ),
         SilenceProofResult::Misplaced {
             promised_index,
@@ -483,7 +485,7 @@ fn verdict_line(receipt: &WriteReceipt, report: &SilenceProofReport) -> String {
             witnessed_checkpoints_without,
         } => format!(
             "MISPLACED: the log signed a write receipt for this event (payload_hash {}) at index {promised_index}, and its witnessed history has it at leaf {leaf_index} instead, up to {bound}; {witnessed_checkpoints_without} witnessed checkpoint(s) after the receipt did not contain it at all. The log broke the position it signed for; the event was not left out.",
-            receipt.payload_hash
+            witness_log_core::echo::quoted(&receipt.payload_hash)
         ),
         SilenceProofResult::Inconclusive { .. } => {
             let reason = report
