@@ -47,6 +47,24 @@ fn fail(msg: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(1)
 }
 
+/// How long a witness may take to bind and then to answer /health. Loaded
+/// CI runners (macOS ones running a release-mode test suite in parallel)
+/// have taken longer than the 15 s this used to be.
+const START_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The last lines of a witness's log, for a failure message: without them a
+/// witness that did not start says only where to look.
+fn log_tail(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    let tail = lines[lines.len().saturating_sub(5)..].join("\n  ");
+    if tail.is_empty() {
+        String::from("(its log is empty)")
+    } else {
+        format!("its log ends:\n  {tail}")
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct Member {
     name: String,
@@ -284,7 +302,7 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
                     }
                 }
             }
-            if started.elapsed() > Duration::from_secs(15) {
+            if started.elapsed() > START_TIMEOUT {
                 break None;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -293,16 +311,21 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
             stop_all(&members);
             kill(pid);
             return fail(format!(
-                "witness {org} did not start within 15s; see {}",
-                log_path.display()
+                "witness {org} did not start within {}s; see {} ({})",
+                START_TIMEOUT.as_secs(),
+                log_path.display(),
+                log_tail(&log_path)
             ));
         };
         let started = Instant::now();
         while !health(&url, Duration::from_millis(500)) {
-            if started.elapsed() > Duration::from_secs(15) {
+            if started.elapsed() > START_TIMEOUT {
                 stop_all(&members);
                 kill(pid);
-                return fail(format!("witness {org} at {url} does not answer /health"));
+                return fail(format!(
+                    "witness {org} at {url} does not answer /health; {}",
+                    log_tail(&log_path)
+                ));
             }
             std::thread::sleep(Duration::from_millis(50));
         }

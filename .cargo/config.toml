@@ -1,0 +1,7 @@
+# `cargo update` (Cargo 1.84 and later) picks, for each dependency, the
+# newest version whose rust-version this workspace's MSRV (1.75, in
+# Cargo.toml) can build, instead of the newest version outright. Without
+# it an update can silently raise the MSRV: zeroize 1.9 and base64ct 1.8
+# need Rust 1.85, thiserror 2.0.21 needs 1.77. Older Cargo ignores this key.
+[resolver]
+incompatible-rust-versions = "fallback"

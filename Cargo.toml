@@ -31,4 +31,4 @@ serde = { version = "1", features = ["derive"] }
 # are read, and the bindings get it through witness-log-network.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 hex = "0.4"
-thiserror = "1"
+thiserror = "2"
