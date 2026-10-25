@@ -426,4 +426,6 @@ fn requests_a_browser_could_send_are_refused() {
     }
     let (_, info) = front.call("GET", "/info", "");
     assert_eq!(info["tree_size"], 4, "{info}");
+    drop(front);
+    let _ = std::fs::remove_dir_all(&root);
 }

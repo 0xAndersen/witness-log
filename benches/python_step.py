@@ -58,21 +58,22 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="target/bench-python.json")
     args = ap.parse_args()
-    tmp = tempfile.mkdtemp(prefix="wl-bench-py-")
     n = [0]
+    # The journals are scratch (about 46 MB per run): removed afterwards.
+    with tempfile.TemporaryDirectory(prefix="wl-bench-py-") as tmp:
 
-    def journaled():
-        n[0] += 1
-        return witness_log.open(os.path.join(tmp, f"j{n[0]}.jsonl"))
+        def journaled():
+            n[0] += 1
+            return witness_log.open(os.path.join(tmp, f"j{n[0]}.jsonl"))
 
-    out = {
-        "suite": "python",
-        "calibration": "json.dumps of a 4-key dict",
-        "metrics": {
-            "python_step_inmem": measure(witness_log.WitnessLog.generate),
-            "python_step_journaled_nosync": measure(journaled),
-        },
-    }
+        out = {
+            "suite": "python",
+            "calibration": "json.dumps of a 4-key dict",
+            "metrics": {
+                "python_step_inmem": measure(witness_log.WitnessLog.generate),
+                "python_step_journaled_nosync": measure(journaled),
+            },
+        }
     text = json.dumps(out, indent=2) + "\n"
     print(text, end="")
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

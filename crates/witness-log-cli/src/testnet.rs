@@ -52,14 +52,27 @@ fn fail(msg: impl std::fmt::Display) -> ExitCode {
 /// have taken longer than the 15 s this used to be.
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The last lines of a witness's log, for a failure message: without them a
-/// witness that did not start says only where to look.
-fn log_tail(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().collect();
+/// What a witness wrote to its log in this run: the bytes after `from`,
+/// the log's length before the witness was started. `up` after `down`
+/// appends to the same log, and the previous run's lines (its port among
+/// them) must not be read as this run's.
+fn log_since(path: &Path, from: u64) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let start = usize::try_from(from).unwrap_or(usize::MAX).min(bytes.len());
+    Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
+}
+
+/// The last lines a witness wrote in this run, for a failure message:
+/// without them a witness that did not start says only where to look.
+fn log_tail(path: &Path, from: u64) -> String {
+    let text = match log_since(path, from) {
+        Ok(t) => t,
+        Err(e) => return format!("its log could not be read: {e}"),
+    };
+    let lines: Vec<String> = text.lines().map(witness_log_core::echo::bounded).collect();
     let tail = lines[lines.len().saturating_sub(5)..].join("\n  ");
     if tail.is_empty() {
-        String::from("(its log is empty)")
+        String::from("it wrote nothing to its log")
     } else {
         format!("its log ends:\n  {tail}")
     }
@@ -257,6 +270,7 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
             }
         }
         let log_path = dir.join(format!("{org}.log"));
+        let log_start = std::fs::metadata(&log_path).map_or(0, |m| m.len());
         let log_file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -273,7 +287,7 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
             .stdout(Stdio::null())
             .stderr(Stdio::from(log_file))
             .spawn();
-        let child = match child {
+        let mut child = match child {
             Ok(c) => c,
             Err(e) => {
                 stop_all(&members);
@@ -281,11 +295,26 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
             }
         };
         let pid = child.id();
-        // The URL is on the first "listening on http://..." line of the
-        // log, written once the socket is bound.
+        // A witness that exits (a bad key, a state directory it refuses)
+        // is reported at once, not after the start timeout.
+        let exited = |child: &mut std::process::Child| -> Option<String> {
+            match child.try_wait() {
+                Ok(Some(status)) => Some(format!(
+                    "witness {org} exited ({status}) before it was ready; {}",
+                    log_tail(&log_path, log_start)
+                )),
+                _ => None,
+            }
+        };
+        // The URL is on the "listening on http://..." line this run writes
+        // to the log once the socket is bound.
         let started = Instant::now();
         let url = loop {
-            if let Ok(text) = std::fs::read_to_string(&log_path) {
+            if let Some(why) = exited(&mut child) {
+                stop_all(&members);
+                return fail(why);
+            }
+            if let Ok(text) = log_since(&log_path, log_start) {
                 if let Some(line) = text
                     .lines()
                     .rev()
@@ -311,20 +340,24 @@ fn cmd_up(args: &[String], dir: &Path) -> ExitCode {
             stop_all(&members);
             kill(pid);
             return fail(format!(
-                "witness {org} did not start within {}s; see {} ({})",
+                "witness {org} did not start within {}s; see {}: {}",
                 START_TIMEOUT.as_secs(),
                 log_path.display(),
-                log_tail(&log_path)
+                log_tail(&log_path, log_start)
             ));
         };
         let started = Instant::now();
         while !health(&url, Duration::from_millis(500)) {
+            if let Some(why) = exited(&mut child) {
+                stop_all(&members);
+                return fail(why);
+            }
             if started.elapsed() > START_TIMEOUT {
                 stop_all(&members);
                 kill(pid);
                 return fail(format!(
                     "witness {org} at {url} does not answer /health; {}",
-                    log_tail(&log_path)
+                    log_tail(&log_path, log_start)
                 ));
             }
             std::thread::sleep(Duration::from_millis(50));

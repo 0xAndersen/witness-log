@@ -3,5 +3,10 @@
 # Cargo.toml) can build, instead of the newest version outright. Without
 # it an update can silently raise the MSRV: zeroize 1.9 and base64ct 1.8
 # need Rust 1.85, thiserror 2.0.21 needs 1.77. Older Cargo ignores this key.
+#
+# Prefer targeted updates (`cargo update -p <crate>`): the MSRV applies to the
+# whole graph, so a bare `cargo update` also moves dev-dependencies and the
+# wasm crate's dependencies (which need newer Rust anyway) back to releases
+# Rust 1.75 can build.
 [resolver]
 incompatible-rust-versions = "fallback"
