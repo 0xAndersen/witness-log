@@ -18,9 +18,12 @@ witness init` printed it (or `GET /` returns under `directory_entry`):
 
 ## Register
 
-1. Run a witness: `deploy/witness/OPERATORS.md` (one) or
-   `deploy/witness/AGENT_OPERATOR.md` (an agent does it for you).
-2. Open a pull request adding `witnesses/<org>-<name>.json`. CI runs
+1. Run a witness: `deploy/witness/OPERATORS.md` (one),
+   `deploy/witness/AGENT_OPERATOR.md` (an agent does it for you), or one
+   click on Render or Fly.io (`docs/wiki/Operator-Onboarding.md`, "Deploy
+   in one click").
+2. Open a pull request adding `witnesses/<org>-<name>.json`, which is
+   `curl -fsS https://<your witness>/ | jq .directory_entry`. CI runs
    `registry/validate.py`: well-formed, 64 lowercase hex key, a real
    `operator_org` (not `unspecified`), an `https://` URL that is not a
    loopback or other non-public address, no invisible or control

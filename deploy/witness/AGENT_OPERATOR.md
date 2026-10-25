@@ -56,7 +56,11 @@ forgets what it cosigned will contradict itself. Known-good free options:
 
 Unsuitable: Render/Koyeb/Railway free tiers (ephemeral disk or sleep),
 Hugging Face Spaces (persistent storage is paid), GitHub Actions (6-hour
-jobs), serverless/edge functions (no durable fsync before reply).
+jobs), serverless/edge functions (no durable fsync before reply). Paid
+Render and Fly.io with a disk are fine and need no VM: `render.yaml` and
+`deploy/fly/README.md` (see `docs/wiki/Operator-Onboarding.md`, "Deploy
+in one click"); after the deploy, continue at step 6 with the URL the
+platform gives you.
 
 ## 1. Install
 

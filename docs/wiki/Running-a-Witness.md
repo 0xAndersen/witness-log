@@ -7,8 +7,12 @@ persist) that cosigns other people's logs over
 the same log. Every witness adds capacity; a witness run by a **new
 organisation** adds independence, which is what the network needs most.
 
-New operator? Start with [Operator onboarding](Operator-Onboarding): why,
-cost, three two-minute paths, where to host, how to register.
+New operator? Start with [Operator onboarding](Operator-Onboarding): one
+click on Render or Fly.io, three two-minute paths on your own machine,
+cost, where to host, how to register.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
+· Fly.io: [`deploy/fly/README.md`](https://github.com/0xAndersen/witness-log/blob/main/deploy/fly/README.md)
 
 ```sh
 docker run -d --name witness-log --restart unless-stopped -p 7380:7380 \
@@ -48,7 +52,8 @@ exchange is needed.
 |---|---|
 | `Dockerfile.release` + `docker-entrypoint.sh` | the published image `ghcr.io/0xandersen/witness-log` (amd64, arm64); initialises `/state` from `WITNESS_ORG` on first start |
 | `cloud-init.yaml` | paste into a new VM: binary, systemd, Caddy, firewall |
-| `Dockerfile` | from-source, non-root image; volume at `/state` is the whole witness |
+| `Dockerfile` | from-source image with the same entrypoint; volume at `/state` is the whole witness |
+| `render.yaml` (repository root), `deploy/fly/fly.toml` | one-click Render Blueprint and Fly.io config; both build `Dockerfile` and keep `/state` on a persistent disk |
 | `docker-compose.yml` | witness + Caddy TLS |
 | `witness-log-witness.service` | hardened systemd unit (one witness) |
 | `witness-log-witness@.service` | template, one instance per name |
@@ -75,12 +80,16 @@ Oracle Cloud Always Free (ARM/AMD VMs, persistent disk) is the best
 zero-cost option; GCP e2-micro works; your own hardware behind Cloudflare
 Tunnel works. Free tiers that sleep or wipe their disk (Render, Koyeb,
 Railway free, HF Spaces, serverless) are unsuitable for the reason above.
+Paid Render (about USD 7.25 a month) and Fly.io (about USD 2.35) with a
+disk work, and are the one-click paths.
 Current terms, prices and sources: [Operator onboarding](Operator-Onboarding#where-to-host-it).
 
 ## Register
 
 Add the entry `init` printed as `registry/witnesses/<org>-<name>.json` in a
-PR. CI validates it and cross-checks the key against your URL. See
+PR. A running witness serves the same entry at `GET /`:
+`curl -fsS https://<your witness>/ | jq .directory_entry`. CI validates it
+and cross-checks the key against your URL. See
 [Getting witnessed](Getting-Witnessed).
 
 ## Status

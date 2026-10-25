@@ -24,9 +24,13 @@ history first".
 
 **What it costs:**
 - a small always-on VM with a persistent disk: free on Google Cloud's
-  e2-micro tier, about €6 a month on Hetzner, or a machine you have;
+  e2-micro tier, about €6 a month on Hetzner, or a machine you have; or
+  no VM at all: one click on Render (about USD 7.25 a month) or five
+  commands on Fly.io (about USD 2.35 a month), prices as checked in
+  October 2026;
 - about two minutes to start by hand, three to five minutes with the
-  cloud-init file and no terminal, or one sentence to a coding agent
+  cloud-init file and no terminal, a few minutes of build after the
+  Render button or `fly deploy`, or one sentence to a coding agent
   ("follow deploy/witness/AGENT_OPERATOR.md");
 - no uptime commitment and no on-call. A witness that is down simply
   does not cosign.
@@ -73,8 +77,9 @@ wallet infrastructure teams, security firms, university labs.
 > the first two founding operators, and [org] came to mind because you
 > already run always-on signing infrastructure.
 >
-> The ask: one small VM (free tier works), about two minutes to start,
-> no uptime commitment. The witness sees hashes only, never agent data.
+> The ask: one small VM (free tier works) or one click on Render or
+> Fly.io, about two minutes to start, no uptime commitment. The witness
+> sees hashes only, never agent data.
 > Your organisation would be listed as a founding operator.
 >
 > One-page summary: [link to this page]. Happy to do a 15-minute call or

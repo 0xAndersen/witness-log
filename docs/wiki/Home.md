@@ -25,7 +25,7 @@ Python bindings, MCP server, CLI.
 | gate a GitHub workflow on a verdict | [GitHub Action](GitHub-Action) (`uses: 0xAndersen/witness-log@v0.6.1`) |
 | understand the witness protocol on the wire (200/409/422) | [Witness protocol walkthrough](Witness-Protocol-Walkthrough) |
 | understand erasure, keys and sessions in depth | [Redaction explained](Redaction-Explained) · [Keys and identity](Keys-and-Identity) |
-| run a witness in two minutes (docker one-liner, cloud-init paste, binary) | [Operator onboarding](Operator-Onboarding) · [Running a witness](Running-a-Witness) · [live status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) |
+| run a witness in two minutes (one click on Render or Fly.io, docker one-liner, cloud-init paste, binary) | [Operator onboarding](Operator-Onboarding) · [Running a witness](Running-a-Witness) · [live status](https://github.com/0xAndersen/witness-log/blob/status/STATUS.md) |
 | get my logs WITNESSED | [Getting witnessed](Getting-Witnessed) · [Pilot: three organisations, one witness each](Pilot-Three-Organisations) |
 | use it for GDPR / SOC 2 / EU AI Act / audit evidence | [Compliance](Compliance) |
 | know what it does *not* protect against | [Threat model](Threat-Model) |

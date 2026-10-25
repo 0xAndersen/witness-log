@@ -50,7 +50,8 @@ anyone can run a witness or verifier. The name stays with the project.
 **Who runs the witnesses today?** The registry starts empty; the project's
 own witnesses are labelled `is_project_operated` and count as one bucket.
 The first two independent operators are the network's first milestone.
-Run one: [Running a witness](Running-a-Witness).
+Run one: [Running a witness](Running-a-Witness), or one click on Render
+or Fly.io ([Operator onboarding](Operator-Onboarding#deploy-in-one-click)).
 
 **How fast is it?** ~80 µs per decorated call in memory, ~115 µs journaled;
 40k-leaf sync 28 ms; checkpoint 0.4 ms at 40k leaves; witness cosign p50

@@ -1,0 +1,55 @@
+# Fly.io configuration for one witness-log witness for YOUR organisation,
+# built from this repository's deploy/witness/Dockerfile, with its state on
+# a Fly volume. Steps: deploy/fly/README.md.
+#
+# Copy this file to the repository root before `fly launch`
+# (cp deploy/fly/fly.toml fly.toml): the paths below are relative to the
+# root, which is also the Docker build context. `fly launch --copy-config
+# --no-deploy` then adds `app` and `primary_region`.
+#
+# Field names follow https://docs.fly.io/reference/configuration
+# (read 2026-10-25). .github/workflows/deploy-configs.yml builds and runs
+# the image the way this file configures it.
+
+[build]
+  dockerfile = "deploy/witness/Dockerfile"
+
+  [build.args]
+    # Fly mounts the volume owned by root. The image starts as root, the
+    # entrypoint gives /state to uid 10001, and the witness runs as uid 10001.
+    WITNESS_IMAGE_USER = "0:0"
+
+[env]
+  # WITNESS_ORG is not here: set it with `fly secrets set` (README.md), so
+  # this file stays the same for every operator. WITNESS_URL defaults to
+  # https://<app>.fly.dev on first start.
+  WITNESS_COMPUTE = "fly.io"
+  # Fly's proxy terminates TLS; every request arrives from its address.
+  WITNESS_BEHIND_PROXY = "1"
+
+# The whole witness: witness.key, witness.json and logs/. One volume, one
+# Machine, never more: a second Machine would be a second witness with its
+# own key behind the same URL.
+[[mounts]]
+  source = "witness_state"
+  destination = "/state"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 7380
+  force_https = true
+  # A stopped witness cosigns nothing; keep the one Machine running.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

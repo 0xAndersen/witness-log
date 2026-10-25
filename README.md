@@ -194,6 +194,10 @@ docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witnes
   -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
 ```
 
+Or deploy one on your own account with one click, built from this repository with its state on a persistent
+disk: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
+or Fly.io ([`deploy/fly`](deploy/fly/README.md), five commands). Then
+`curl -fsS https://<your witness>/ | jq .directory_entry` is your registry entry.
 Or paste [`deploy/witness/cloud-init.yaml`](deploy/witness/cloud-init.yaml) into a new VM and it comes up with
 TLS and registers itself; the `deploy-fleet` workflow does that for N servers from one cloud token. A witness
 never sees payloads, only hashes, and a hundred witnesses under one organisation count as one voice.
@@ -238,6 +242,7 @@ docs/             wiki source, rfcs/, assets/, SECURITY-AUDIT-BRIEF.md
 integrations/mcp/ MCP server shim and tests
 examples/         sample dossier, rewrite-attack/, live-network/, swarm/
 deploy/witness/   Dockerfile, compose, systemd, cloud-init, fleet.py, OPERATORS.md, AGENT_OPERATOR.md
+deploy/fly/       Fly.io config for one witness (render.yaml at the root is the Render Blueprint)
 registry/         the public witness list (CI-validated) and directory builder
 ```
 

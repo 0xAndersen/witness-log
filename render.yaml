@@ -1,0 +1,72 @@
+# Render Blueprint: one witness-log witness for YOUR organisation, built
+# from this repository's deploy/witness/Dockerfile, with its state on a
+# persistent disk.
+#
+#   Deploy: https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log
+#   Guide:  docs/wiki/Operator-Onboarding.md, "Deploy in one click"
+#
+# Field names follow the Blueprint YAML reference,
+# https://render.com/docs/blueprint-spec (read 2026-10-25), and
+# https://render.com/docs/disks and https://render.com/docs/deploy-to-render.
+# .github/workflows/deploy-configs.yml builds and runs the image the way
+# this file configures it.
+#
+# Render asks for one value when you create the Blueprint: WITNESS_ORG, the
+# organisation that controls this Render account and so the witness's key.
+# It is the independence label verifiers count. Everything else is set here:
+#
+# - plan: a paid instance (0.5c-512mb, formerly "starter"). Free instances
+#   cannot attach a disk, and a witness that loses its disk forgets what it
+#   cosigned and could contradict itself.
+# - disk at /state: the whole witness (witness.key, witness.json, logs/).
+#   Render snapshots it daily and keeps snapshots for 7 days. Restoring one
+#   after the witness has cosigned anything newer is the stale restore that
+#   deploy/witness/OPERATORS.md section 3 forbids; if the disk is lost,
+#   retire the key and deploy a new witness.
+# - numInstances 1: a service with a disk cannot scale, and a second copy
+#   of one witness must never run. With a disk, Render stops the old
+#   instance before it starts the new one on every deploy.
+# - autoDeployTrigger off: pushes to this repository do not redeploy your
+#   witness. After the first deploy, also set Auto Sync to No on the
+#   Blueprint's Settings page, so changes to this file do not either. You
+#   update by choosing Manual Deploy.
+# - WITNESS_IMAGE_USER=0:0: Render passes a service's environment variables
+#   to `docker build` as build arguments. This one makes the image start as
+#   root so the entrypoint can give the disk, which Render mounts owned by
+#   root, to uid 10001; the witness itself runs as uid 10001.
+# - PORT tells Render which port to route to; the witness listens on 7380.
+#   Render terminates TLS, so every request arrives from Render's proxy:
+#   WITNESS_BEHIND_PROXY=1 raises the per-address limits accordingly.
+# - The public URL (https://<service>.onrender.com) reaches the witness as
+#   RENDER_EXTERNAL_URL; the entrypoint uses it as the witness's URL and
+#   key name on first start. To use your own domain instead, add
+#   WITNESS_URL before the first start.
+# - region is Render's default (oregon). It cannot change after creation; to
+#   run elsewhere, fork the repository and add `region: frankfurt` (or
+#   ohio, virginia, singapore) before deploying from your fork.
+
+services:
+  - type: web
+    name: witness-log-witness
+    runtime: docker
+    plan: 0.5c-512mb
+    dockerfilePath: ./deploy/witness/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    numInstances: 1
+    autoDeployTrigger: "off"
+    disk:
+      name: witness-state
+      mountPath: /state
+      sizeGB: 1
+    envVars:
+      - key: WITNESS_ORG
+        sync: false
+      - key: WITNESS_COMPUTE
+        value: render
+      - key: WITNESS_BEHIND_PROXY
+        value: "1"
+      - key: PORT
+        value: "7380"
+      - key: WITNESS_IMAGE_USER
+        value: "0:0"

@@ -1,5 +1,110 @@
 # Operator onboarding
 
+## Deploy in one click
+
+These paths run a witness for **your** organisation on **your** account
+at Render or Fly.io. Both build
+[`deploy/witness/Dockerfile`](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/Dockerfile)
+from this repository (they do not pull the published image), keep the
+state on a persistent disk, put the platform's HTTPS in front, and check
+`GET /health`. The witnesses this project runs are labelled
+`is_project_operated` and never count as independent; these buttons are
+for other organisations.
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
+
+1. Click the button and sign in. Render shows the Blueprint from
+   [`render.yaml`](https://github.com/0xAndersen/witness-log/blob/main/render.yaml):
+   one web service with a 1 GB disk at `/state`.
+2. Fill in `WITNESS_ORG`: the organisation that controls this Render
+   account. Use the same spelling everywhere your organisation runs a
+   witness.
+3. Apply. The instance is a paid one (free instances cannot keep a disk),
+   so Render asks for a payment method. The first build compiles the
+   witness from source and takes several minutes.
+4. Open `https://<your service>.onrender.com/health`: it says `ok`. The
+   service's Logs show the directory entry at every start.
+5. On the Blueprint's Settings page, set **Auto Sync** to **No**. Then
+   neither a push to this repository nor a change to `render.yaml` reaches
+   your witness; you update it with Manual Deploy when you choose.
+
+The witness takes its URL and key name from the service:
+`https://<service>.onrender.com` and `<service>.onrender.com/w1`. To use
+your own domain, add `WITNESS_URL=https://witness.example.org` before the
+first start.
+
+### Fly.io
+
+From a clone of this repository, with
+[flyctl](https://fly.io/docs/flyctl/install/) signed in
+([`deploy/fly/README.md`](https://github.com/0xAndersen/witness-log/blob/main/deploy/fly/README.md)
+explains each step):
+
+```sh
+cp deploy/fly/fly.toml fly.toml
+fly launch --copy-config --no-deploy --name yourorg-witness --region fra
+fly volumes create witness_state --size 1 --region fra
+fly secrets set --stage WITNESS_ORG="Your Organisation"
+fly deploy --ha=false
+curl -s https://yourorg-witness.fly.dev/health     # ok
+```
+
+One Machine, one volume: never `fly scale count 2` or `fly machine
+clone`, because a second Machine is a second witness with its own key
+behind the same URL.
+
+### Your registry entry, in one command
+
+The registry file is exactly the `directory_entry` your witness serves at
+`GET /`. In a clone of this repository:
+
+```sh
+curl -fsS https://<your witness>/ | jq .directory_entry > registry/witnesses/<your-org>-w1.json
+python3 registry/validate.py
+```
+
+(`witness-log witness info https://<your witness> | jq .directory_entry`
+prints the same.) Open a pull request with the file, or open an issue
+with your URL; see [Register](#register).
+
+### Cost of the one-click paths
+
+| | instance | disk | about, per month |
+|---|---|---|---|
+| Render | `0.5c-512mb` (0.5 CPU, 512 MB): USD 7 | 1 GB at USD 0.25 per GB | USD 7.25 |
+| Fly.io | `shared-cpu-1x`, 256 MB: USD 2.19 | 1 GB at USD 0.15 per GB; first 10 GB of snapshots free | USD 2.35 |
+
+From [render.com/pricing](https://render.com/pricing) and
+[fly.io/pricing](https://fly.io/pricing/), read on 2026-10-25. Check
+current pricing before you deploy. Neither has a free option that keeps
+a disk.
+
+### What you promise on a platform
+
+The same as anywhere ([`OPERATORS.md` §3 and §6](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md#6-what-you-are-promising)):
+
+1. **Never cosign two histories of one log.** The software refuses as long
+   as it keeps its disk, so run exactly one instance on one disk.
+2. **The disk is the witness.** `witness.key`, `witness.json` and `logs/`
+   are one unit; back them up and restore them together. Render keeps
+   daily disk snapshots for 7 days and Fly.io keeps daily volume
+   snapshots for 5 by default. Restoring one after the witness has
+   cosigned anything newer can make your key sign two histories. If the
+   disk is lost, retire the key and deploy a new witness.
+3. **`WITNESS_ORG` names the organisation that controls the machine**:
+   here, the organisation that controls the Render or Fly.io account. The
+   platform can read the disk, as any cloud provider can;
+   `WITNESS_COMPUTE` (`render`, `fly.io`) records which one, and verifiers
+   score compute providers separately.
+
+Not offered as one-click: DigitalOcean App Platform (no volumes, per
+[its docs](https://docs.digitalocean.com/products/app-platform/how-to/store-data/)),
+Railway (a template is made in Railway's dashboard by an account holder,
+not from a file in this repository; its free plan stops at the credit
+limit), and every free tier without a disk.
+
 ## Why run one
 
 A witness-log verdict of WITNESSED needs cosignatures from at least two
@@ -11,7 +116,8 @@ protocol the transparency-log ecosystem already uses.
 
 ## What it costs
 
-- **Money:** nothing on the free hosting options below.
+- **Money:** nothing on the free hosting options below; about USD 2.35
+  (Fly.io) or USD 7.25 (Render) a month for the one-click paths above.
 - **Machine:** a ~4 MB binary (the 0.6.0 x86_64 build is about 4.4 MB,
   most of the growth since 0.3.5's 1.9 MB being the TLS client for
   `https://` witnesses); about 3–4 MB of resident memory idle (measured RSS of
@@ -22,8 +128,9 @@ protocol the transparency-log ecosystem already uses.
 - **The one hard requirement:** that state directory must **persist**. A
   host that wipes its disk on redeploy, or sleeps and forgets, is unsuitable
   for the reason in the next section.
-- **Time:** about two minutes to start, then nothing routine. Updating is
-  stop, replace the binary (or pull the image), start.
+- **Time:** about two minutes to start (plus a few minutes of build on
+  Render or Fly.io), then nothing routine. Updating is stop, replace the
+  binary (or pull the image, or redeploy), start.
 
 ## What you promise
 
@@ -44,7 +151,7 @@ In short:
 Nothing else: no uptime SLA, no on-call. A witness that is down simply does
 not cosign; the status page shows it honestly.
 
-## Three two-minute paths
+## Your own VM or machine: three two-minute paths
 
 ### 1. Paste cloud-init into a new VM
 
@@ -81,6 +188,11 @@ becomes `witness.example.org/w1`), `-e WITNESS_COMPUTE=hetzner`, and
 `-e WITNESS_BEHIND_PROXY=1` if a TLS proxy or tunnel sits in front.
 linux/amd64 and linux/arm64. The named volume `witness-log` is the whole
 witness: snapshot it as one unit. Details: [OPERATORS.md, Docker](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md#docker).
+
+If `docker pull` is refused, the published image is not public yet. Build
+the same entrypoint from source in a clone of this repository and use
+that name instead:
+`docker build -t witness-log -f deploy/witness/Dockerfile .`
 
 ### 3. Binary and systemd
 
@@ -137,9 +249,9 @@ below.
 | Google Cloud e2-micro | 1 e2-micro per month in us-west1, us-central1 or us-east1; 30 GB-months standard persistent disk; 1 GB egress/month from North America [2] | **Good.** Persistent disk, always on. Stay in those three regions and on a standard disk; check whether your bill shows an external IPv4 charge. |
 | AWS | New accounts: USD 100 credit (up to 100 more for activities); the Free account plan ends after six months or when credits run out [3] | **Temporary.** Fine for a trial; budget for it or move before the plan ends. |
 | Hetzner Cloud | CX23 (2 vCPU, 4 GB) EUR 5.49/month + EUR 0.50 IPv4 in DE/FI since the 15 June 2026 repricing; CAX11 (arm64) EUR 5.99 + 0.50 [4][5] | **Cheapest reliable paid option** we found; persistent disk, no idle reclamation. The cost-optimized line showed "currently unavailable" when checked [6]. |
-| Fly.io | No free tier for new organisations; shared-cpu-1x 256 MB USD 2.19 per 30 days running; volumes USD 0.15/GB-month [7] | **Only with a volume and with auto-stop off** (`auto_stop_machines = "off"`, `min_machines_running = 1`). A stopped machine does not cosign. About USD 2.40/month. |
+| Fly.io | No free tier for new organisations; shared-cpu-1x 256 MB USD 2.19 per month running; volumes USD 0.15/GB-month [7][14] | **Good, paid.** [`deploy/fly/fly.toml`](https://github.com/0xAndersen/witness-log/blob/main/deploy/fly/fly.toml) sets the volume and keeps auto-stop off (a stopped machine does not cosign). About USD 2.35/month. |
 | Railway | Free plan: USD 1 credit/month, 0.5 GB volume per service; workloads stop when credit is exhausted; free-plan volume data deleted 30 days after expiry [8][9] | **Rejected.** Running out of credit stops the witness, and an expired volume takes the key and memory with it. |
-| Render | Free web services spin down after 15 min without traffic, cannot attach persistent disks, filesystem is ephemeral [10] | **Rejected.** A restart wipes `logs/`. |
+| Render | Free web services spin down after 15 min without traffic, cannot attach persistent disks, filesystem is ephemeral [10]. Paid `0.5c-512mb` USD 7/month; disks USD 0.25/GB-month [13] | **Free: rejected**, a restart wipes `logs/`. **Paid with a disk: good**; [`render.yaml`](https://github.com/0xAndersen/witness-log/blob/main/render.yaml) is the one-click Blueprint. About USD 7.25/month. |
 | Koyeb | Free instance scales to zero after 1 h without traffic; no volumes [11] | **Rejected.** Same reason. |
 | Your own hardware | A Pi, a NAS, a spare box | **Good**, with a named tunnel or a port forward, and storage you back up. |
 
@@ -151,7 +263,8 @@ reply), CI runners (jobs end), anything without a persistent volume.
 Once `GET /` answers from the internet:
 
 - **Pull request:** add the `directory_entry` from `GET /` as
-  `registry/witnesses/<org>-<name>.json` (exact steps:
+  `registry/witnesses/<org>-<name>.json`
+  (`curl -fsS https://<your witness>/ | jq .directory_entry > registry/witnesses/<org>-<name>.json`; exact steps:
   [`AGENT_OPERATOR.md` §6](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/AGENT_OPERATOR.md)).
   CI runs `registry/validate.py`, which checks the shape and that your URL
   serves the same key.
@@ -188,3 +301,5 @@ Once `GET /` answers from the internet:
 10. Render free instances: <https://render.com/docs/free>
 11. Koyeb instances: <https://www.koyeb.com/docs/reference/instances>
 12. Cloudflare Tunnel: <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/>; Quick Tunnels: <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/>
+13. Render pricing: <https://render.com/pricing>; compute plan IDs: <https://render.com/docs/compute-plans>; persistent disks (paid services, daily snapshots kept 7 days, one instance): <https://render.com/docs/disks>; Blueprint reference: <https://render.com/docs/blueprint-spec>; Deploy to Render button: <https://render.com/docs/deploy-to-render> (all read 2026-10-25)
+14. Fly.io pricing: <https://fly.io/pricing/>; fly.toml reference: <https://docs.fly.io/reference/configuration>; volumes (one per Machine, daily snapshots kept 5 days by default): <https://docs.fly.io/volumes/overview> (all read 2026-10-25)

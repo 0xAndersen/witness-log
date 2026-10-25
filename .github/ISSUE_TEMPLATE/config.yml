@@ -8,4 +8,4 @@ contact_links:
     about: Report privately (see SECURITY.md). Please do not open a public issue.
   - name: Run a witness
     url: https://github.com/0xAndersen/witness-log/issues/1
-    about: The registry needs independent operators; issue #1 has the steps.
+    about: The registry needs independent operators; issue #1 has the steps, including one-click Render and Fly.io deploys.

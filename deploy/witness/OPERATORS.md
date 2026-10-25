@@ -164,8 +164,29 @@ killed container is cleared on the next start.
 The image is built by `.github/workflows/docker.yml` from the release
 binaries (`Dockerfile.release`, checksum-verified, linux/amd64 and
 linux/arm64). `Dockerfile` builds from source instead (Debian slim,
-non-root, read-only root filesystem under compose); `docker-compose.yml`
+non-root, read-only root filesystem under compose) and uses the same
+entrypoint, so `docker build -t witness-log -f deploy/witness/Dockerfile .`
+gives an image that behaves like the published one; `docker-compose.yml`
 adds Caddy for TLS.
+
+### Render and Fly.io (one click)
+
+`render.yaml` at the repository root is a Render Blueprint and
+`deploy/fly/fly.toml` a Fly.io configuration (steps in
+`deploy/fly/README.md`; both are walked through in
+`docs/wiki/Operator-Onboarding.md`, "Deploy in one click"). Each builds
+`Dockerfile` from the repository, mounts a persistent disk at `/state`,
+runs one instance, checks `GET /health`, and leaves `WITNESS_ORG` for the
+operator to fill in. The platform terminates TLS, so both set
+`WITNESS_BEHIND_PROXY=1`, and the entrypoint takes the witness's URL from
+the platform (`RENDER_EXTERNAL_URL`, or `https://$FLY_APP_NAME.fly.dev`)
+unless `WITNESS_URL` is set. Both platforms mount the disk owned by root,
+so both build with `WITNESS_IMAGE_USER=0:0`: the entrypoint starts as
+root, gives `/state` to uid 10001, and runs the witness as uid 10001.
+Their daily disk snapshots fall under section 3: restoring one after
+the witness has cosigned anything newer is a stale restore.
+`.github/workflows/deploy-configs.yml` checks both files and runs the
+image the way they configure it.
 
 ### cloud-init (paste into a new VM)
 

@@ -1,0 +1,97 @@
+name: deploy-configs
+
+# The one-click deploys, render.yaml (Render Blueprint) and
+# deploy/fly/fly.toml (Fly.io), both build deploy/witness/Dockerfile from
+# this repository. This workflow checks them without an account on either:
+#
+#   configs  both files parse, name files that exist, and agree with the
+#            image on port, /state mount, health path, one instance and
+#            build argument (deploy/check_configs.py)
+#   image    builds the Dockerfile with each configuration's build
+#            arguments and runs it as the platform does: no command, the
+#            configuration's environment plus WITNESS_ORG and the platform's
+#            URL variable, a root-owned directory at /state, as a fresh disk
+#            is mounted (deploy/smoke-test.sh: /health, GET / with the vkey
+#            and the platform URL, uid 10001, a cosignature, the same key
+#            and memory after a stop, a kill and a new container, a second
+#            container refused, a missing WITNESS_ORG refused). Then the
+#            default build, as `docker run` users get it.
+#
+# Not tested here: Render's and Fly's own builders, proxies, TLS and disks,
+# and the public URL.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - render.yaml
+      - "deploy/**"
+      - .dockerignore
+      - registry/validate.py
+      - .github/workflows/deploy-configs.yml
+  pull_request:
+    paths:
+      - render.yaml
+      - "deploy/**"
+      - .dockerignore
+      - registry/validate.py
+      - .github/workflows/deploy-configs.yml
+  workflow_dispatch:
+  schedule:
+    # Weekly: the build starts from rust:1-slim-bookworm and
+    # debian:bookworm-slim, which move without a commit here.
+    - cron: "29 5 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  configs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: render.yaml and deploy/fly/fly.toml parse and agree with the image
+        run: |
+          python3 deploy/check_configs.py
+          python3 deploy/check_configs.py --emit render
+          python3 deploy/check_configs.py --emit fly
+      - name: scripts parse
+        run: |
+          sh -n deploy/witness/docker-entrypoint.sh
+          bash -n deploy/smoke-test.sh
+
+  image:
+    needs: configs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: build as render.yaml, fly.toml and plain docker build it
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          for p in render fly; do
+            cfg="${RUNNER_TEMP:-/tmp}/deploy-$p.json"   # outside the build context
+            python3 deploy/check_configs.py --emit "$p" > "$cfg"
+            args=()
+            while IFS= read -r kv; do args+=(--build-arg "$kv"); done \
+              < <(jq -r '.build_args | to_entries[] | "\(.key)=\(.value)"' "$cfg")
+            echo "::group::$p: docker build -f $(jq -r .dockerfile "$cfg") ${args[*]} $(jq -r .context "$cfg")"
+            docker build -f "$(jq -r .dockerfile "$cfg")" "${args[@]}" -t "witness-log:$p" "$(jq -r .context "$cfg")"
+            echo "::endgroup::"
+          done
+          docker build -f deploy/witness/Dockerfile -t witness-log:default .
+          docker image inspect -f '{{.RepoTags}} user={{.Config.User}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}}' \
+            witness-log:render witness-log:fly witness-log:default
+      - name: run it as Render does
+        run: bash deploy/smoke-test.sh render witness-log:render
+      - name: run it as Fly.io does
+        run: bash deploy/smoke-test.sh fly witness-log:fly
+      - name: run it as `docker run` does (no build argument, a Docker volume)
+        run: bash deploy/smoke-test.sh default witness-log:default

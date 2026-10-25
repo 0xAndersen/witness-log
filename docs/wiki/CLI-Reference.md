@@ -572,7 +572,10 @@ entry; `--json` prints one object instead (`identity`, `vkey`, `org`,
 `name`, `url`, `data_dir`, `entry`) and nothing else on stdout. `serve`
 runs a `c2sp.org/tlog-witness` witness: persists every cosigned head
 before replying, refuses forks with 422, records proven equivocation
-under `evidence/`. `submit` is documented above. `verify-evidence` checks
+under `evidence/`. `info` prints a witness's `GET /`; its
+`directory_entry` is the file to add to `registry/witnesses/`
+(`witness-log witness info <url> | jq .directory_entry`). `submit` is
+documented above. `verify-evidence` checks
 an equivocation file independently, under the key named by its canonical
 origin or the `--vkey` you supply, never the key inside the file: exit 0
 PROVEN, 40 NOT PROVEN, 2 unreadable. `verify --evidence` applies the same
