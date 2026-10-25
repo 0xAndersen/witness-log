@@ -109,16 +109,28 @@ function literal(s: string): string {
 
 /**
  * What {@link parseJsonExact} builds of a value: `"all"` builds it whole;
- * `{fields}` builds an object's members that `fields` names, each by its
- * own shape, and checks every other member's value as JSON without
- * building it (it reads as {@link IGNORED}); `{items}` builds every item of
- * an array by that shape. A value of another kind than its shape (an array
- * where an object belongs) is built whole, for the reader to refuse.
+ * `"scalar"` builds a string, number, boolean or null; `{fields}` builds an
+ * object's members that `fields` names, each by its own shape, and checks
+ * every other member's value as JSON without building it (it reads as
+ * {@link IGNORED}); `{items}` builds every item of an array by that shape.
+ * An array or object where its shape wants another kind (an array where a
+ * struct's object or a string belongs) is checked as JSON and not built:
+ * it reads as {@link WRONG_ARRAY} or {@link WRONG_OBJECT}, which every
+ * reader refuses with the same message it gives the value itself. So a
+ * reader holds no more of a hostile text than the members it names
+ * (outside audit of 0.6.1; it held a wrong-kind value whole, about 250
+ * bytes of heap per byte of text).
  */
-export type Shape = "all" | { fields: Readonly<Record<string, Shape>> } | { items: Shape };
+export type Shape = "all" | "scalar" | { fields: Readonly<Record<string, Shape>> } | { items: Shape };
 
 /** The value of a member its object's {@link Shape} does not name: checked as JSON, not built. */
 export const IGNORED: unique symbol = Symbol("ignored");
+
+/** An array where its {@link Shape} wants another kind: checked as JSON, not built. */
+export const WRONG_ARRAY: unique symbol = Symbol("an array");
+
+/** An object where its {@link Shape} wants another kind: checked as JSON, not built. */
+export const WRONG_OBJECT: unique symbol = Symbol("an object");
 
 /**
  * RFC 8259 JSON, strictly, as serde_json reads it: numbers come back as
@@ -231,6 +243,8 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
   type Frame = {
     isArray: boolean;
     shape: Shape | null;
+    /** Of another kind than its shape wants: skipped, and read as WRONG_ARRAY / WRONG_OBJECT. */
+    wrong: boolean;
     arr: unknown[] | undefined;
     obj: Record<string, unknown> | undefined;
     key: string;
@@ -246,7 +260,7 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
   /** The shape of the next value in `f`: null to skip it. */
   const inner = (f: Frame): Shape | null => {
     const s = f.shape;
-    if (s === null || s === "all") return s;
+    if (s === null || s === "all" || s === "scalar") return s === "scalar" ? null : s;
     if ("items" in s) return s.items;
     return Object.prototype.hasOwnProperty.call(s.fields, f.key) ? s.fields[f.key] : null;
   };
@@ -262,15 +276,19 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
       const isArray = c === 0x5b;
       i++;
       ws();
-      const s: Shape | null =
-        next === null ? null : next !== "all" && (isArray ? "items" in next : "fields" in next) ? next : "all";
+      // The container's own shape; one of another kind is skipped.
+      const fits =
+        next === null || next === "all" || (next !== "scalar" && (isArray ? "items" in next : "fields" in next));
+      const s: Shape | null = fits ? next : null;
+      const wrong = !fits;
       if (text.charCodeAt(i) === (isArray ? 0x5d : 0x7d)) {
         i++;
-        v = s === null ? IGNORED : isArray ? [] : {};
+        v = wrong ? (isArray ? WRONG_ARRAY : WRONG_OBJECT) : s === null ? IGNORED : isArray ? [] : {};
       } else {
         const f: Frame = {
           isArray,
           shape: s,
+          wrong,
           arr: s !== null && isArray ? [] : undefined,
           obj: s !== null && !isArray ? {} : undefined,
           key: "",
@@ -324,7 +342,7 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
       if (d === (top.isArray ? 0x5d : 0x7d)) {
         i++;
         stack.pop();
-        v = top.shape === null ? IGNORED : (top.arr ?? top.obj);
+        v = top.wrong ? (top.isArray ? WRONG_ARRAY : WRONG_OBJECT) : top.shape === null ? IGNORED : (top.arr ?? top.obj);
         continue;
       }
       fail(top.isArray ? "expected ',' or ']'" : "expected ',' or '}'");
@@ -398,7 +416,8 @@ function isObject(v: unknown): v is Obj {
 
 function describe(v: unknown): string {
   if (v instanceof JsonNumber) return `number ${literal(v.literal)}`;
-  if (Array.isArray(v)) return "an array";
+  if (Array.isArray(v) || v === WRONG_ARRAY) return "an array";
+  if (v === WRONG_OBJECT) return "an object";
   if (v === null) return "null";
   if (typeof v === "string") return `string ${echo(v)}`;
   if (typeof v === "bigint") return `bigint ${bigintText(v)}`;
@@ -415,17 +434,20 @@ function bad(path: string, what: string): never {
   throw new NotADossier(`${path}: ${what}`);
 }
 
-const str: Reader = (v, path) => {
+const str: Reader = withShape((v, path) => {
   if (typeof v !== "string") bad(path, `expected a string, got ${describe(v)}`);
   if (LONE_SURROGATE.test(v as string)) bad(path, "the string has an unpaired surrogate");
   return v;
-};
+}, "scalar");
 
-const bool: Reader = (v, path) => (typeof v === "boolean" ? v : bad(path, `expected a boolean, got ${describe(v)}`));
+const bool: Reader = withShape(
+  (v, path) => (typeof v === "boolean" ? v : bad(path, `expected a boolean, got ${describe(v)}`)),
+  "scalar",
+);
 
 /** An unsigned integer up to `max`, as the reference's u64 (or u8) reads it. */
 function uint(max: bigint): Reader {
-  return (v, path) => {
+  return withShape((v, path) => {
     let n: bigint;
     if (v instanceof JsonNumber) {
       if (!/^(0|[1-9][0-9]*)$/.test(v.literal)) bad(path, `${literal(v.literal)} is not an unsigned integer literal`);
@@ -446,7 +468,7 @@ function uint(max: bigint): Reader {
     }
     if (n < 0n || n > max) bad(path, `${bigintText(n)} is out of range`);
     return n <= MAX_SAFE ? Number(n) : n;
-  };
+  }, "scalar");
 }
 
 const u64 = uint(U64_MAX);
@@ -464,14 +486,21 @@ function list(item: Reader): Reader {
 
 /** A unit variant: its name, or `{"name": null}`. */
 function unitVariant(variants: readonly string[]): Reader {
-  return (v, path) => {
+  return withShape((v, path) => {
     if (typeof v === "string" && variants.includes(v)) return v;
     if (isObject(v) && !DUPLICATED.has(v)) {
       const keys = Object.keys(v);
       if (keys.length === 1 && variants.includes(keys[0]) && v[keys[0]] === null) return keys[0];
     }
     return bad(path, `expected one of ${variants.join(", ")}, got ${describe(v)}`);
-  };
+  }, unitShape(variants));
+}
+
+/** A unit variant's shape: its name (a string), or an object of variant names, each null. */
+function unitShape(variants: readonly string[]): Shape {
+  const fields: Record<string, Shape> = Object.create(null);
+  for (const name of variants) fields[name] = "scalar";
+  return { fields };
 }
 
 interface Field {
@@ -584,12 +613,15 @@ const CUSTODY_UNIT = ["self_held", "platform_held", "hsm", "kms", "session_deleg
 const THRESHOLD = struct({ k: req(str), n: req(str) });
 
 /** KeyCustody: a unit variant, or `{"threshold": {"k": "..", "n": ".."}}`. */
-const custody: Reader = (v, path) => {
-  if (isObject(v) && !DUPLICATED.has(v) && Object.keys(v).length === 1 && Object.prototype.hasOwnProperty.call(v, "threshold")) {
-    return { threshold: THRESHOLD(v.threshold, `${path}.threshold`) };
-  }
-  return unitVariant(CUSTODY_UNIT)(v, path);
-};
+const custody: Reader = withShape(
+  (v, path) => {
+    if (isObject(v) && !DUPLICATED.has(v) && Object.keys(v).length === 1 && Object.prototype.hasOwnProperty.call(v, "threshold")) {
+      return { threshold: THRESHOLD(v.threshold, `${path}.threshold`) };
+    }
+    return unitVariant(CUSTODY_UNIT)(v, path);
+  },
+  { fields: { ...(unitShape(CUSTODY_UNIT) as { fields: Record<string, Shape> }).fields, threshold: shapeOf(THRESHOLD) } },
+);
 
 const KEY_BINDING = struct({
   identity_pubkey: req(str),

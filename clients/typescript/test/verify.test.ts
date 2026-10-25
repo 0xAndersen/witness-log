@@ -31,7 +31,7 @@ import {
   type Leaf,
   type WitnessDirectory,
 } from "../src/index.js";
-import { IGNORED, MAX_DOSSIER_DEPTH, parseJsonExact } from "../src/dossier-json.js";
+import { IGNORED, MAX_DOSSIER_DEPTH, WRONG_ARRAY, WRONG_OBJECT, parseJsonExact, readDossierText } from "../src/dossier-json.js";
 
 const here = dirname(fileURLToPath(import.meta.url)); // clients/typescript/dist/test
 const repo = resolve(here, "..", "..", "..", "..");
@@ -725,6 +725,53 @@ describe("parseJsonExact builds only what a dossier reads", () => {
     for (const text of ['{"zz":[1,]}', '{"zz":"\\x"}', '{"zz":[1}', '{"zz":01}', '{"zz":"\u0001"}', '{"zz":{"a" 1}}', '{"zz":"\\u12"}', '{"zz":tru}']) {
       assert.throws(() => parseJsonExact(text, shape), SyntaxError, text);
     }
+  });
+
+  it("a value of the wrong kind is checked as JSON and not built", () => {
+    const shape = { fields: { s: "scalar" as const, o: { fields: {} }, l: { items: "scalar" as const } } };
+    const v = parseJsonExact('{"s":[1,[2]],"o":[{"x":1}],"l":{"y":[]},"t":"kept as ignored"}', shape) as Record<string, unknown>;
+    assert.equal(v.s, WRONG_ARRAY);
+    assert.equal(v.o, WRONG_ARRAY);
+    assert.equal(v.l, WRONG_OBJECT);
+    assert.equal(v.t, IGNORED);
+    assert.equal((parseJsonExact('{"s":{}}', shape) as Record<string, unknown>).s, WRONG_OBJECT);
+    const l = (parseJsonExact('{"l":[1,"a",null]}', shape) as { l: unknown[] }).l;
+    assert.equal((l[0] as { literal: string }).literal, "1");
+    assert.deepEqual(l.slice(1), ["a", null]);
+    // Still checked: a syntax error inside a skipped value is a syntax error.
+    for (const text of ['{"s":[1,]}', '{"o":[{"x" 1}]}', '{"l":{"y":tru}}']) {
+      assert.throws(() => parseJsonExact(text, shape), SyntaxError, text);
+    }
+  });
+
+  it("a hostile wrong-kind value fails with the reader's message, not a heap of it", () => {
+    // About 8 MB of text, 2 million arrays: held whole before, about 500 MB of heap.
+    const big = "[" + Array(2_000_000).fill("[1]").join(",") + "]";
+    for (const [text, message] of [
+      [`{"identity_pubkey":${big},"leaves":[],"checkpoint":{}}`, /dossier\.identity_pubkey: expected a string, got an array/],
+      [`{"identity_pubkey":"a","leaves":[],"checkpoint":${big}}`, /dossier\.checkpoint: expected an object, got an array/],
+      [`{"identity_pubkey":"a","leaves":[{"index":${big}}],"checkpoint":{}}`, /leaves\[0\]\.index: expected an unsigned integer, got an array/],
+      [`{"identity_pubkey":"a","leaves":{"a":${big}},"checkpoint":{}}`, /dossier\.leaves: expected an array, got an object/],
+      [
+        `{"identity_pubkey":"a","leaves":[{"index":0,"leaf_type":0,"timestamp_ms":0,"session_pubkey":"s","payload_hash":"p","handoff_direction":${big}}],"checkpoint":{}}`,
+        /expected one of Sent, Received, got an array/,
+      ],
+    ] as const) {
+      const before = process.memoryUsage().heapUsed;
+      assert.throws(() => readDossierText(text), message);
+      const grew = process.memoryUsage().heapUsed - before;
+      assert.ok(grew < 64e6, `heap grew ${(grew / 1e6).toFixed(0)} MB reading ${text.slice(0, 40)}...`);
+    }
+  });
+
+  it("unit variants and custody keep their object forms", () => {
+    const leaf = (h: string) =>
+      `{"identity_pubkey":"a","leaves":[{"index":0,"leaf_type":0,"timestamp_ms":0,"session_pubkey":"s","payload_hash":"p","handoff_direction":${h}}],"checkpoint":{"tree_size":0,"root_hash":"r","timestamp_ms":0,"sig_alg":"x","signer_pubkey":"k","signature":"g"}}`;
+    const read = (h: string) => (readDossierText(leaf(h)).dossier.leaves as Record<string, unknown>[])[0].handoff_direction;
+    assert.equal(read('"Sent"'), "Sent");
+    assert.equal(read('{"Received":null}'), "Received");
+    assert.throws(() => read('{"Received":[1]}'), /expected one of Sent, Received, got an object/);
+    assert.throws(() => read('{"Received":null,"x":[1]}'), /expected one of Sent, Received, got an object/);
   });
 
   it("nesting is counted outside strings, the outer value being depth 1", () => {
