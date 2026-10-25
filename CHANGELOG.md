@@ -235,7 +235,8 @@ Known and left as is:
 
 - wasm `bind_value` and Python `bind_dossiers` report identities uncut,
   as before.
-- `prove-silence --revocations` has no size cap of its own.
+- `prove-silence --revocations` is read under the CLI's general 512 MiB
+  input cap, as `verify` reads it. Only the receipt has the 64 KiB cap.
 
 ### Behaviour changes
 
