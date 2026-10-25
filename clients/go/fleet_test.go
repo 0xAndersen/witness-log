@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -160,6 +161,39 @@ func jsonEqual(a, b json.RawMessage) bool {
 // A dossier without a fleet_anchor, or a caller without the opt-in, gets
 // the report it got before: compare every corpus 13 case's report with an
 // anchor attached and the opt-in off.
+// TestFleetAnchorReportBoundsTheOrigin: the report names an anchor's origin
+// only up to MaxFleetOriginBytes (no fleet origin is longer), as the
+// reference does; through 0.6.1 a hostile origin was copied into the
+// report whole, ignored or not.
+func TestFleetAnchorReportBoundsTheOrigin(t *testing.T) {
+	base := minimalDossier(t)
+	for _, c := range []struct {
+		origin   string
+		reported bool
+	}{
+		{"example.com/fleet", true},
+		{strings.Repeat("o", MaxFleetOriginBytes), true},
+		{"witness-log/not-a-fleet", true},
+		{strings.Repeat("o", MaxFleetOriginBytes+1), false},
+		{strings.Repeat("o", 10_000_000), false},
+	} {
+		text := withField(base, `"fleet_anchor":{"origin":"`+c.origin+`","entry_index":0,"entry_bytes_b64":"","inclusion_proof":[],"fleet_checkpoint_note":""}`)
+		for _, accept := range []bool{false, true} {
+			_, r, err := VerifyDossier([]byte(text), nil, Options{AcceptFleetAnchor: accept, SubjectOrg: "org"})
+			if err != nil || r.FleetAnchor == nil {
+				t.Fatalf("%.20s: %v", c.origin, err)
+			}
+			got := r.FleetAnchor.Origin
+			if (got != nil) != c.reported || (got != nil && *got != c.origin) {
+				t.Errorf("%.20s (%d bytes), accept %v: origin %.20v", c.origin, len(c.origin), accept, got)
+			}
+			if b, _ := json.Marshal(r); len(b) > 10_000 {
+				t.Errorf("%.20s: a %d-byte report", c.origin, len(b))
+			}
+		}
+	}
+}
+
 func TestFleetAnchorIgnoredWithoutOptIn(t *testing.T) {
 	var v13 struct {
 		TrustedDirectory json.RawMessage            `json:"trusted_directory"`

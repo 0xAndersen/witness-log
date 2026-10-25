@@ -216,11 +216,15 @@ type EquivocationProof struct {
 // "equivocation", "proof": {...}}). The proof must be an object whose
 // origin, log_vkey, earlier_note and conflicting_note are JSON strings;
 // other keys are ignored. Anything else is an error (the caller's
-// mistake, exit 2), never a proof that silently fails to verify. The
-// reference (EquivocationProof::from_evidence) and TypeScript verifiers
-// apply the same rule.
+// mistake, exit 2), never a proof that silently fails to verify. An item
+// nested deeper than MaxDossierDepth is refused before it is read
+// (CheckJSONDepth). The reference (EquivocationProof::from_evidence_json)
+// and TypeScript verifiers apply the same rule.
 func ParseEvidence(raw []byte) (EquivocationProof, error) {
 	var p EquivocationProof
+	if err := CheckJSONDepth(raw); err != nil {
+		return p, err
+	}
 	var item map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &item); err != nil || item == nil {
 		return p, errors.New(`an evidence item must be a JSON object: a proof, or {"proof": {...}} as witness serve writes it`)

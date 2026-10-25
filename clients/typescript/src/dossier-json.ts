@@ -71,12 +71,15 @@ function setOwn(obj: Record<string, unknown>, key: string, value: unknown): void
 }
 
 /**
- * How deep a dossier text may nest (SPEC.md §9, "Reading a dossier"):
- * arrays and objects, counted outside strings, the dossier object being
- * depth 1. A deeper text is not a dossier, wherever the nesting is. Every
- * dossier an implementation writes nests at most 5 deep and a readable
- * `fleet_anchor` at most 127; Go's encoding/json stops at 10,000. The
- * reference's `MAX_DOSSIER_DEPTH`.
+ * How deep any JSON input a verifier reads may nest (SPEC.md §9, "Reading a
+ * dossier"): a dossier, a trusted directory, revocations, an evidence item.
+ * Arrays and objects are counted outside strings, the input's top-level
+ * value being depth 1. A deeper dossier is not a dossier, and a deeper
+ * directory, revocations or evidence option is refused as a malformed one
+ * is ({@link nestsDeeperThan}), wherever the nesting is. Every dossier an
+ * implementation writes nests at most 5 deep and a readable `fleet_anchor`
+ * at most 127; Go's encoding/json stops at 10,000. The reference's
+ * `MAX_DOSSIER_DEPTH`.
  */
 export const MAX_DOSSIER_DEPTH = 1000;
 
@@ -331,11 +334,13 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
 
 /**
  * Whether a value nests deeper than `max` arrays and objects, the value
- * itself being depth 1 (for a dossier passed as a value, not as text). A
- * cycle nests without end. Iterative, and linear in the value's size: a
- * sub-value reached twice is measured once.
+ * itself being depth 1: SPEC.md §9's nesting limit for an input passed as
+ * a value, not as text (a dossier, and every option `verifyDossier` reads:
+ * the directory, the revocations, each evidence item). A cycle nests
+ * without end. Iterative, and linear in the value's size: a sub-value
+ * reached twice is measured once.
  */
-function nestsDeeperThan(root: unknown, max: number): boolean {
+export function nestsDeeperThan(root: unknown, max: number = MAX_DOSSIER_DEPTH): boolean {
   const container = (x: unknown): x is object => x !== null && typeof x === "object" && !(x instanceof JsonNumber);
   if (!container(root)) return false;
   const height = new Map<object, number>();

@@ -126,6 +126,12 @@ pub enum WitnessRuntime {
 }
 
 /// A witness directory: `{"witnesses": [...]}`, read only from an object.
+///
+/// Read a trusted directory a verifier is given (`verify --directory`, a
+/// binding's directory argument) with [`WitnessDirectory::from_json`],
+/// which applies SPEC.md §9's nesting limit and also takes a bare array of
+/// entries. The `Deserialize` impl, `serde_json::from_str::<WitnessDirectory>`
+/// included, reads only the object form and skips the nesting limit.
 #[derive(Debug, Clone, Default)]
 pub struct WitnessDirectory {
     pub witnesses: Vec<WitnessEntry>,
@@ -293,6 +299,23 @@ fn compute_provider_key(w: &WitnessEntry) -> Option<String> {
 }
 
 impl WitnessDirectory {
+    /// A trusted directory from its JSON text, as every verifier reads one
+    /// (`verify --directory`; wasm, Node and Python; Go's `ParseDirectory`;
+    /// `/corpus/17_dossier_parsing.json`): the text nests at most
+    /// [`MAX_DOSSIER_DEPTH`] deep, then it is `{"witnesses": [...]}` or a
+    /// bare JSON array of the entries `witness init` prints, each struct
+    /// read as the `Deserialize` impls read it. When it is neither, the
+    /// error is the one reading it as the object gave.
+    pub fn from_json(text: &str) -> Result<Self, InputParseError> {
+        check_json_depth(text)?;
+        match serde_json::from_str::<WitnessDirectory>(text) {
+            Ok(d) => Ok(d),
+            Err(as_object) => serde_json::from_str::<Vec<WitnessEntry>>(text)
+                .map(|witnesses| WitnessDirectory { witnesses })
+                .map_err(|_| InputParseError::Json(as_object)),
+        }
+    }
+
     pub fn distinct_operator_count(&self) -> usize {
         self.witnesses
             .iter()
@@ -824,7 +847,10 @@ fn score_attestations(
 ///
 /// Read a dossier from JSON text with [`Dossier::from_json`], which applies
 /// all of SPEC.md §9's "Reading a dossier" rule. The `Deserialize` impl
-/// applies all of it but the nesting limit: the dossier and every struct in
+/// (and so `serde_json::from_str::<Dossier>`, which stays public for
+/// dossiers this process wrote itself) applies all of it but the nesting
+/// limit ([`MAX_DOSSIER_DEPTH`]), so it reads an ignored key nested
+/// arbitrarily deep that every verifier refuses: the dossier and every struct in
 /// it are read only from objects, never from arrays of the field values;
 /// `witness_receipts`, `witness_directory`, `key_bindings` and
 /// `revocations` may be absent but not `null`; other keys are ignored.
@@ -886,21 +912,87 @@ struct DossierDef {
 
 witness_log_core::object_only_serde!(Dossier, DossierDef);
 
-/// The deepest a dossier text may nest (SPEC.md §9, "Reading a dossier"):
-/// arrays and objects, counted outside strings, the dossier object itself
-/// being depth 1. A deeper text is not a dossier.
+/// The deepest any JSON input a verifier reads may nest (SPEC.md §9,
+/// "Reading a dossier"): a dossier, a trusted directory, revocations, an
+/// evidence item. Arrays and objects are counted outside strings, the
+/// input's top-level value being depth 1. A deeper dossier text is not a
+/// dossier, and a deeper directory, revocations or evidence input is the
+/// caller's error, as a malformed one is ([`check_json_depth`]).
 ///
 /// Why 1000: a dossier written by any implementation nests at most 5 deep
 /// (a key binding's threshold custody), and the deepest value the reference
 /// reads at all is a `fleet_anchor` 126 levels below the dossier object
 /// (serde_json's recursion limit), 127 in all; corpus 17 has an ignored
-/// key 201 deep. Below 1000 nothing changes. Before the limit, serde_json
-/// skipped ignored keys of any depth, Go's encoding/json refused 10,000
-/// levels and more, and the TypeScript parser held a frame per level until
-/// it ran out of memory (outside audit of 0.6.1). 1000 is an order of
-/// magnitude below Go's limit, so that limit never decides, and bounds what
-/// any verifier holds while reading.
+/// key 201 deep. Directories, revocations and evidence nest at most 4 deep.
+/// Below 1000 nothing changes. Before the limit, serde_json skipped ignored
+/// keys of any depth, Go's encoding/json refused 10,000 levels and more,
+/// and the TypeScript parser held a frame per level until it ran out of
+/// memory (outside audit of 0.6.1); through 0.6.1 the limit covered dossier
+/// text only, and the reference read an evidence item only up to serde_json's
+/// recursion limit. 1000 is an order of magnitude below Go's limit, so that
+/// limit never decides, and bounds what any verifier holds while reading.
 pub const MAX_DOSSIER_DEPTH: usize = 1000;
+
+/// A JSON text nested deeper than [`MAX_DOSSIER_DEPTH`] arrays and objects
+/// ([`check_json_depth`]); `offset` is the byte offset of the first `[` or
+/// `{` past the limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("nested deeper than {MAX_DOSSIER_DEPTH} arrays and objects (at byte {offset})")]
+pub struct JsonTooDeep {
+    pub offset: usize,
+}
+
+/// SPEC.md §9's nesting limit, the one check every verifier input passes
+/// before it is read: `text` nests at most [`MAX_DOSSIER_DEPTH`] arrays and
+/// objects deep, counted outside strings (an escaped quote does not end
+/// one), its top-level value being depth 1. One pass, no allocation, so a
+/// hostile text costs no more than its length to measure. Exact for JSON;
+/// for a text that is not JSON the answer does not matter, since it is
+/// refused either way. [`Dossier::from_json`], [`WitnessDirectory::from_json`],
+/// [`revocations_from_json`] and
+/// [`EquivocationProof::from_evidence_json`](tlog_witness::EquivocationProof::from_evidence_json)
+/// apply it; anything else that reads a verifier input from text should.
+pub fn check_json_depth(text: &str) -> Result<(), JsonTooDeep> {
+    match json_nesting_exceeds(text.as_bytes(), MAX_DOSSIER_DEPTH) {
+        Some(offset) => Err(JsonTooDeep { offset }),
+        None => Ok(()),
+    }
+}
+
+/// Why a JSON input other than the dossier (a trusted directory,
+/// revocations, an evidence item) cannot be read. Every verifier treats it
+/// as the caller's error: the CLIs exit 2, the libraries return an error,
+/// and no verdict is given. The message quotes at most a bounded part of
+/// the text (`witness_log_core::echo`).
+#[derive(Debug, Error)]
+pub enum InputParseError {
+    /// The text nests deeper than [`MAX_DOSSIER_DEPTH`].
+    #[error(transparent)]
+    TooDeep(#[from] JsonTooDeep),
+    /// Not RFC 8259 JSON, or JSON without the input's shape.
+    #[error("{}", witness_log_core::echo::bounded(&.0.to_string()))]
+    Json(#[source] serde_json::Error),
+    /// JSON, but not an evidence item
+    /// ([`EquivocationProof::from_evidence`](tlog_witness::EquivocationProof::from_evidence)).
+    #[error("not an equivocation proof: {0}")]
+    NotEvidence(String),
+}
+
+/// Revocation statements a verifier is given out of band (`verify
+/// --revocations`; the bindings' revocations argument), from JSON text: one
+/// statement, as `log revoke` prints it, or an array of them. The text
+/// nests at most [`MAX_DOSSIER_DEPTH`] deep, its top-level value (the
+/// statement or the array) being depth 1; each statement is read as
+/// `RevocationStatement`'s `Deserialize` impl reads it.
+pub fn revocations_from_json(text: &str) -> Result<Vec<RevocationStatement>, InputParseError> {
+    check_json_depth(text)?;
+    if text.trim_start().starts_with('{') {
+        serde_json::from_str(text).map(|one| vec![one])
+    } else {
+        serde_json::from_str(text)
+    }
+    .map_err(InputParseError::Json)
+}
 
 /// Why a text is not a dossier (SPEC.md §9, "Reading a dossier"). The
 /// message quotes at most a bounded part of the text
@@ -959,7 +1051,7 @@ impl Dossier {
     /// checks. `serde_json::from_str::<Dossier>` alone skips the depth
     /// limit; read a dossier from anywhere else with this.
     pub fn from_json(text: &str) -> Result<Self, DossierParseError> {
-        if let Some(offset) = json_nesting_exceeds(text.as_bytes(), MAX_DOSSIER_DEPTH) {
+        if let Err(JsonTooDeep { offset }) = check_json_depth(text) {
             return Err(DossierParseError::TooDeep { offset });
         }
         serde_json::from_str(text).map_err(DossierParseError::Json)
@@ -1682,7 +1774,9 @@ impl Dossier {
         let parsed = field.parsed();
         let mut report = FleetAnchorReport {
             status: FleetAnchorStatus::Ignored,
-            origin: parsed.map(|a| a.origin.clone()),
+            origin: parsed
+                .map(|a| a.origin.clone())
+                .filter(|o| o.len() <= fleet::MAX_FLEET_ORIGIN_BYTES),
             entry_index: parsed.map(|a| a.entry_index),
             fleet_tree_size: None,
             failures: Vec::new(),

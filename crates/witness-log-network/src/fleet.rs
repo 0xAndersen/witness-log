@@ -62,6 +62,10 @@ pub const MAX_FLEET_NOTE_SIGNATURES: usize = 64;
 /// Most inclusion-proof hashes accepted (a tree of 2^64 leaves needs 64).
 pub const MAX_INCLUSION_PROOF_HASHES: usize = 64;
 
+/// Longest fleet origin, in bytes ([`valid_fleet_origin`]). A report names
+/// an anchor's origin only up to this length ([`FleetAnchorReport::origin`]).
+pub const MAX_FLEET_ORIGIN_BYTES: usize = 255;
+
 /// The dossier field (RFC-0001): where this dossier's checkpoint sits in a
 /// fleet checkpoint log, and that log's cosigned checkpoint. Serialized as a
 /// JSON object with these fields in this order, and read only from an
@@ -146,7 +150,10 @@ pub enum FleetAnchorStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FleetAnchorReport {
     pub status: FleetAnchorStatus,
-    /// The fleet origin the anchor names (absent if the field is malformed).
+    /// The fleet origin the anchor names: absent if the field is malformed
+    /// or the origin is longer than [`MAX_FLEET_ORIGIN_BYTES`] (no fleet
+    /// origin is, and the report does not copy a hostile one whole; through
+    /// 0.6.1 it did, megabytes and all).
     pub origin: Option<String>,
     pub entry_index: Option<u64>,
     /// Size of the fleet checkpoint the entry was proven against; only for
@@ -212,7 +219,7 @@ pub fn fleet_entry_leaf_hash(entry_bytes: &[u8]) -> Hash {
 /// an agent's own canonical origin are direct receipts, not a fleet path.
 pub fn valid_fleet_origin(origin: &str) -> bool {
     !origin.is_empty()
-        && origin.len() <= 255
+        && origin.len() <= MAX_FLEET_ORIGIN_BYTES
         && !origin.starts_with(CANONICAL_ORIGIN_PREFIX)
         && origin
             .chars()

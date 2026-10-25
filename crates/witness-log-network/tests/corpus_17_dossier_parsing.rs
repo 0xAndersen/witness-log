@@ -91,6 +91,205 @@ fn corpus_vector_17_dossier_parsing() {
     );
 }
 
+/// Corpus 17's `inputs`: the nesting limit covers every JSON input a
+/// verifier reads, each counted from its own top-level value. Before, a
+/// directory or revocations of any depth were read, an evidence item only
+/// to serde_json's recursion limit (128), and Go refused all three at
+/// 10,000 levels.
+#[test]
+fn corpus_vector_17_inputs() {
+    use witness_log_network::tlog_witness::EquivocationProof;
+    use witness_log_network::{revocations_from_json, InputParseError};
+    let v = corpus();
+    let inputs = v["inputs"].as_array().unwrap();
+    let mut kinds = std::collections::BTreeMap::new();
+    for c in inputs {
+        let name = c["name"].as_str().unwrap();
+        let text = c["text"].as_str().unwrap();
+        let kind = c["input"].as_str().unwrap();
+        *kinds.entry(kind).or_insert(0) += 1;
+        let started = std::time::Instant::now();
+        let read = match kind {
+            "directory" => WitnessDirectory::from_json(text).map(|d| (Some(d), vec![], vec![])),
+            "revocations" => revocations_from_json(text).map(|r| (None, r, vec![])),
+            "evidence" => {
+                EquivocationProof::from_evidence_json(text).map(|p| (None, vec![], vec![p]))
+            }
+            other => panic!("{name}: unknown input {other}"),
+        };
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{name}"
+        );
+        let e = &c["expect"];
+        let (directory, revocations, evidence) = match read {
+            Err(err) => {
+                assert_eq!(e["refused"], json!(true), "{name}: refused: {err}");
+                assert!(matches!(err, InputParseError::TooDeep(_)), "{name}: {err}");
+                assert!(err.to_string().contains("nested deeper than 1000"), "{err}");
+                continue;
+            }
+            Ok(read) => read,
+        };
+        assert_eq!(e["refused"], json!(false), "{name}: read");
+        let dossier_text = v["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == c["dossier"])
+            .unwrap()["dossier_json"]
+            .as_str()
+            .unwrap();
+        let ctx = VerifyContext {
+            trusted_directory: directory.as_ref(),
+            min_receipts: c["min_witnesses"].as_u64().map(|n| n as usize),
+            revocations: &revocations,
+            evidence: &evidence,
+            ..VerifyContext::default()
+        };
+        let r = Dossier::from_json(dossier_text).unwrap().verify(0.66, &ctx);
+        assert_eq!(
+            serde_json::to_value(&r.verdict).unwrap(),
+            e["verdict"],
+            "{name}"
+        );
+        assert_eq!(json!(!r.failures.is_empty()), e["has_failures"], "{name}");
+        assert_eq!(json!(r.contradictions.len()), e["contradictions"], "{name}");
+        assert_eq!(
+            json!(r.quorum.as_ref().map(|q| q.valid_receipts)),
+            e["valid_receipts"],
+            "{name}"
+        );
+    }
+    assert!(
+        kinds.values().all(|n| *n >= 6) && kinds.len() == 3,
+        "{kinds:?}"
+    );
+}
+
+/// The one check, counted the same way for every input; an evidence list
+/// counts from each item, so an item reads the same alone and in a list.
+#[test]
+fn every_input_nests_at_most_1000_deep() {
+    use witness_log_network::tlog_witness::EquivocationProof;
+    use witness_log_network::{check_json_depth, JsonTooDeep};
+    let nested = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+    assert_eq!(check_json_depth(&nested(1000)), Ok(()));
+    assert_eq!(check_json_depth("[]]]]"), Ok(()));
+    assert_eq!(
+        check_json_depth(&format!("[\"\\\"{}\"]", "{".repeat(2000))),
+        Ok(())
+    );
+    assert_eq!(
+        check_json_depth(&nested(1001)),
+        Err(JsonTooDeep { offset: 1000 })
+    );
+    let v = corpus();
+    let item = |n: &str| {
+        v["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == n)
+            .unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let at_limit = item("a bare equivocation proof with an unknown member nested to depth 1000");
+    let over = item("a bare equivocation proof with an unknown member nested to depth 1001");
+    let one = EquivocationProof::from_evidence_json(&at_limit).unwrap();
+    assert_eq!(
+        EquivocationProof::list_from_evidence_json(&at_limit).unwrap(),
+        vec![one.clone()]
+    );
+    assert_eq!(
+        EquivocationProof::list_from_evidence_json(&format!("[{at_limit}, {at_limit}]")).unwrap(),
+        vec![one.clone(), one]
+    );
+    for text in [over.clone(), format!("[{over}]"), format!("[[{at_limit}]]")] {
+        assert!(
+            EquivocationProof::list_from_evidence_json(&text).is_err(),
+            "{}",
+            &text[..40]
+        );
+    }
+    // Read through a serde_json::Value (128 levels at most) or from text,
+    // an item is the same proof, or refused with the same reason.
+    let wrapped = item("an evidence item with 1001 brackets in a string after an escaped quote");
+    let value: Value = serde_json::from_str(&wrapped).unwrap();
+    assert_eq!(
+        EquivocationProof::from_evidence(&value).unwrap(),
+        EquivocationProof::from_evidence_json(&wrapped).unwrap()
+    );
+    for bad in [
+        json!([]),
+        json!("x"),
+        json!(null),
+        json!({"proof": null}),
+        json!({"proof": [1]}),
+        json!({"origin": "o", "log_vkey": "k", "earlier_note": "a"}),
+        json!({"origin": "o", "log_vkey": 5, "earlier_note": "a", "conflicting_note": "b"}),
+        json!({"proof": {"origin": ["o"], "log_vkey": "k", "earlier_note": "a", "conflicting_note": "b"}}),
+    ] {
+        let from_value = EquivocationProof::from_evidence(&bad).unwrap_err();
+        let from_text = EquivocationProof::from_evidence_json(&bad.to_string()).unwrap_err();
+        assert_eq!(
+            format!("not an equivocation proof: {from_value}"),
+            from_text.to_string()
+        );
+    }
+    // Of a key given twice, the last counts, as it did through a map.
+    let twice = r#"{"origin":5,"origin":"o","log_vkey":"k","earlier_note":"a","conflicting_note":"b","proof":7,"proof":{"origin":"p","log_vkey":"k","earlier_note":"a","conflicting_note":"b"}}"#;
+    assert_eq!(
+        EquivocationProof::from_evidence_json(twice).unwrap().origin,
+        "p"
+    );
+}
+
+/// A report names a fleet anchor's origin only up to 255 bytes, the
+/// longest a fleet origin can be. Through 0.6.1 a hostile origin was copied
+/// into every report whole, whether or not the caller opted in.
+#[test]
+fn a_fleet_origin_is_reported_only_up_to_255_bytes() {
+    use witness_log_network::fleet::MAX_FLEET_ORIGIN_BYTES;
+    assert_eq!(MAX_FLEET_ORIGIN_BYTES, 255);
+    let min = minimal_dossier();
+    for (origin, reported) in [
+        ("example.com/fleet".to_string(), true),
+        ("o".repeat(255), true),
+        ("é".repeat(127), true),
+        ("witness-log/not-a-fleet".to_string(), true),
+        ("é".repeat(128), false),
+        ("o".repeat(256), false),
+        ("o".repeat(10_000_000), false),
+    ] {
+        let text = with_field(
+            &min,
+            &format!(
+                r#""fleet_anchor":{{"origin":"{origin}","entry_index":0,"entry_bytes_b64":"","inclusion_proof":[],"fleet_checkpoint_note":""}}"#
+            ),
+        );
+        let dossier = Dossier::from_json(&text).unwrap();
+        for accept_fleet_anchor in [false, true] {
+            let ctx = VerifyContext {
+                accept_fleet_anchor,
+                subject_org: Some("org"),
+                ..VerifyContext::default()
+            };
+            let r = dossier.verify(0.66, &ctx);
+            let fa = r.fleet_anchor.as_ref().unwrap();
+            assert_eq!(
+                fa.origin.as_deref(),
+                reported.then_some(origin.as_str()),
+                "{} bytes",
+                origin.len()
+            );
+            assert!(serde_json::to_string(&r).unwrap().len() < 10_000);
+        }
+    }
+}
+
 /// A struct written as an array of its field values was a dossier to
 /// serde's derived impl and to nothing else; it is refused now, from text
 /// and from a parsed value alike.

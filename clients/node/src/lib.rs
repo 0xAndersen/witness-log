@@ -742,8 +742,9 @@ pub struct VerifyOptions {
     /// (RFC-0002).
     pub known_heads: Option<Vec<String>>,
     /// Witness equivocation proofs as a JSON array (bare proofs or
-    /// `{"kind": "equivocation", "proof": {...}}`); one that verifies for
-    /// this identity makes the verdict DIVERGED.
+    /// `{"kind": "equivocation", "proof": {...}}`), or one; one that
+    /// verifies for this identity makes the verdict DIVERGED. Each item, the
+    /// directory and the revocations nest at most 1000 deep (SPEC.md §9).
     pub evidence_json: Option<String>,
     /// The organisation that operates this log; witnesses with that
     /// `operator_org` never count as independent operators.
@@ -754,14 +755,10 @@ pub struct VerifyOptions {
     pub accept_fleet_anchor: Option<bool>,
 }
 
+/// `{"witnesses": [...]}` or a bare array of entries, nested at most 1000
+/// deep (`WitnessDirectory::from_json`).
 fn parse_directory(s: &str) -> Result<witness_log_network::WitnessDirectory> {
-    serde_json::from_str::<witness_log_network::WitnessDirectory>(s)
-        .or_else(|first| {
-            serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(s)
-                .map(|witnesses| witness_log_network::WitnessDirectory { witnesses })
-                .map_err(|_| first)
-        })
-        .map_err(invalid)
+    witness_log_network::WitnessDirectory::from_json(s).map_err(invalid)
 }
 
 /// The reference verifier (witness-log-network `Dossier::verify`) over a
@@ -792,13 +789,11 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
         Some(s) => Some(parse_directory(s)?),
         None => None,
     };
+    // Every input, as the dossier, nests at most 1000 deep (SPEC.md §9).
     let revocations: Vec<witness_log_core::identity::RevocationStatement> =
         match &o.revocations_json {
             None => Vec::new(),
-            Some(s) if s.trim_start().starts_with('{') => {
-                vec![serde_json::from_str(s).map_err(invalid)?]
-            }
-            Some(s) => serde_json::from_str(s).map_err(invalid)?,
+            Some(s) => witness_log_network::revocations_from_json(s).map_err(invalid)?,
         };
     let known_heads = o
         .known_heads
@@ -809,16 +804,11 @@ pub fn verify_dossier_json(dossier_json: String, options: Option<VerifyOptions>)
                 .map_err(|e| invalid(format!("known head {h:?}: {e}")))
         })
         .collect::<Result<Vec<_>>>()?;
+    // Each item read as an evidence file, the nesting limit counted from it.
     let evidence = match &o.evidence_json {
         None => Vec::new(),
-        Some(s) => serde_json::from_str::<Vec<serde_json::Value>>(s)
-            .map_err(invalid)?
-            .into_iter()
-            .map(|v| {
-                witness_log_network::tlog_witness::EquivocationProof::from_evidence(&v)
-                    .map_err(|e| invalid(format!("not an equivocation proof: {e}")))
-            })
-            .collect::<Result<Vec<_>>>()?,
+        Some(s) => witness_log_network::tlog_witness::EquivocationProof::list_from_evidence_json(s)
+            .map_err(invalid)?,
     };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: o.identity.as_deref(),

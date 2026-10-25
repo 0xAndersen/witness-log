@@ -18,6 +18,7 @@ import {
   WitnessLogError,
   type Dossier,
 } from "../src/index.js";
+import * as native from "@witness-log/node/native";
 
 /** The two verifiers must agree; returns the TypeScript verdict. */
 function bothVerdicts(d: Dossier, opts: Parameters<typeof verifyDossier>[1] = {}) {
@@ -428,6 +429,46 @@ describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers
         continue;
       }
       for (const r of [verifyDossier(c.dossier_json, opts), verifyDossierNative(c.dossier_json, opts)]) same(r, c.expect, c.name);
+    }
+  });
+
+  it("17 inputs: a directory, revocations or evidence item nested deeper than 1000 is refused by both, as a malformed one", { skip: !existsSync(join(dir, "17_dossier_parsing.json")) }, () => {
+    // Before, both read a directory or revocations of any depth, and the
+    // native evidence list stopped at serde_json's 128 levels.
+    const v = JSON.parse(readFileSync(join(dir, "17_dossier_parsing.json"), "utf8"));
+    const valid: string = v.cases.find((c: { name: string }) => c.name === "valid").dossier_json;
+    for (const c of v.inputs) {
+      const value = JSON.parse(c.text);
+      const opts =
+        c.input === "directory"
+          ? { directory: value, minWitnesses: c.min_witnesses }
+          : c.input === "revocations"
+            ? { revocations: value }
+            : { evidence: [value] };
+      // The native call takes the text itself: V8's JSON.stringify cannot
+      // write a value 100,000 deep, which verifyDossierNative would do.
+      const nativeOpts =
+        c.input === "directory"
+          ? { directoryJson: c.text, minWitnesses: c.min_witnesses }
+          : c.input === "revocations"
+            ? { revocationsJson: c.text }
+            : { evidenceJson: `[${c.text}]` };
+      const viaWrapper = c.text.length < 100_000;
+      if (c.expect.refused) {
+        assert.throws(() => verifyDossier(valid, opts), (e: Error) => e instanceof TypeError && /nested deeper than 1000/.test(e.message), c.name);
+        assert.throws(() => native.verifyDossierJson(valid, nativeOpts), /nested deeper than 1000/, c.name);
+        if (viaWrapper) assert.throws(() => verifyDossierNative(valid, opts), WitnessLogError, c.name);
+        continue;
+      }
+      const rs = JSON.parse(native.verifyDossierJson(valid, nativeOpts));
+      assert.equal(rs.verdict, c.expect.verdict, c.name);
+      assert.equal(rs.failures.length > 0, c.expect.has_failures, c.name);
+      assert.equal(rs.quorum?.valid_receipts ?? null, c.expect.valid_receipts, c.name);
+      for (const r of [verifyDossier(valid, opts), verifyDossierNative(valid, opts)]) {
+        assert.equal(r.report.verdict, c.expect.verdict, c.name);
+        assert.equal(r.exitCode, c.expect.exit_code, c.name);
+        assert.equal(r.report.contradictions.length, c.expect.contradictions, c.name);
+      }
     }
   });
 

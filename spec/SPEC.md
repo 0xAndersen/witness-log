@@ -833,6 +833,24 @@ limit at 1000 and 1001, and numbers at the edge of binary64. A message
 saying why a text is not a dossier, or why a check failed, quotes at most a
 bounded part of the input.
 
+**Every input nests at most 1000 deep (normative).** The nesting limit
+covers every JSON input a verifier reads, not only the dossier: a trusted
+directory (`{"witnesses": [...]}` or a bare array of entries), revocations
+the verifier knows of out of band (one statement or an array of them) and
+each evidence item (an equivocation proof, bare or as `witness serve`
+writes it, `{"kind": "equivocation", "proof": {...}}`). Each nests at most
+1000 arrays and objects deep, counted as above with its own top-level
+value at depth 1, wherever the nesting is, an ignored key's value
+included. A deeper one is refused exactly as a malformed one is: the CLI
+exits `2`, a library returns an error or raises, and no verdict is given.
+Where one JSON text carries several inputs (a binding's array of evidence
+items, the wasm build's options object), the limit applies to each input
+in it. `/corpus/17_dossier_parsing.json`'s `inputs` pin the limit for each
+input at 1000, 1001 and 100,000 levels and with brackets inside strings.
+(Before this rule, Go refused these inputs 10,000 levels deep while the
+reference read a directory or revocations of any depth and an evidence
+item only to serde_json's 128 levels.)
+
 **JSON Schema.** `spec/dossier.schema.json` (JSON Schema 2020-12) states
 the exact shape of a dossier and of every object in it: field names,
 hex lengths, enumerations, which fields are optional. The reference
@@ -1275,7 +1293,7 @@ and, if it verifies dossiers, returns the expected verdict, exit code and report
 verification vectors `/corpus/13_verdicts.json`, `/corpus/15_evidence_and_args.json` (which also says which
 inputs a verifier must refuse), `/corpus/16_ed25519_strict.json` (whose signatures must also each get the stated
 answer from the implementation's Ed25519 check) and `/corpus/17_dossier_parsing.json` (which also says which texts
-are not dossiers). The encoding vectors are enforced in CI via `witness-log conform`
+are not dossiers, and which directory, revocations and evidence texts a verifier must refuse). The encoding vectors are enforced in CI via `witness-log conform`
 (see CONTRIBUTING.md); the verification vectors are run by each verifier's own test suite. Together they are the actual gate for
 claiming compatibility — not this document by itself. `/corpus/14_fleet_anchor.json` pins the experimental RFC-0001
 prototype for the verifiers that implement its opt-in and is not part of conformance.

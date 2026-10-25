@@ -21,6 +21,14 @@
 //!   reference's serde_json, without `float_roundtrip`, refused finite
 //!   literals near f64::MAX that Go and TypeScript read).
 //!
+//! `inputs` applies the nesting limit to the other JSON inputs a verifier
+//! reads: a trusted directory, revocations and an evidence item, each at
+//! depth 1000, 1001 and 100,000 and with brackets in a string. The audit of
+//! 0.6.1 found the limit covered dossier text only: Go refused those inputs
+//! 10,000 deep and more, the reference read a directory or revocations of
+//! any depth and an evidence item only up to serde_json's recursion limit
+//! (128), and TypeScript read options of any depth.
+//!
 //! The text is the input, byte for byte, so it is stored as a string.
 //!
 //!   cargo run -p witness-log-network --example generate_parsing_corpus
@@ -33,16 +41,17 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::json;
-use witness_log_core::c2sp::{canonical_origin, Checkpoint, Cosignature};
+use witness_log_core::c2sp::{canonical_origin, Checkpoint, Cosignature, VerifierKey};
 use witness_log_core::identity::{
     revocation_message, KeyBindingStatement, KeyCustody, RevocationStatement,
 };
 use witness_log_core::leaf::{AuthorizationEventKind, HandoffDirection, Leaf, LeafType};
 use witness_log_core::merkle::{leaf_hash, MerkleTree};
 use witness_log_core::sth::SignedTreeHead;
+use witness_log_network::tlog_witness::EquivocationProof;
 use witness_log_network::{
-    Dossier, KnownHead, Verdict, VerifyContext, WitnessDirectory, WitnessEntry, WitnessReceipt,
-    WitnessRuntime,
+    revocations_from_json, Dossier, DossierReport, InputParseError, KnownHead, Verdict,
+    VerifyContext, WitnessDirectory, WitnessEntry, WitnessReceipt, WitnessRuntime,
 };
 
 const IDENTITY_SEED: [u8; 32] = [0x19; 32];
@@ -337,6 +346,86 @@ impl Case {
         self.min_witnesses = Some(min);
         self
     }
+}
+
+/// Which input of `verify` an `inputs` case gives as text.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Input {
+    /// `--directory`: `{"witnesses": [...]}` or a bare array of entries.
+    Directory,
+    /// `--revocations`: one statement or an array of them.
+    Revocations,
+    /// `--evidence`: one evidence item.
+    Evidence,
+}
+
+impl Input {
+    fn name(self) -> &'static str {
+        match self {
+            Input::Directory => "directory",
+            Input::Revocations => "revocations",
+            Input::Evidence => "evidence",
+        }
+    }
+}
+
+/// A case of `inputs`: the dossier of the case named "valid", verified with
+/// `text` as the input `input` names. `NotADossier` here means the verifier
+/// refuses the input.
+struct InputCase {
+    name: &'static str,
+    input: Input,
+    text: String,
+    intended: Outcome,
+}
+
+fn input(name: &'static str, input: Input, text: String, intended: Outcome) -> InputCase {
+    InputCase {
+        name,
+        input,
+        text,
+        intended,
+    }
+}
+
+/// The CLI's exit code for a report (strict, without --allow-sub-majority).
+fn exit_code(r: &DossierReport) -> u8 {
+    if r.split_view_unsafe {
+        11
+    } else {
+        match r.verdict {
+            Verdict::Witnessed => 0,
+            Verdict::ConsistentUnwitnessed => 10,
+            Verdict::Unanchored => 20,
+            Verdict::Diverged => 30,
+            Verdict::Invalid => 40,
+        }
+    }
+}
+
+/// Two checkpoints the identity signed for one size with different roots.
+fn equivocation(identity: &SigningKey) -> EquivocationProof {
+    let origin = canonical_origin(&identity.verifying_key());
+    let note = |root: u8| {
+        Checkpoint {
+            origin: origin.clone(),
+            tree_size: 2,
+            root_hash: [root; 32],
+            extensions: vec![],
+        }
+        .sign(identity)
+        .unwrap()
+        .encode()
+        .unwrap()
+    };
+    let proof = EquivocationProof {
+        origin: origin.clone(),
+        log_vkey: VerifierKey::for_ed25519(&origin, &identity.verifying_key()).encode(),
+        earlier_note: note(0xa1),
+        conflicting_note: note(0xa2),
+    };
+    assert!(proof.verify());
+    proof
 }
 
 use Outcome::{Exit, NotADossier as Refused};
@@ -701,6 +790,70 @@ fn main() {
     )];
     cases.push(head);
 
+    // ---- the other inputs a verifier reads: at most 1000 deep, each
+    // counted from its own top-level value, wherever the nesting is
+    let corpus_directory = WitnessDirectory {
+        witnesses: vec![entry(0, k.witness_hex(0)), entry(1, k.witness_hex(1))],
+    };
+    let dir_t = serde_json::to_string(&corpus_directory).unwrap();
+    let entries_t = serde_json::to_string(&corpus_directory.witnesses).unwrap();
+    // Revoked between leaf 0 and leaf 1 of "valid": leaves 1 and 2 no
+    // longer verify, so a verifier that read the statement says INVALID.
+    let revoked_at = T0 + 500;
+    let reason = "corpus 17 inputs";
+    let revocation = RevocationStatement {
+        identity_pubkey: id.clone(),
+        as_of_ms: revoked_at,
+        as_of_index: None,
+        reason: reason.into(),
+        signature: hex::encode(
+            k.identity
+                .sign(&revocation_message(
+                    &k.identity.verifying_key().to_bytes(),
+                    revoked_at,
+                    None,
+                    reason,
+                ))
+                .to_bytes(),
+        ),
+    };
+    assert!(revocation.verify().is_ok());
+    let rev_t = serde_json::to_string(&revocation).unwrap();
+    let proof_t = serde_json::to_string(&equivocation(&k.identity)).unwrap();
+    let wrapped = |proof: &str| {
+        format!("{{\"observed_unix\":1700000100,\"kind\":\"equivocation\",\"proof\":{proof}}}")
+    };
+    let wrapped_t = wrapped(&proof_t);
+    let deep = |n: usize| format!("\"zz\":{}", nested(n));
+    let in_string = format!("\"zz\":\"\\\"{}\"", "[".repeat(1001));
+    // [entry 0, entry 1 with the member]
+    let bare_entries = |m: &str| format!("{},{m}}}]", &entries_t[..entries_t.len() - 2]);
+    let rev_array = |m: &str| format!("[{}]", add_field(&rev_t, m));
+    use Input::{Directory, Evidence, Revocations};
+    let inputs = vec![
+        input("a trusted directory with an unknown member nested to depth 1000, the limit", Directory, add_field(&dir_t, &deep(999)), Exit(0)),
+        input("a trusted directory with an unknown member nested to depth 1001", Directory, add_field(&dir_t, &deep(1000)), Refused),
+        input("a trusted directory with an unknown member of objects nested to depth 1001", Directory, add_field(&dir_t, &format!("\"zz\":{}", objects(1000))), Refused),
+        input("a trusted directory as a bare array, an entry's unknown member nested to depth 1000", Directory, bare_entries(&deep(998)), Exit(0)),
+        input("a trusted directory as a bare array, an entry's unknown member nested to depth 1001", Directory, bare_entries(&deep(999)), Refused),
+        input("a trusted directory nested 100000 deep", Directory, add_field(&dir_t, &deep(100_000)), Refused),
+        input("a trusted directory with 1001 brackets in a string after an escaped quote", Directory, add_field(&dir_t, &in_string), Exit(0)),
+        input("a revocation statement with an unknown member nested to depth 1000, the limit", Revocations, add_field(&rev_t, &deep(999)), Exit(40)),
+        input("a revocation statement with an unknown member nested to depth 1001", Revocations, add_field(&rev_t, &deep(1000)), Refused),
+        input("an array of revocation statements, one with an unknown member nested to depth 1000", Revocations, rev_array(&deep(998)), Exit(40)),
+        input("an array of revocation statements, one with an unknown member nested to depth 1001", Revocations, rev_array(&deep(999)), Refused),
+        input("a revocation statement nested 100000 deep", Revocations, add_field(&rev_t, &deep(100_000)), Refused),
+        input("a revocation statement with 1001 brackets in a string after an escaped quote", Revocations, add_field(&rev_t, &in_string), Exit(40)),
+        input("an evidence item as witness serve writes it, an unknown member nested to depth 1000, the limit", Evidence, add_field(&wrapped_t, &deep(999)), Exit(30)),
+        input("an evidence item as witness serve writes it, an unknown member nested to depth 1001", Evidence, add_field(&wrapped_t, &deep(1000)), Refused),
+        input("an evidence item whose proof has an unknown member nested to depth 1000", Evidence, wrapped(&add_field(&proof_t, &deep(998))), Exit(30)),
+        input("an evidence item whose proof has an unknown member nested to depth 1001", Evidence, wrapped(&add_field(&proof_t, &deep(999))), Refused),
+        input("a bare equivocation proof with an unknown member nested to depth 1000", Evidence, add_field(&proof_t, &deep(999)), Exit(30)),
+        input("a bare equivocation proof with an unknown member nested to depth 1001", Evidence, add_field(&proof_t, &deep(1000)), Refused),
+        input("an evidence item nested 100000 deep", Evidence, add_field(&wrapped_t, &deep(100_000)), Refused),
+        input("an evidence item with 1001 brackets in a string after an escaped quote", Evidence, add_field(&wrapped_t, &in_string), Exit(30)),
+    ];
+
     // ---- expectations from the reference
     let mut out = Vec::new();
     let mut names = std::collections::BTreeSet::new();
@@ -737,17 +890,7 @@ fn main() {
                     accept_fleet_anchor: false,
                 };
                 let r = d.verify(0.66, &ctx);
-                let exit_code: u8 = if r.split_view_unsafe {
-                    11
-                } else {
-                    match r.verdict {
-                        Verdict::Witnessed => 0,
-                        Verdict::ConsistentUnwitnessed => 10,
-                        Verdict::Unanchored => 20,
-                        Verdict::Diverged => 30,
-                        Verdict::Invalid => 40,
-                    }
-                };
+                let exit_code = exit_code(&r);
                 assert_eq!(
                     Exit(exit_code),
                     c.intended,
@@ -784,6 +927,72 @@ fn main() {
         }));
     }
 
+    let valid = Dossier::from_json(&base_t).unwrap();
+    let mut inputs_out = Vec::new();
+    for c in &inputs {
+        assert!(
+            names.insert(c.name.to_string()),
+            "duplicate case name {}",
+            c.name
+        );
+        let min_witnesses = (c.input == Directory).then_some(2);
+        let read = match c.input {
+            Directory => WitnessDirectory::from_json(&c.text).map(|d| (Some(d), vec![], vec![])),
+            Revocations => revocations_from_json(&c.text).map(|r| (None, r, vec![])),
+            Evidence => {
+                EquivocationProof::from_evidence_json(&c.text).map(|p| (None, vec![], vec![p]))
+            }
+        };
+        let expect = match read {
+            Err(e) => {
+                assert_eq!(
+                    c.intended, Refused,
+                    "{}: the reference refuses it: {e}",
+                    c.name
+                );
+                assert!(matches!(e, InputParseError::TooDeep(_)), "{}: {e}", c.name);
+                json!({
+                    "refused": true, "verdict": null, "exit_code": 2,
+                    "has_failures": null, "contradictions": null, "valid_receipts": null,
+                })
+            }
+            Ok((directory, revocations, evidence)) => {
+                let ctx = VerifyContext {
+                    trusted_directory: directory.as_ref(),
+                    min_receipts: min_witnesses,
+                    revocations: &revocations,
+                    evidence: &evidence,
+                    ..VerifyContext::default()
+                };
+                let r = valid.verify(0.66, &ctx);
+                let exit_code = exit_code(&r);
+                assert_eq!(
+                    Exit(exit_code),
+                    c.intended,
+                    "{}: the reference gives exit {exit_code} ({:?})",
+                    c.name,
+                    r.failures
+                );
+                json!({
+                    "refused": false,
+                    "verdict": r.verdict,
+                    "exit_code": exit_code,
+                    "has_failures": !r.failures.is_empty(),
+                    "contradictions": r.contradictions.len(),
+                    "valid_receipts": r.quorum.as_ref().map(|q| q.valid_receipts),
+                })
+            }
+        };
+        inputs_out.push(json!({
+            "name": c.name,
+            "input": c.input.name(),
+            "text": c.text,
+            "dossier": "valid",
+            "min_witnesses": min_witnesses,
+            "expect": expect,
+        }));
+    }
+
     let doc = json!({
         "description": "Reading a dossier (outside review III, H2 and P3). Each case's \
             `dossier_json` is the input text, byte for byte; give it to your verifier as text. \
@@ -816,9 +1025,25 @@ fn main() {
             keys compare case-insensitively; the checkpoint's root_hash is compared, as written, \
             with the lowercase hex of the rebuilt root and a receipt's root_hash with the \
             checkpoint's, both case-sensitively; every signed message covers the strings as \
-            written. Every key here is public and for testing only.",
+            written. `inputs` holds the other JSON inputs a verifier reads, as text, under the \
+            same nesting rule: a trusted directory (`input` \"directory\": {\"witnesses\": [...]} \
+            or a bare array of entries, as --directory), revocations (\"revocations\": one \
+            statement or an array of them, as --revocations) and an evidence item (\"evidence\": \
+            a bare proof or one as `witness serve` writes it, as --evidence), each nesting at \
+            most 1000 arrays and objects deep, counted outside strings from its own top-level \
+            value at depth 1, wherever the nesting is. Verify the dossier of the case named by \
+            `dossier` with that one input, min_witnesses and threshold 0.66. `refused` true: the \
+            verifier refuses the input as it refuses a malformed one, and gives no verdict (a CLI \
+            exits 2; Rust's WitnessDirectory::from_json, revocations_from_json and \
+            EquivocationProof::from_evidence_json fail; wasm, Node and Python raise; Go's \
+            ParseDirectory, ParseRevocations and ParseEvidence return an error; TypeScript's \
+            verifyDossier throws a TypeError for the option); otherwise the verdict, exit code \
+            and report fields must equal expect. Where one JSON text carries several inputs (an \
+            array of evidence items, wasm's options object), the limit applies to each input in \
+            it. Every key here is public and for testing only.",
         "directories": directories,
         "cases": out,
+        "inputs": inputs_out,
     });
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus")

@@ -24,6 +24,11 @@ fn read_json(rel: &str) -> Value {
     serde_json::from_str(&read(rel)).unwrap()
 }
 
+/// An option value (an evidence item) as the options JSON carries it.
+fn raw(v: &Value) -> Box<serde_json::value::RawValue> {
+    serde_json::value::to_raw_value(v).unwrap()
+}
+
 /// A minimal dossier wrapper around a list of leaves, for `bind`, which
 /// only reads identity_pubkey and leaves. Not verifiable; not meant to be.
 fn dossier_with(identity: &str, leaves: Vec<Value>) -> String {
@@ -380,7 +385,7 @@ fn corpus_13_verdicts() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+                .map(|k| raw(&v["evidence"][k.as_str().unwrap()]))
                 .collect(),
             subject_org: c["subject_org"].as_str().map(str::to_string),
             ..Default::default()
@@ -495,7 +500,7 @@ fn corpus_15_evidence_and_args() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+                .map(|k| raw(&v["evidence"][k.as_str().unwrap()]))
                 .collect(),
             subject_org: c["subject_org"].as_str().map(str::to_string),
             ..Default::default()
@@ -558,7 +563,7 @@ fn run_verdict_case(v: &Value, c: &Value, dossier: &str) {
             .as_array()
             .unwrap()
             .iter()
-            .map(|k| v["evidence"][k.as_str().unwrap()].clone())
+            .map(|k| raw(&v["evidence"][k.as_str().unwrap()]))
             .collect(),
         subject_org: c["subject_org"].as_str().map(str::to_string),
         ..Default::default()
@@ -609,6 +614,106 @@ fn corpus_16_ed25519_strict() {
         let dossier = v["dossiers"][c["dossier"].as_str().unwrap()].to_string();
         run_verdict_case(&v, c, &dossier);
     }
+}
+
+/// Corpus 17's `inputs`, given as the page gives them: the directory as its
+/// own text, revocations and an evidence item inside the options JSON. Each
+/// is read from its own text, so the nesting limit counts from the input
+/// as for the CLI's files. Before, the directory and revocations were read
+/// at any depth, and an evidence item (a `serde_json::Value` in the
+/// options) only to serde_json's 128 levels, the options object included.
+#[test]
+fn corpus_17_inputs() {
+    let v = read_json("corpus/17_dossier_parsing.json");
+    let inputs = v["inputs"].as_array().unwrap();
+    assert!(inputs.len() >= 18);
+    for c in inputs {
+        let name = c["name"].as_str().unwrap();
+        let text = c["text"].as_str().unwrap();
+        let dossier = v["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == c["dossier"])
+            .unwrap()["dossier_json"]
+            .as_str()
+            .unwrap();
+        let (directory, options) = match c["input"].as_str().unwrap() {
+            "directory" => (
+                Some(text),
+                format!(r#"{{"min_receipts":{}}}"#, c["min_witnesses"]),
+            ),
+            "revocations" => (None, format!(r#"{{"revocations":{text}}}"#)),
+            "evidence" => (None, format!(r#"{{"evidence":[{text}]}}"#)),
+            other => panic!("{name}: {other}"),
+        };
+        let opts: VerifyOptions = serde_json::from_str(&options).unwrap();
+        let e = &c["expect"];
+        match verify_dossier_value(dossier, directory, &opts) {
+            Err(err) => {
+                assert_eq!(e["refused"], json!(true), "{name}: refused: {err}");
+                assert!(err.contains("nested deeper than 1000"), "{name}: {err}");
+            }
+            Ok(out) => {
+                assert_eq!(e["refused"], json!(false), "{name}: read");
+                assert_eq!(out["report"]["verdict"], e["verdict"], "{name}");
+                assert_eq!(out["exit_code"], e["exit_code"], "{name}");
+                assert_eq!(
+                    json!(!out["report"]["failures"].as_array().unwrap().is_empty()),
+                    e["has_failures"],
+                    "{name}"
+                );
+                assert_eq!(
+                    out["report"]["quorum"]["valid_receipts"], e["valid_receipts"],
+                    "{name}"
+                );
+            }
+        }
+    }
+}
+
+/// Revocations in the options are one statement or an array of them, as
+/// `--revocations` reads them (and Go's wasm build); `null` is none.
+#[test]
+fn options_revocations_are_one_statement_or_an_array() {
+    let v = read_json("corpus/17_dossier_parsing.json");
+    let find = |list: &str, n: &str| -> Value {
+        v[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == n)
+            .unwrap()
+            .clone()
+    };
+    let dossier = find("cases", "valid")["dossier_json"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let statement = find(
+        "inputs",
+        "a revocation statement with 1001 brackets in a string after an escaped quote",
+    )["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (options, verdict) in [
+        ("{}".to_string(), "unanchored"),
+        (r#"{"revocations":null}"#.to_string(), "unanchored"),
+        (format!(r#"{{"revocations":{statement}}}"#), "invalid"),
+        (format!(r#"{{"revocations":[{statement}]}}"#), "invalid"),
+    ] {
+        let opts: VerifyOptions = serde_json::from_str(&options).unwrap();
+        let out = verify_dossier_value(&dossier, None, &opts).unwrap();
+        assert_eq!(
+            out["report"]["verdict"],
+            verdict,
+            "{}",
+            &options[..20.min(options.len())]
+        );
+    }
+    let opts: VerifyOptions = serde_json::from_str(r#"{"revocations":"x"}"#).unwrap();
+    assert!(verify_dossier_value(&dossier, None, &opts).is_err());
 }
 
 #[test]

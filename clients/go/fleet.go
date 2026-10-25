@@ -42,7 +42,10 @@ type FleetAnchor struct {
 }
 
 // FleetAnchorReport says what the verifier did with a dossier's fleet
-// anchor. Status is "ignored" (no opt-in), "verified" or "failed".
+// anchor. Status is "ignored" (no opt-in), "verified" or "failed". Origin
+// is the anchor's origin, nil when the field is malformed or the origin is
+// longer than MaxFleetOriginBytes (no fleet origin is, and a hostile one is
+// not copied into the report whole), as the reference reports it.
 type FleetAnchorReport struct {
 	Status        string   `json:"status"`
 	Origin        *string  `json:"origin"`
@@ -110,10 +113,13 @@ func parseFleetAnchor(raw json.RawMessage) (*FleetAnchor, error) {
 	return &a, nil
 }
 
+// MaxFleetOriginBytes is the longest fleet origin, in bytes.
+const MaxFleetOriginBytes = 255
+
 // ValidFleetOrigin is a C2SP origin (non-empty, at most 255 bytes, no
 // space, '+' or control character) that is not a witness-log agent origin.
 func ValidFleetOrigin(origin string) bool {
-	if origin == "" || len(origin) > 255 || strings.HasPrefix(origin, CanonicalOriginPrefix) {
+	if origin == "" || len(origin) > MaxFleetOriginBytes || strings.HasPrefix(origin, CanonicalOriginPrefix) {
 		return false
 	}
 	for _, r := range origin {
@@ -296,7 +302,10 @@ func (d *Dossier) evaluateFleetAnchor(directory *Directory, opts Options) (*Flee
 	report := &FleetAnchorReport{Status: fleetAnchorStatusIgnored, Failures: []string{}}
 	if parsed != nil {
 		origin, index := parsed.Origin, parsed.EntryIndex
-		report.Origin, report.EntryIndex = &origin, &index
+		report.EntryIndex = &index
+		if len(origin) <= MaxFleetOriginBytes {
+			report.Origin = &origin
+		}
 	}
 	if !opts.AcceptFleetAnchor {
 		return report, nil, false

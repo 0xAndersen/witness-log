@@ -19,7 +19,10 @@ crate-type = ["cdylib", "rlib"]
 witness-log-core = { version = "0.6.1", path = "../witness-log-core" }
 witness-log-network = { version = "0.6.1", path = "../witness-log-network" }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# raw_value: the options' revocations and evidence are each read from their
+# own JSON text, so SPEC.md §9's nesting limit counts from each input as it
+# does for the CLI's files.
+serde_json = { workspace = true, features = ["raw_value"] }
 hex = { workspace = true }
 ed25519-dalek = { workspace = true }
 # Pinned exactly: `wasm-bindgen-cli` must be installed at the same version

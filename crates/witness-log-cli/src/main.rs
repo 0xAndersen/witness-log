@@ -790,21 +790,16 @@ pub(crate) fn parse_seed(raw: &[u8]) -> Result<zeroize::Zeroizing<[u8; 32]>, Str
     Ok(zeroize::Zeroizing::new(bytes))
 }
 
-/// Replay a journal read-only, with the seed when the caller supplied
-/// one (required for a sealed journal; checked against an unsealed one).
-/// One revocation statement (what `log revoke` prints) or an array of them.
+/// One revocation statement (what `log revoke` prints) or an array of
+/// them, nested at most 1000 deep (`witness_log_network::revocations_from_json`).
 fn parse_revocations(
     text: &str,
 ) -> Result<Vec<witness_log_core::identity::RevocationStatement>, String> {
-    if text.trim_start().starts_with('{') {
-        serde_json::from_str(text)
-            .map(|one| vec![one])
-            .map_err(|e| e.to_string())
-    } else {
-        serde_json::from_str(text).map_err(|e| e.to_string())
-    }
+    witness_log_network::revocations_from_json(text).map_err(|e| e.to_string())
 }
 
+/// Replay a journal read-only, with the seed when the caller supplied
+/// one (required for a sealed journal; checked against an unsealed one).
 pub(crate) fn replay_journal(
     path: &str,
     seed: Option<&[u8; 32]>,
@@ -876,17 +871,15 @@ pub(crate) fn is_hex32(s: &str) -> bool {
 }
 
 /// A trusted directory file is `{"witnesses": [...]}`; a bare JSON array
-/// of entries (what `witness init` prints, collected) is accepted too.
+/// of entries (what `witness init` prints, collected) is accepted too. At
+/// most 1000 deep, as every verifier input (`WitnessDirectory::from_json`).
 pub(crate) fn parse_directory(raw: &str) -> Result<WitnessDirectory, String> {
-    match serde_json::from_str::<WitnessDirectory>(raw) {
-        Ok(d) => Ok(d),
-        Err(as_object) => match serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(raw) {
-            Ok(witnesses) => Ok(WitnessDirectory { witnesses }),
-            Err(_) => Err(format!(
-                "{as_object}\n  expected {{\"witnesses\": [ <entry>, ... ]}} or a bare JSON array of the entries `witness init` prints"
-            )),
-        },
-    }
+    WitnessDirectory::from_json(raw).map_err(|e| match e {
+        witness_log_network::InputParseError::Json(_) => format!(
+            "{e}\n  expected {{\"witnesses\": [ <entry>, ... ]}} or a bare JSON array of the entries `witness init` prints"
+        ),
+        other => other.to_string(),
+    })
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
@@ -1081,16 +1074,29 @@ fn verify_exit_code(report: &DossierReport, opts: &Options) -> u8 {
 }
 
 /// A witness evidence file as `witness serve` writes it
-/// (`{"kind": "equivocation", "proof": {...}}`) or a bare proof; anything
-/// else (an array, a null proof, a missing field) is a usage error
-/// (`EquivocationProof::from_evidence`).
+/// (`{"kind": "equivocation", "proof": {...}}`) or a bare proof, nested at
+/// most 1000 deep; anything else (an array, a null proof, a missing field)
+/// is a usage error (`EquivocationProof::from_evidence_json`).
 pub(crate) fn read_evidence(
     path: &str,
 ) -> Result<witness_log_network::tlog_witness::EquivocationProof, String> {
     let raw = read_input(path).map_err(|e| e.to_string())?;
-    let doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    witness_log_network::tlog_witness::EquivocationProof::from_evidence(&doc)
-        .map_err(|e| format!("not an equivocation proof: {e}"))
+    witness_log_network::tlog_witness::EquivocationProof::from_evidence_json(&raw)
+        .map_err(|e| e.to_string())
+}
+
+/// The dossier's own `identity_pubkey` as `verify --json` reports it: whole
+/// when it is at most 64 bytes (a key, in hex, is 64), otherwise its first
+/// 64 characters and "…". A longer one is never a key (the verdict is
+/// INVALID), and through 0.6.1 a hostile file's megabytes were copied into
+/// the report whole. The Go CLI reports it the same way.
+fn reported_identity(claimed: &str) -> String {
+    const KEY_HEX: usize = 64;
+    if claimed.len() <= KEY_HEX {
+        return claimed.to_string();
+    }
+    let cut: String = claimed.chars().take(KEY_HEX).collect();
+    format!("{cut}\u{2026}")
 }
 
 fn run_verify(opts: &Options) -> ExitCode {
@@ -1187,7 +1193,7 @@ fn run_verify(opts: &Options) -> ExitCode {
     if opts.json {
         let mut output = serde_json::json!({
             "path": opts.path,
-            "identity_pubkey": dossier.identity_pubkey,
+            "identity_pubkey": reported_identity(&dossier.identity_pubkey),
             "threshold_used": opts.threshold,
             "min_witnesses_used": opts.min_witnesses,
             "identity_pinned": opts.identity.is_some(),

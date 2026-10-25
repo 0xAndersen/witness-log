@@ -381,20 +381,21 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", path, err)
 		return witnesslog.ExitUsage
 	}
-	verdict, report, err := witnesslog.VerifyDossier(raw, directory, opts)
+	// Parsed once, as the reference reads it: the identity_pubkey --json
+	// reports is the dossier's field, never another key that differs from
+	// it only by case (encoding/json alone matched "Identity_Pubkey").
+	dossier, err := witnesslog.ParseDossier(raw)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", path, err)
 		return witnesslog.ExitUsage
 	}
+	report := dossier.Verify(directory, opts)
+	verdict := report.Verdict
 	if a.json {
 		threshold := a.threshold
-		var claimed struct {
-			IdentityPubkey string `json:"identity_pubkey"`
-		}
-		_ = json.Unmarshal(raw, &claimed)
 		out := map[string]any{
 			"path":               path,
-			"identity_pubkey":    claimed.IdentityPubkey,
+			"identity_pubkey":    reportedIdentity(dossier.IdentityPubkey),
 			"threshold_used":     threshold,
 			"min_witnesses_used": opts.MinReceipts,
 			"identity_pinned":    opts.ExpectedIdentityPubkey != "",
@@ -596,6 +597,27 @@ func viaText(v *witnesslog.WitnessedVia) string {
 		return "neither path (not WITNESSED)"
 	}
 	return string(*v)
+}
+
+// reportedIdentity is the dossier's own identity_pubkey as --json reports
+// it, as the reference CLI does: whole when it is at most 64 bytes (a key,
+// in hex, is 64), otherwise its first 64 characters and "…". A longer one
+// is never a key (the verdict is INVALID); through 0.6.1 a hostile file's
+// megabytes were copied into the output whole.
+func reportedIdentity(claimed string) string {
+	const keyHex = 64
+	if len(claimed) <= keyHex {
+		return claimed
+	}
+	cut, n := claimed, 0
+	for i := range claimed {
+		if n == keyHex {
+			cut = claimed[:i]
+			break
+		}
+		n++
+	}
+	return cut + "…"
 }
 
 // subjectOrgJSON is null when no --subject-org was given, like the Rust CLI.

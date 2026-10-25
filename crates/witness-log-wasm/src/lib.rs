@@ -30,6 +30,7 @@
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 use witness_log_core::leaf::{
@@ -46,7 +47,10 @@ pub const DEFAULT_QUORUM_THRESHOLD: f64 = 0.66;
 /// `{"expected_identity_pubkey": "<hex>", "threshold": 0.66, "min_receipts": 2,
 ///   "allow_sub_majority": false, "revocations": [...],
 ///   "known_heads": ["<size>:<root hex>"], "evidence": [{...}]}`.
-/// Every field is optional.
+/// Every field is optional. `revocations` and each evidence item are kept
+/// as their JSON text and read as the CLI reads its `--revocations` and
+/// `--evidence` files, SPEC.md §9's nesting limit included, counted from
+/// the input itself.
 #[derive(Debug, Default, Deserialize)]
 pub struct VerifyOptions {
     /// The identity the caller expects, obtained out-of-band.
@@ -63,10 +67,11 @@ pub struct VerifyOptions {
     /// verdict's `exit_code` is 11, as `witness-log verify` returns.
     #[serde(default)]
     pub allow_sub_majority: bool,
-    /// Revocation statements the caller knows of out of band (SPEC.md §5);
+    /// Revocation statements the caller knows of out of band (SPEC.md §5),
+    /// one or a JSON array of them (`witness_log_network::revocations_from_json`);
     /// applied even when the dossier omits them.
     #[serde(default)]
-    pub revocations: Vec<witness_log_core::identity::RevocationStatement>,
+    pub revocations: Option<Box<RawValue>>,
     /// Heads the caller already trusts for this identity, as
     /// `"<size>:<root hex>"`; one the dossier does not reproduce makes the
     /// verdict DIVERGED (RFC-0002).
@@ -74,9 +79,10 @@ pub struct VerifyOptions {
     pub known_heads: Vec<String>,
     /// Witness equivocation proofs, bare or as `witness serve` writes them
     /// (`{"kind": "equivocation", "proof": {...}}`); one that verifies for
-    /// this identity makes the verdict DIVERGED.
+    /// this identity makes the verdict DIVERGED. Each is read as an
+    /// evidence file (`EquivocationProof::from_evidence_json`).
     #[serde(default)]
-    pub evidence: Vec<Value>,
+    pub evidence: Vec<Box<RawValue>>,
     /// The organisation that operates this log; witnesses with that
     /// `operator_org` never count as independent operators.
     #[serde(default)]
@@ -137,19 +143,15 @@ fn event_name(kind: Option<AuthorizationEventKind>) -> &'static str {
 }
 
 /// Parse a directory the way `witness-log verify --directory` does:
-/// `{"witnesses": [...]}` or a bare array of entries.
+/// `{"witnesses": [...]}` or a bare array of entries, nested at most 1000
+/// deep (`WitnessDirectory::from_json`).
 pub fn parse_directory(raw: &str) -> Result<WitnessDirectory, String> {
-    match serde_json::from_str::<WitnessDirectory>(raw) {
-        Ok(d) => Ok(d),
-        Err(as_object) => {
-            match serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(raw) {
-                Ok(witnesses) => Ok(WitnessDirectory { witnesses }),
-                Err(_) => Err(format!(
-                    "directory: {as_object} (expected {{\"witnesses\": [...]}} or a bare array of entries)"
-                )),
-            }
+    WitnessDirectory::from_json(raw).map_err(|e| match e {
+        witness_log_network::InputParseError::Json(_) => {
+            format!("directory: {e} (expected {{\"witnesses\": [...]}} or a bare array of entries)")
         }
-    }
+        other => format!("directory: {other}"),
+    })
 }
 
 /// Per-leaf display rows for the browser's leaf table. Structural
@@ -269,19 +271,24 @@ pub fn verify_dossier_value(
                 .map_err(|e| format!("known head {h:?}: {e}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let revocations = match &options.revocations {
+        Some(raw) => witness_log_network::revocations_from_json(raw.get())
+            .map_err(|e| format!("revocations: {e}"))?,
+        None => Vec::new(),
+    };
     let evidence = options
         .evidence
         .iter()
-        .map(|v| {
-            witness_log_network::tlog_witness::EquivocationProof::from_evidence(v)
-                .map_err(|e| format!("not an equivocation proof: {e}"))
+        .map(|raw| {
+            witness_log_network::tlog_witness::EquivocationProof::from_evidence_json(raw.get())
+                .map_err(|e| e.to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ctx = VerifyContext {
         expected_identity_pubkey: options.expected_identity_pubkey.as_deref(),
         trusted_directory: trusted.as_ref(),
         min_receipts: options.min_receipts,
-        revocations: &options.revocations,
+        revocations: &revocations,
         known_heads: &known_heads,
         evidence: &evidence,
         subject_org: options.subject_org.as_deref(),

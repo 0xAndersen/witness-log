@@ -37,7 +37,7 @@ for x in (r, g):
         fa["failures"] = bool(fa["failures"])
 ok = (rust_exit == go_exit and r["verdict"] == g["verdict"] and r["report"] == g["report"]
       and bool(rf) == bool(gf)
-      and all(r.get(k) == g.get(k) for k in ("strict", "allow_sub_majority", "exit_code", "subject_org")))
+      and all(r.get(k) == g.get(k) for k in ("strict", "allow_sub_majority", "exit_code", "subject_org", "identity_pubkey")))
 print(("ok   " if ok else "DIFF ") + f"{label}: rust {r['verdict']} ({rust_exit}), go {g['verdict']} ({go_exit})")
 if not ok:
     for k in sorted(set(r["report"]) | set(g["report"])):
@@ -72,6 +72,13 @@ compare "2 of 4 receipts, default threshold" "$two_of_four" --directory native/t
 compare "native, --subject-org of a cosigner" native/dossier.json --directory native/trusted.json --subject-org "Example-University" || fail=1
 compare "native, --subject-org not in the directory" native/dossier.json --directory native/trusted.json --subject-org "nobody" || fail=1
 compare "2 of 4 receipts, --subject-org of a cosigner" "$two_of_four" --directory native/trusted.json --min-witnesses 2 --subject-org " example-infra-co " || fail=1
+# Dossier fields no valid dossier has at that length are not echoed whole:
+# a fleet origin over 255 bytes is reported as null, an identity_pubkey over
+# 64 bytes as its first 64 characters and "…".
+long_fields="${TMPDIR:-/tmp}/wl-long-fields.json"
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["identity_pubkey"]="é"*40; d["fleet_anchor"]={"origin":"o"*256,"entry_index":0,"entry_bytes_b64":"","inclusion_proof":[],"fleet_checkpoint_note":""}; json.dump(d,open(sys.argv[2],"w"))' native/dossier.json "$long_fields"
+compare "a 256-byte fleet origin and an 80-byte identity_pubkey" "$long_fields" || fail=1
+compare "a 256-byte fleet origin, --accept-fleet-anchor" "$long_fields" --subject-org org --accept-fleet-anchor || fail=1
 # RFC-0001 (experimental): corpus 14's fleet-anchored dossiers, with and
 # without --accept-fleet-anchor.
 fleet="${TMPDIR:-/tmp}/wl-fleet-corpus"
@@ -122,7 +129,9 @@ args native/dossier.json --directory native/trusted.json --explain
 args native/dossier.json --known-head "1:$wrong_identity" --evidence
 # Corpus 16 (strict Ed25519) and 17 (reading a dossier, outside review of
 # 0.6.0): every case through both CLIs, the dossier as its exact text. A
-# text the reference cannot read is a usage error (exit 2) from both.
+# text the reference cannot read is a usage error (exit 2) from both. Corpus
+# 17's `inputs` give a --directory, --revocations or --evidence file as its
+# exact text, nested up to 1000 deep (read) and beyond (exit 2 from both).
 vectors="${TMPDIR:-/tmp}/wl-corpus-16-17"
 rm -rf "$vectors" && mkdir -p "$vectors"
 python3 -I - "$repo/corpus" "$vectors" <<'EOF'
@@ -153,6 +162,18 @@ for name in ("16_ed25519_strict.json", "17_dossier_parsing.json"):
         for k in c["evidence"]:
             args += ["--evidence", os.path.join(out, f"{tag}-ev-{k}.json")]
         rows.append("\t".join([f"corpus {tag}: {c['name']}"] + args))
+    dossiers = {c["name"]: c.get("dossier_json") for c in v["cases"]}
+    flags = {"directory": "--directory", "revocations": "--revocations", "evidence": "--evidence"}
+    for i, c in enumerate(v.get("inputs", [])):
+        dossier = os.path.join(out, f"{tag}-input-{i}-dossier.json")
+        text = os.path.join(out, f"{tag}-input-{i}.json")
+        for path, content in ((dossier, dossiers[c["dossier"]]), (text, c["text"])):
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+        args = [dossier, flags[c["input"]], text]
+        if c["min_witnesses"] is not None:
+            args += ["--min-witnesses", str(c["min_witnesses"])]
+        rows.append("\t".join([f"corpus {tag} input: {c['name']}"] + args))
 open(os.path.join(out, "cases.tsv"), "w", encoding="utf-8").write("\n".join(rows) + "\n")
 EOF
 while IFS=$'\t' read -r -a fields; do

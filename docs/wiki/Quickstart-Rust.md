@@ -236,7 +236,7 @@ inconclusive).
 use witness_log_network::{Dossier, Verdict, VerifyContext, WitnessDirectory};
 
 let dossier = Dossier::from_json(&json)?;   // SPEC.md §9's reading rule, depth limit included
-let directory: WitnessDirectory = serde_json::from_str(&dir_json)?;   // YOURS, obtained out-of-band
+let directory = WitnessDirectory::from_json(&dir_json)?;   // YOURS, obtained out-of-band; same rule
 
 let report = dossier.verify(0.66, &VerifyContext {
     expected_identity_pubkey: Some(&expected_hex),   // the agent you expected

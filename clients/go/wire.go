@@ -183,14 +183,30 @@ func hasUnpairedSurrogate(raw []byte) bool {
 	return false
 }
 
-// MaxDossierDepth is how deep a dossier text may nest (SPEC.md §9,
-// "Reading a dossier"): arrays and objects, counted outside strings, the
-// dossier object being depth 1. A deeper text is not a dossier, wherever
-// the nesting is, an ignored key's value included. It is the reference's
-// MAX_DOSSIER_DEPTH. Before it, encoding/json's own limit decided: a text
-// 10,000 levels deep was refused here and read by the reference
-// (outside audit of 0.6.1); now that limit is never reached.
+// MaxDossierDepth is how deep any JSON input a verifier reads may nest
+// (SPEC.md §9, "Reading a dossier"): a dossier, a trusted directory,
+// revocations, an evidence item. Arrays and objects are counted outside
+// strings, the input's top-level value being depth 1. A deeper dossier text
+// is not a dossier, and a deeper directory, revocations or evidence input
+// is the caller's error, as a malformed one is, wherever the nesting is, an
+// ignored key's value included. It is the reference's MAX_DOSSIER_DEPTH.
+// Before it, encoding/json's own limit decided: an input 10,000 levels deep
+// was refused here and read by the reference (outside audit of 0.6.1, and
+// for directories, revocations and evidence the audit after it); now that
+// limit is never reached.
 const MaxDossierDepth = 1000
+
+// CheckJSONDepth returns an error when raw nests deeper than
+// MaxDossierDepth arrays and objects, counted outside strings with its
+// top-level value at depth 1: the check ParseDossier, ParseDirectory,
+// ParseRevocations and ParseEvidence apply before reading anything, the
+// reference's check_json_depth. One pass, no allocation.
+func CheckJSONDepth(raw []byte) error {
+	if at, deep := nestingExceeds(raw, MaxDossierDepth); deep {
+		return fmt.Errorf("nested deeper than %d arrays and objects (at byte %d)", MaxDossierDepth, at)
+	}
+	return nil
+}
 
 // nestingExceeds returns the byte offset of the first '[' or '{' outside a
 // string at which raw nests deeper than max, and whether there is one. It

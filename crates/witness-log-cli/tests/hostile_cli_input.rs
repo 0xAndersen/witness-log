@@ -148,6 +148,100 @@ fn cli_messages_quote_a_bounded_part_of_a_huge_input() {
     );
 }
 
+/// Corpus 17's `inputs` through the binary: a --directory, --revocations
+/// or --evidence file nested deeper than 1000 is a usage error (exit 2), as
+/// a malformed one is; at 1000 it is read and used. Before, the directory
+/// and revocations were read at any depth and evidence refused beyond
+/// serde_json's 128 levels, while Go refused all three at 10,000.
+#[test]
+fn cli_refuses_directory_revocations_and_evidence_nested_deeper_than_1000() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/17_dossier_parsing.json");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let valid = v["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "valid")
+        .unwrap()["dossier_json"]
+        .as_str()
+        .unwrap();
+    let dossier = tempfile_write(valid);
+    let inputs = v["inputs"].as_array().unwrap();
+    assert!(inputs.len() >= 18);
+    for c in inputs {
+        let name = c["name"].as_str().unwrap();
+        assert_eq!(c["dossier"], "valid", "{name}");
+        let input = tempfile_write(c["text"].as_str().unwrap());
+        let flag = format!("--{}", c["input"].as_str().unwrap());
+        let mut args = vec![
+            "verify",
+            dossier.path_str(),
+            &flag,
+            input.path_str(),
+            "--json",
+        ];
+        let min = c["min_witnesses"].as_u64().map(|n| n.to_string());
+        if let Some(n) = &min {
+            args.extend(["--min-witnesses", n.as_str()]);
+        }
+        let out = Command::new(env!("CARGO_BIN_EXE_witness-log"))
+            .args(&args)
+            .output()
+            .unwrap();
+        input.close();
+        let e = &c["expect"];
+        assert_eq!(
+            out.status.code().map(i64::from),
+            e["exit_code"].as_i64(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if e["refused"] == true {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stderr.contains("nested deeper than 1000"),
+                "{name}: {stderr}"
+            );
+            assert!(out.stdout.is_empty(), "{name}");
+        } else {
+            let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(report["report"]["verdict"], e["verdict"], "{name}");
+        }
+    }
+    dossier.close();
+}
+
+/// `verify --json` reports the dossier's own identity_pubkey whole up to 64
+/// bytes (a key in hex) and cut to 64 characters and "…" beyond: a longer
+/// one is never a key. Through 0.6.1 a hostile file's megabytes came back
+/// whole on stdout. The Go CLI reports it the same way.
+#[test]
+fn cli_json_reports_a_bounded_identity() {
+    let key = "aa".repeat(32);
+    let dossier = |identity: &str| {
+        format!(
+            r#"{{"identity_pubkey":"{identity}","leaves":[],"checkpoint":{{"sig_alg":"ed25519","tree_size":0,"root_hash":"","timestamp_ms":0,"signer_pubkey":"{key}","signature":""}}}}"#
+        )
+    };
+    for (claimed, reported) in [
+        (key.clone(), key.clone()),
+        ("zz".to_string(), "zz".to_string()),
+        ("é".repeat(40), format!("{}\u{2026}", "é".repeat(40))),
+        (
+            "ab".repeat(5_000_000),
+            format!("{}\u{2026}", "ab".repeat(32)),
+        ),
+    ] {
+        let out = run_verify_json_on(&dossier(&claimed));
+        assert_eq!(out.status.code(), Some(40));
+        assert!(out.stdout.len() < 10_000, "{} bytes", out.stdout.len());
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["identity_pubkey"], reported.as_str());
+    }
+}
+
 /// SPEC.md §9: a dossier text nests at most 1000 arrays and objects deep
 /// (the dossier object is depth 1). Before, an ignored key of any depth was
 /// read here while Go refused 10,000 levels and more.

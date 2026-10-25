@@ -15,7 +15,11 @@ prove.
 ## The witness directory format
 
 A `WitnessDirectory` is a JSON file (or, embedded, a field on a
-`Dossier`) listing candidate witnesses:
+`Dossier`) listing candidate witnesses. Read one a verifier is given with
+`WitnessDirectory::from_json`, which also takes a bare array of entries
+and refuses a text nested deeper than 1000 arrays and objects, as every
+verifier input is refused (SPEC.md §9; `revocations_from_json` and
+`tlog_witness::EquivocationProof::from_evidence_json` read the other two):
 
 ```json
 {

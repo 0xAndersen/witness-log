@@ -46,6 +46,117 @@ func TestCorpus17DossierParsing(t *testing.T) {
 	}
 }
 
+// corpusInputCase is one of corpus 17's `inputs`: a directory, revocations
+// or evidence text, given with the dossier of the case named by Dossier.
+type corpusInputCase struct {
+	Name         string `json:"name"`
+	Input        string `json:"input"`
+	Text         string `json:"text"`
+	Dossier      string `json:"dossier"`
+	MinWitnesses *int   `json:"min_witnesses"`
+	Expect       struct {
+		Refused        bool    `json:"refused"`
+		Verdict        *string `json:"verdict"`
+		ExitCode       int     `json:"exit_code"`
+		HasFailures    *bool   `json:"has_failures"`
+		Contradictions *int    `json:"contradictions"`
+		ValidReceipts  *int    `json:"valid_receipts"`
+	} `json:"expect"`
+}
+
+// TestCorpus17Inputs runs corpus 17's `inputs`: the nesting limit covers
+// every JSON input, not only the dossier. Before, ParseDirectory,
+// ParseRevocations and ParseEvidence refused an input only at
+// encoding/json's 10,000 levels (the reference read a directory or
+// revocations of any depth, and an evidence item to 128 levels).
+func TestCorpus17Inputs(t *testing.T) {
+	var v struct {
+		Cases  []corpusVerdictCase `json:"cases"`
+		Inputs []corpusInputCase   `json:"inputs"`
+	}
+	readCorpus(t, "17_dossier_parsing.json", &v)
+	dossiers := map[string][]byte{}
+	for _, c := range v.Cases {
+		dossiers[c.Name] = []byte(*c.DossierJSON)
+	}
+	kinds := map[string]int{}
+	for _, c := range v.Inputs {
+		kinds[c.Input]++
+		start := time.Now()
+		opts := Options{Threshold: DefaultThreshold, ThresholdSet: true, MinReceipts: c.MinWitnesses}
+		var directory *Directory
+		var err error
+		switch c.Input {
+		case "directory":
+			directory, err = ParseDirectory([]byte(c.Text))
+		case "revocations":
+			opts.Revocations, err = ParseRevocations([]byte(c.Text))
+		case "evidence":
+			var p EquivocationProof
+			if p, err = ParseEvidence([]byte(c.Text)); err == nil {
+				opts.Evidence = []EquivocationProof{p}
+			}
+		default:
+			t.Fatalf("%s: unknown input %q", c.Name, c.Input)
+		}
+		if time.Since(start) > 2*time.Second {
+			t.Errorf("%s: reading took %v", c.Name, time.Since(start))
+		}
+		e := c.Expect
+		if e.Refused {
+			if err == nil || !strings.Contains(err.Error(), "nested deeper than 1000") {
+				t.Errorf("%s: refused by the reference, got %v", c.Name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", c.Name, err)
+			continue
+		}
+		raw, ok := dossiers[c.Dossier]
+		if !ok {
+			t.Fatalf("%s: no case %q", c.Name, c.Dossier)
+		}
+		verdict, r, err := VerifyDossier(raw, directory, opts)
+		if err != nil {
+			t.Errorf("%s: %v", c.Name, err)
+			continue
+		}
+		got, _ := json.Marshal(r.Verdict)
+		if e.Verdict == nil || string(got) != `"`+*e.Verdict+`"` || r.ExitCode(false) != e.ExitCode {
+			t.Errorf("%s: %v (exit %d), want %v (exit %d); failures %v", c.Name, verdict, r.ExitCode(false), e.Verdict, e.ExitCode, r.Failures)
+		}
+		if (len(r.Failures) > 0) != *e.HasFailures || len(r.Contradictions) != *e.Contradictions {
+			t.Errorf("%s: report %+v", c.Name, r)
+		}
+		if (r.Quorum == nil) != (e.ValidReceipts == nil) || (r.Quorum != nil && r.Quorum.ValidReceipts != *e.ValidReceipts) {
+			t.Errorf("%s: quorum %+v, want valid_receipts %v", c.Name, r.Quorum, e.ValidReceipts)
+		}
+	}
+	for _, k := range []string{"directory", "revocations", "evidence"} {
+		if kinds[k] < 6 {
+			t.Errorf("only %d %s inputs", kinds[k], k)
+		}
+	}
+}
+
+// TestCheckJSONDepth: the one check, counted the same way for every input.
+func TestCheckJSONDepth(t *testing.T) {
+	nested := func(n int) string { return strings.Repeat("[", n) + strings.Repeat("]", n) }
+	if MaxDossierDepth != 1000 {
+		t.Fatal(MaxDossierDepth)
+	}
+	for _, ok := range []string{"1", nested(1000), `["\"` + strings.Repeat("{", 2000) + `"]`, "[]]]]"} {
+		if err := CheckJSONDepth([]byte(ok)); err != nil {
+			t.Errorf("%.20s: %v", ok, err)
+		}
+	}
+	err := CheckJSONDepth([]byte(nested(1001)))
+	if err == nil || err.Error() != "nested deeper than 1000 arrays and objects (at byte 1000)" {
+		t.Errorf("1001 deep: %v", err)
+	}
+}
+
 // minimalDossier is corpus 17's smallest valid dossier text (UNANCHORED).
 func minimalDossier(t *testing.T) string {
 	t.Helper()

@@ -172,8 +172,8 @@ func parseDossier(dossierJSON []byte) (*Dossier, error) {
 	if !utf8.Valid(dossierJSON) {
 		return nil, fmt.Errorf("dossier: not valid UTF-8")
 	}
-	if at, deep := nestingExceeds(dossierJSON, MaxDossierDepth); deep {
-		return nil, fmt.Errorf("dossier: nested deeper than %d arrays and objects (at byte %d)", MaxDossierDepth, at)
+	if err := CheckJSONDepth(dossierJSON); err != nil {
+		return nil, fmt.Errorf("dossier: %w", err)
 	}
 	if !json.Valid(dossierJSON) {
 		var probe any
@@ -315,8 +315,12 @@ func parseEntries(entries []json.RawMessage) (*Directory, error) {
 // ParseDirectory decodes a witness directory. Like `witness-log verify
 // --directory`, it accepts either {"witnesses": [...]} or a bare JSON array
 // of the entries `witness-log witness init` prints; each is read as the
-// reference reads it (see ParseDossier).
+// reference reads it (see ParseDossier). A text nested deeper than
+// MaxDossierDepth is refused before any of it is read (CheckJSONDepth).
 func ParseDirectory(directoryJSON []byte) (*Directory, error) {
+	if err := CheckJSONDepth(directoryJSON); err != nil {
+		return nil, fmt.Errorf("directory: %w", err)
+	}
 	if !utf8.Valid(directoryJSON) || !json.Valid(directoryJSON) {
 		return nil, fmt.Errorf("directory: not valid JSON")
 	}
@@ -329,8 +333,12 @@ func ParseDirectory(directoryJSON []byte) (*Directory, error) {
 
 // ParseRevocations reads revocation statements as a JSON array or a single
 // object, the two shapes `witness-log log revoke` and a dossier's
-// `revocations` field produce.
+// `revocations` field produce. A text nested deeper than MaxDossierDepth
+// (the array or the statement being depth 1) is refused (CheckJSONDepth).
 func ParseRevocations(raw []byte) ([]Revocation, error) {
+	if err := CheckJSONDepth(raw); err != nil {
+		return nil, fmt.Errorf("revocations: %w", err)
+	}
 	trimmed := bytes.TrimSpace(raw)
 	if !utf8.Valid(trimmed) || !json.Valid(trimmed) {
 		return nil, fmt.Errorf("revocations: not valid JSON")

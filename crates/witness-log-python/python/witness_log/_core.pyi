@@ -215,7 +215,10 @@ def verify_dossier_json(
     ``accept_fleet_anchor`` (RFC-0001, EXPERIMENTAL) also counts the
     cosigners of a fleet checkpoint that includes this checkpoint; it needs
     ``subject_org``, and the report then carries ``witnessed_via`` and
-    ``witness_paths``."""
+    ``witness_paths``. Raises ``MalformedError`` for a dossier, directory,
+    revocations or evidence text that cannot be read, one nested deeper
+    than 1000 arrays and objects included (SPEC §9; an evidence list counts
+    from each item)."""
     ...
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str

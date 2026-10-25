@@ -702,6 +702,58 @@ def test_corpus_16_strict_ed25519_and_17_dossier_parsing():
     assert refused >= 50
 
 
+def test_corpus_17_inputs_nest_at_most_1000_deep():
+    """Corpus 17's ``inputs`` through the binding: a trusted directory,
+    revocations or evidence text nested deeper than 1000 arrays and objects
+    raises MalformedError, as a malformed one does; at 1000 it is read and
+    used. Before, the directory and revocations were read at any depth and
+    evidence refused beyond serde_json's 128 levels. An evidence list
+    counts from each item, so an item reads the same alone and in a list."""
+    import os
+    import time
+
+    import pytest
+
+    from witness_log import _core
+
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "corpus", "17_dossier_parsing.json")
+    if not os.path.exists(path):
+        pytest.skip("corpus not available")
+    v = json.load(open(path, encoding="utf-8"))
+    dossiers = {c["name"]: c["dossier_json"] for c in v["cases"]}
+    kinds = {}
+    for c in v["inputs"]:
+        kinds[c["input"]] = kinds.get(c["input"], 0) + 1
+        text = c["text"]
+        if c["input"] == "directory":
+            runs = [{"trusted_directory_json": text, "min_witnesses": c["min_witnesses"]}]
+        elif c["input"] == "revocations":
+            runs = [{"revocations_json": text}]
+        else:
+            runs = [{"evidence_json": text}, {"evidence_json": "[" + text + "]"}]
+        for kw in runs:
+            started = time.monotonic()
+            if c["expect"]["refused"]:
+                with pytest.raises(witness_log.MalformedError, match="nested deeper than 1000"):
+                    witness_log.verify_dossier_json(dossiers[c["dossier"]], 0.66, **kw)
+            else:
+                r = json.loads(witness_log.verify_dossier_json(dossiers[c["dossier"]], 0.66, **kw))
+                e = c["expect"]
+                assert r["verdict"] == e["verdict"], c["name"]
+                assert bool(r["failures"]) == e["has_failures"], c["name"]
+                assert len(r["contradictions"]) == e["contradictions"], c["name"]
+                assert (r["quorum"] or {}).get("valid_receipts") == e["valid_receipts"], c["name"]
+            assert time.monotonic() - started < 5, c["name"]
+        if c["input"] == "directory":
+            key = "aa" * 32
+            if c["expect"]["refused"]:
+                with pytest.raises(witness_log.MalformedError, match="nested deeper than 1000"):
+                    _core.select_witnesses(text, key, 1)
+            else:
+                assert len(json.loads(_core.select_witnesses(text, key, 1))) == 1
+    assert sorted(kinds) == ["directory", "evidence", "revocations"]
+
+
 _WITNESS_SERVICE_THREADS = r"""
 import base64, hashlib, os, sys, threading
 from witness_log import _core

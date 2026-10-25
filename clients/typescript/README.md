@@ -86,7 +86,10 @@ nesting deeper than 1000 arrays and objects make the dossier INVALID
 1001st level, and the values of keys a dossier does not have are checked
 as JSON but never built. An already-parsed object holding a plain number
 above 2^53 − 1 is INVALID too, since `JSON.parse` has already rounded it,
-and so is one nested deeper than 1000.
+and so is one nested deeper than 1000. The options are inputs like the
+dossier: a `directory`, `revocations` (one statement or an array) or
+evidence item nested deeper than 1000 throws a TypeError, as a malformed
+one does.
 
 ## Verify with the CLI
 

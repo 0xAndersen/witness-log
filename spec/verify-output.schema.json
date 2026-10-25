@@ -48,7 +48,7 @@
     },
     "identity_pubkey": {
       "type": "string",
-      "description": "The dossier's own identity_pubkey field (claimed by the file, not trusted)."
+      "description": "The dossier's own identity_pubkey field (claimed by the file, not trusted): whole when it is at most 64 bytes, otherwise (never a key; the verdict is INVALID) its first 64 characters followed by …."
     },
     "identity_pinned": {
       "type": "boolean",
@@ -219,7 +219,8 @@
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "description": "The anchor's origin; null when the field is malformed or the origin is longer than 255 bytes (no fleet origin is)."
             },
             "entry_index": {
               "type": [

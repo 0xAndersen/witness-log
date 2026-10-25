@@ -375,8 +375,10 @@ fn malformed_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// `known_heads` (`"<size>:<root hex>"` strings) are heads the caller
 /// already trusts for this identity, and `evidence_json` is a JSON array
 /// of witness equivocation proofs (bare, or as `witness serve` writes
-/// them); a dossier that contradicts either is "diverged" (RFC-0002).
-/// A dossier that fails a check is "invalid".
+/// them), or one; a dossier that contradicts either is "diverged"
+/// (RFC-0002). A dossier that fails a check is "invalid". The dossier, the
+/// directory, the revocations and each evidence item nest at most 1000
+/// arrays and objects deep (SPEC.md §9); deeper is a MalformedError.
 ///
 /// `accept_fleet_anchor` (RFC-0001, EXPERIMENTAL) counts the cosigners of
 /// a fleet checkpoint that includes the dossier's checkpoint, when its
@@ -448,18 +450,12 @@ fn verify_dossier_json_detached(
         }
     }
     let dossier = witness_log_network::Dossier::from_json(dossier_json).map_err(malformed_err)?;
+    // Every input below, as the dossier, nests at most 1000 deep (SPEC.md
+    // §9; corpus 17's `inputs`): deeper is a MalformedError.
     let trusted_directory: Option<witness_log_network::WitnessDirectory> =
         match &trusted_directory_json {
             // `{"witnesses": [...]}` or a bare array of entries.
-            Some(s) => Some(
-                serde_json::from_str::<witness_log_network::WitnessDirectory>(s)
-                    .or_else(|first| {
-                        serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(s)
-                            .map(|witnesses| witness_log_network::WitnessDirectory { witnesses })
-                            .map_err(|_| first)
-                    })
-                    .map_err(malformed_err)?,
-            ),
+            Some(s) => Some(parse_directory_json(s)?),
             None => None,
         };
     // Revocations the caller knows about out of band: one statement (as
@@ -467,10 +463,7 @@ fn verify_dossier_json_detached(
     let revocations: Vec<witness_log_core::identity::RevocationStatement> = match &revocations_json
     {
         None => Vec::new(),
-        Some(s) if s.trim_start().starts_with('{') => {
-            vec![serde_json::from_str(s).map_err(malformed_err)?]
-        }
-        Some(s) => serde_json::from_str(s).map_err(malformed_err)?,
+        Some(s) => witness_log_network::revocations_from_json(s).map_err(malformed_err)?,
     };
     let known_heads = known_heads
         .iter()
@@ -481,22 +474,11 @@ fn verify_dossier_json_detached(
             })
         })
         .collect::<PyResult<Vec<_>>>()?;
+    // One evidence item or an array of them, each read as an evidence file.
     let evidence = match &evidence_json {
         None => Vec::new(),
-        Some(s) => {
-            let v: serde_json::Value = serde_json::from_str(s).map_err(malformed_err)?;
-            let items = match v {
-                serde_json::Value::Array(a) => a,
-                one => vec![one],
-            };
-            items
-                .into_iter()
-                .map(|v| {
-                    witness_log_network::tlog_witness::EquivocationProof::from_evidence(&v)
-                        .map_err(|e| malformed_err(format!("not an equivocation proof: {e}")))
-                })
-                .collect::<PyResult<Vec<_>>>()?
-        }
+        Some(s) => witness_log_network::tlog_witness::EquivocationProof::list_from_evidence_json(s)
+            .map_err(malformed_err)?,
     };
     let ctx = witness_log_network::VerifyContext {
         expected_identity_pubkey: expected_identity_pubkey.as_deref(),
@@ -2046,16 +2028,11 @@ impl PyWitnessService {
 }
 
 /// `{"witnesses": [...]}` or a bare array of entries, the two shapes
-/// `verify_dossier_json` and the CLI accept. The selection functions
-/// accepted only the object form before 0.3.6.
+/// `verify_dossier_json` and the CLI accept, nested at most 1000 deep
+/// (`WitnessDirectory::from_json`). The selection functions accepted only
+/// the object form before 0.3.6.
 fn parse_directory_json(s: &str) -> PyResult<witness_log_network::WitnessDirectory> {
-    serde_json::from_str::<witness_log_network::WitnessDirectory>(s)
-        .or_else(|first| {
-            serde_json::from_str::<Vec<witness_log_network::WitnessEntry>>(s)
-                .map(|witnesses| witness_log_network::WitnessDirectory { witnesses })
-                .map_err(|_| first)
-        })
-        .map_err(malformed_err)
+    witness_log_network::WitnessDirectory::from_json(s).map_err(malformed_err)
 }
 
 /// Choose witnesses that maximise operator independence. Takes a

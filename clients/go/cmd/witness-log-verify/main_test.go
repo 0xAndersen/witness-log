@@ -84,6 +84,104 @@ func TestJSONReportMatchesLibraryShape(t *testing.T) {
 	}
 }
 
+// TestJSONReportsABoundedIdentity: --json reports the dossier's own
+// identity_pubkey whole up to 64 bytes and cut to 64 characters and "…"
+// beyond, as the Rust CLI does; through 0.6.1 a hostile file's megabytes
+// came back whole.
+func TestJSONReportsABoundedIdentity(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(testdata, "native/dossier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, c := range []struct{ claimed, reported string }{
+		{d["identity_pubkey"].(string), d["identity_pubkey"].(string)},
+		{"zz", "zz"},
+		{strings.Repeat("é", 40), strings.Repeat("é", 40) + "…"},
+		{strings.Repeat("ab", 5_000_000), strings.Repeat("ab", 32) + "…"},
+	} {
+		d["identity_pubkey"] = c.claimed
+		b, _ := json.Marshal(d)
+		path := filepath.Join(dir, "d.json")
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		run([]string{path, "--json"}, &stdout, &stderr)
+		var out map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+			t.Fatalf("%.20s: %v %s", c.claimed, err, stderr.String())
+		}
+		if out["identity_pubkey"] != c.reported || stdout.Len() > 100_000 {
+			t.Errorf("%.20s: reported %.80v (%d bytes of output)", c.claimed, out["identity_pubkey"], stdout.Len())
+		}
+	}
+	// The field itself, never a key that differs from it only by case
+	// (corpus 17: "Identity_Pubkey beside identity_pubkey is an unknown
+	// field"); encoding/json alone reported the last of the two.
+	text := strings.TrimSpace(string(raw))
+	text = text[:len(text)-1] + `,"Identity_Pubkey":"` + strings.Repeat("ab", 32) + `"}`
+	path := filepath.Join(dir, "case.json")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	run([]string{path, "--json"}, &stdout, &stderr)
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("%v %s", err, stderr.String())
+	}
+	var want struct {
+		IdentityPubkey string `json:"identity_pubkey"`
+	}
+	_ = json.Unmarshal(raw, &want)
+	if out["identity_pubkey"] != want.IdentityPubkey {
+		t.Errorf("reported %v, the dossier's identity_pubkey is %s", out["identity_pubkey"], want.IdentityPubkey)
+	}
+}
+
+// TestDeepInputsAreUsageErrors: a directory, revocations or evidence file
+// nested deeper than 1000 is refused with exit 2, as a malformed one is;
+// 1000 deep it is read (corpus 17's inputs run every case).
+func TestDeepInputsAreUsageErrors(t *testing.T) {
+	a := filepath.Join(testdata, "c2sp/a.json")
+	dir := t.TempDir()
+	nested := func(n int) string { return strings.Repeat("[", n) + strings.Repeat("]", n) }
+	write := func(name, text string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	entry := `{"name":"w","operator_org":"o","url":"https://w.example","pubkey":"` + strings.Repeat("ab", 32) + `","zz":`
+	for _, c := range []struct {
+		flag, text string
+		exit       int
+	}{
+		{"--directory", `{"witnesses":[],"zz":` + nested(999) + `}`, 10},
+		{"--directory", `{"witnesses":[],"zz":` + nested(1000) + `}`, 2},
+		{"--directory", `[` + entry + nested(998) + `}]`, 10},
+		{"--directory", `[` + entry + nested(999) + `}]`, 2},
+		{"--revocations", `[]`, 20},
+		{"--revocations", `[` + nested(1000) + `]`, 2},
+		{"--evidence", `{"zz":` + nested(1000) + `}`, 2},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run([]string{a, c.flag, write("input.json", c.text)}, &stdout, &stderr)
+		if code != c.exit {
+			t.Errorf("%s %.40s: exit %d, want %d: %s", c.flag, c.text, code, c.exit, stderr.String())
+		}
+		if c.exit == 2 && !strings.Contains(stderr.String(), "nested deeper than 1000") {
+			t.Errorf("%s %.40s: %s", c.flag, c.text, stderr.String())
+		}
+	}
+}
+
 func TestDisclose(t *testing.T) {
 	var fx struct {
 		PayloadHex string `json:"payload_hex"`

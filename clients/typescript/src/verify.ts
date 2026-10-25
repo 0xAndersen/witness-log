@@ -25,7 +25,17 @@
  */
 import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from "node:crypto";
 import { EXIT_CODES, type Verdict } from "./cli.js";
-import { echo, readDossier, readDossierText, readRevocation, readWitnessEntry, type FleetAnchorField, type U64 } from "./dossier-json.js";
+import {
+  echo,
+  MAX_DOSSIER_DEPTH,
+  nestsDeeperThan,
+  readDossier,
+  readDossierText,
+  readRevocation,
+  readWitnessEntry,
+  type FleetAnchorField,
+  type U64,
+} from "./dossier-json.js";
 
 export type { U64 } from "./dossier-json.js";
 
@@ -144,6 +154,7 @@ export interface FleetAnchor {
 /** What the verifier did with a dossier's fleet anchor. */
 export interface FleetAnchorReport {
   status: "ignored" | "verified" | "failed";
+  /** The anchor's origin; null when malformed or longer than 255 bytes (no fleet origin is). */
   origin: string | null;
   entry_index: U64 | null;
   /** Only for a verified anchor. */
@@ -242,6 +253,12 @@ export interface EquivocationProof {
 /** An evidence file's contents: a bare proof, or the proof under `"proof"` as `witness serve` writes it. */
 export type EvidenceItem = EquivocationProof | { observed_unix?: number; kind?: string; proof: EquivocationProof };
 
+/**
+ * What `verifyDossier` is given besides the dossier. The directory, the
+ * revocations and each evidence item are inputs like the dossier: one
+ * nested deeper than 1000 arrays and objects (SPEC.md §9; corpus 17's
+ * `inputs`) throws a TypeError, as a malformed one does.
+ */
 export interface VerifyDossierOptions {
   /** The identity you expect (64 hex), obtained out of band. Never read it from the dossier. */
   identity?: string;
@@ -251,8 +268,11 @@ export interface VerifyDossierOptions {
   threshold?: number;
   /** Receipt-count gate as an absolute number of distinct cosigning witnesses; replaces `threshold`. */
   minWitnesses?: number;
-  /** Revocations you know about out of band; applied even when the dossier omits them (SPEC §5). */
-  revocations?: RevocationStatement[];
+  /**
+   * Revocations you know about out of band, one statement or an array, as
+   * `--revocations` reads them; applied even when the dossier omits them (SPEC §5).
+   */
+  revocations?: RevocationStatement[] | RevocationStatement;
   /**
    * Heads you already trust for this identity (`{tree_size, root_hash}` or
    * `"<size>:<root hex>"`). A dossier whose first `tree_size` leaves do not
@@ -1018,13 +1038,15 @@ export function verifyEquivocationProof(p: EquivocationProof): boolean {
  * write it, carries the proof under `"proof"` (`{"observed_unix", "kind":
  * "equivocation", "proof": {...}}`). The proof must be an object whose
  * `origin`, `log_vkey`, `earlier_note` and `conflicting_note` are strings;
- * other keys are ignored. Throws a TypeError for anything else (the CLI's
- * exit 2), as the reference and Go verifiers refuse it. Before this, a
- * wrapped item was silently ignored here and counted by the reference
- * (security review of 0.5.0, F1).
+ * other keys are ignored. An item nested deeper than 1000 arrays and
+ * objects (SPEC.md §9) is refused before it is read. Throws a TypeError for
+ * anything else (the CLI's exit 2), as the reference and Go verifiers
+ * refuse it. Before this, a wrapped item was silently ignored here and
+ * counted by the reference (security review of 0.5.0, F1).
  */
 export function parseEvidence(item: unknown): EquivocationProof {
   const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+  checkDepth(item, "evidence");
   if (!isObject(item)) {
     throw new TypeError('evidence: an item must be a JSON object, a proof or {"proof": {...}} as witness serve writes it');
   }
@@ -1213,10 +1235,17 @@ const MAX_INCLUSION_PROOF_HASHES = 64;
 const SIG_TYPE_COSIGNATURE_V1 = 0x04;
 
 /** A C2SP origin (no space, '+' or control character, at most 255 bytes) that is not a witness-log agent origin. */
+/** The longest fleet origin, in bytes of UTF-8. */
+const MAX_FLEET_ORIGIN_BYTES = 255;
+
+function utf8Length(s: string): number {
+  return Buffer.byteLength(s, "utf8");
+}
+
 export function validFleetOrigin(origin: string): boolean {
   return (
     origin !== "" &&
-    Buffer.byteLength(origin, "utf8") <= 255 &&
+    utf8Length(origin) <= MAX_FLEET_ORIGIN_BYTES &&
     !origin.startsWith(CANONICAL_ORIGIN_PREFIX) &&
     !/[ +\u0000-\u001f\u007f-\u009f]/.test(origin)
   );
@@ -1347,7 +1376,9 @@ function evaluateFleetAnchor(
   const parsed = "parsed" in field ? (field.parsed as FleetAnchor) : null;
   const report: FleetAnchorReport = {
     status: "ignored",
-    origin: parsed === null ? null : parsed.origin,
+    // Up to the longest fleet origin, as the reference reports it: a
+    // hostile origin is not copied into the report whole.
+    origin: parsed === null || utf8Length(parsed.origin) > MAX_FLEET_ORIGIN_BYTES ? null : parsed.origin,
     entry_index: parsed === null ? null : parsed.entry_index,
     fleet_tree_size: null,
     failures: [],
@@ -1407,8 +1438,16 @@ function bindingsAndRevocationsValid(
 }
 
 /** The caller's directory, entries read as the reference reads `--directory`. Throws a TypeError. */
+/** A TypeError when an option value nests deeper than SPEC.md §9 allows. */
+function checkDepth(value: unknown, what: string): void {
+  if (nestsDeeperThan(value, MAX_DOSSIER_DEPTH)) {
+    throw new TypeError(`${what}: nested deeper than ${MAX_DOSSIER_DEPTH} arrays and objects`);
+  }
+}
+
 function asDirectory(d: WitnessDirectory | WitnessEntry[] | undefined): WitnessDirectory | undefined {
   if (d === undefined) return undefined;
+  checkDepth(d, "directory");
   let entries: unknown;
   if (Array.isArray(d)) entries = d;
   else if (typeof d === "object" && d !== null && Array.isArray(d.witnesses)) entries = d.witnesses;
@@ -1420,12 +1459,18 @@ function asDirectory(d: WitnessDirectory | WitnessEntry[] | undefined): WitnessD
   }
 }
 
-/** Out-of-band revocations, read as the reference reads `--revocation`. Throws a TypeError. */
-function asRevocations(r: RevocationStatement[] | undefined): RevocationStatement[] {
+/**
+ * Out-of-band revocations, read as the reference reads `--revocations`: one
+ * statement or an array of them, nested at most 1000 deep counted from the
+ * value given. Throws a TypeError.
+ */
+function asRevocations(r: RevocationStatement[] | RevocationStatement | undefined): RevocationStatement[] {
   if (r === undefined) return [];
-  if (!Array.isArray(r)) throw new TypeError("revocations must be an array of revocation statements");
+  checkDepth(r, "revocations");
+  const list: unknown[] | null = Array.isArray(r) ? r : r !== null && typeof r === "object" ? [r] : null;
+  if (list === null) throw new TypeError("revocations must be a revocation statement or an array of them");
   try {
-    return r.map((x, i) => readRevocation(x, `revocations[${i}]`) as unknown as RevocationStatement);
+    return list.map((x, i) => readRevocation(x, `revocations[${i}]`) as unknown as RevocationStatement);
   } catch (e) {
     throw new TypeError(e instanceof Error ? e.message : String(e));
   }

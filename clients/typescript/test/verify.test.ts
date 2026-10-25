@@ -494,6 +494,74 @@ describe("corpus 17: reading a dossier (outside review III, H2 and P3)", () => {
     }
   });
 
+  it("inputs: a directory, revocations or evidence item nested deeper than 1000 throws, as a malformed one does", () => {
+    // Before, an option of any depth was read here (the options are values,
+    // so nothing stopped them), while Go refused 10,000 levels.
+    const v = corpus("17_dossier_parsing.json");
+    const kinds = new Map<string, number>();
+    for (const c of v.inputs as Array<{ name: string; input: string; text: string; dossier: string; min_witnesses: number | null; expect: any }>) {
+      kinds.set(c.input, (kinds.get(c.input) ?? 0) + 1);
+      const dossier = v.cases.find((x: { name: string }) => x.name === c.dossier).dossier_json;
+      // The option as a caller holds it: the text parsed (V8's JSON.parse
+      // takes 100,000 levels), an evidence item in the list of them.
+      const value = parseJsonExact(c.text);
+      const opts =
+        c.input === "directory"
+          ? { directory: value as WitnessDirectory, minWitnesses: c.min_witnesses ?? undefined }
+          : c.input === "revocations"
+            ? { revocations: value as never }
+            : { evidence: [value] as never };
+      const t0 = performance.now();
+      if (c.expect.refused) {
+        assert.throws(() => verifyDossier(dossier, opts), (e: Error) => e instanceof TypeError && /nested deeper than 1000/.test(e.message), c.name);
+      } else {
+        const r = verifyDossier(dossier, opts);
+        assert.equal(r.report.verdict, c.expect.verdict, c.name);
+        assert.equal(r.exitCode, c.expect.exit_code, c.name);
+        assert.equal(r.failures.length > 0, c.expect.has_failures, c.name);
+        assert.equal(r.contradictions.length, c.expect.contradictions, c.name);
+        assert.equal(r.report.quorum?.valid_receipts ?? null, c.expect.valid_receipts, c.name);
+      }
+      assert.ok(performance.now() - t0 < 1500, c.name);
+    }
+    assert.deepEqual([...kinds.keys()].sort(), ["directory", "evidence", "revocations"]);
+    // parseEvidence on its own refuses the item too.
+    const deep = v.inputs.find((c: { name: string }) => c.name === "a bare equivocation proof with an unknown member nested to depth 1001");
+    assert.throws(() => parseEvidence(JSON.parse(deep.text)), /evidence: nested deeper than 1000/);
+  });
+
+  it("revocations: one statement or an array, as --revocations reads them", () => {
+    const v = corpus("17_dossier_parsing.json");
+    const dossier = v.cases.find((x: { name: string }) => x.name === "valid").dossier_json;
+    const statement = JSON.parse(v.inputs.find((c: { input: string }) => c.input === "revocations").text);
+    delete statement.zz;
+    assert.equal(verifyDossier(dossier).verdict, "UNANCHORED");
+    assert.equal(verifyDossier(dossier, { revocations: statement }).verdict, "INVALID");
+    assert.equal(verifyDossier(dossier, { revocations: [statement] }).verdict, "INVALID");
+    assert.throws(() => verifyDossier(dossier, { revocations: "x" as never }), TypeError);
+  });
+
+  it("the report names a fleet origin only up to 255 bytes, as the reference does", () => {
+    const min = corpus("17_dossier_parsing.json")
+      .cases.find((c: { name: string }) => c.name === "whitespace around the object")
+      .dossier_json.trim();
+    for (const [origin, reported] of [
+      ["example.com/fleet", true],
+      ["o".repeat(255), true],
+      ["é".repeat(127), true],
+      ["é".repeat(128), false],
+      ["o".repeat(256), false],
+      ["o".repeat(10_000_000), false],
+    ] as const) {
+      const text = `${min.slice(0, -1)},"fleet_anchor":{"origin":"${origin}","entry_index":0,"entry_bytes_b64":"","inclusion_proof":[],"fleet_checkpoint_note":""}}`;
+      for (const acceptFleetAnchor of [false, true]) {
+        const r = verifyDossier(text, { acceptFleetAnchor, subjectOrg: "org" });
+        assert.equal(r.report.fleet_anchor?.origin, reported ? origin : null, `${origin.length} characters`);
+        assert.ok(JSON.stringify(r.report).length < 10_000);
+      }
+    }
+  });
+
   it("the review's reproductions never throw", () => {
     const v = corpus("13_verdicts.json");
     const tries: Record<string, (d: any) => void> = {
