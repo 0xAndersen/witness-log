@@ -132,7 +132,10 @@ impl SignedTreeHead {
 /// Message: `"witness-log-write-receipt-v1" || lp(sig_alg) ||
 /// lp(signer_pubkey_hex) || lp(payload_hash_hex) || tree_size (8B BE) ||
 /// issued_at_ms (8B BE)`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Serialized as a JSON object with these fields in this order, and read
+/// only from an object, like every other wire type (`object_only`).
+#[derive(Debug, Clone)]
 pub struct WriteReceipt {
     /// Hex payload_hash of the accepted leaf (SPEC §8).
     pub payload_hash: String,
@@ -144,6 +147,20 @@ pub struct WriteReceipt {
     pub signer_pubkey: String,
     pub signature: String,
 }
+
+/// The serde shape of [`WriteReceipt`]; see `object_only`.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "WriteReceipt", rename = "WriteReceipt")]
+struct WriteReceiptDef {
+    payload_hash: String,
+    tree_size: u64,
+    issued_at_ms: u64,
+    sig_alg: String,
+    signer_pubkey: String,
+    signature: String,
+}
+
+crate::object_only_serde!(WriteReceipt, WriteReceiptDef);
 
 impl WriteReceipt {
     pub fn sign(
@@ -282,5 +299,36 @@ mod tests {
         let mut t = r;
         t.signer_pubkey = hex::encode(other.verifying_key().to_bytes());
         assert!(t.verify().is_err(), "signer is signed");
+    }
+
+    /// A write receipt travels as a file (`witness-log log receipt`), so it
+    /// is read like every other wire type: from an object only.
+    #[test]
+    fn write_receipt_reads_only_from_an_object() {
+        let key = SigningKey::generate(&mut OsRng);
+        let r = WriteReceipt::sign(&key, &"ab".repeat(32), 3, 1_700_000_000_000);
+        let json = serde_json::to_value(&r).unwrap();
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys.len(),
+            6,
+            "payload_hash, tree_size, issued_at_ms, sig_alg, signer_pubkey, signature: {keys:?}"
+        );
+        let back: WriteReceipt = serde_json::from_value(json).unwrap();
+        assert!(back.verify().is_ok());
+        let as_array = serde_json::json!([
+            r.payload_hash,
+            r.tree_size,
+            r.issued_at_ms,
+            r.sig_alg,
+            r.signer_pubkey,
+            r.signature
+        ]);
+        assert!(serde_json::from_value::<WriteReceipt>(as_array).is_err());
     }
 }

@@ -2471,13 +2471,30 @@ pub enum SilenceProofResult {
 pub struct SilenceProofReport {
     pub result: SilenceProofResult,
     /// The largest witnessed checkpoint `(tree_size, root_hash)` that the
-    /// caller's leaves reproduced, in whose leaves the event's absence was
-    /// checked. Set for `Censored`, and for `Inconclusive` when only the
-    /// count fell short.
+    /// caller's leaves reproduced. For `Censored`, and for `Inconclusive`
+    /// when only the count fell short: the checkpoint in whose leaves the
+    /// event's absence was checked. For `Present`: the largest one after
+    /// the event's index, so the event is in a history
+    /// two independent operators cosigned; unset when no such checkpoint
+    /// was supplied, or the leaves reproduce none
+    /// ([`SilenceProofReport::in_witnessed_history`]).
     pub bound_tree_size: Option<u64>,
     pub bound_root_hash: Option<String>,
-    /// Why the result is `Inconclusive`; `None` otherwise.
+    /// Why the result is `Inconclusive`, or why a `Present` is not bound to
+    /// a witnessed checkpoint; `None` otherwise.
     pub reason: Option<String>,
+}
+
+impl SilenceProofReport {
+    /// The event is in the log's witnessed history: `Present`, and the
+    /// leaves it was found in reproduce a checkpoint after it that at least
+    /// [`MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED`] independent operators
+    /// cosigned (`bound_tree_size` is set). A `Present` without that is
+    /// the event in the caller's copy of the leaves only: not an
+    /// accusation, and not proof of inclusion either.
+    pub fn in_witnessed_history(&self) -> bool {
+        matches!(self.result, SilenceProofResult::Present { .. }) && self.bound_tree_size.is_some()
+    }
 }
 
 /// One later checkpoint observed after a write receipt, paired with
@@ -2527,7 +2544,10 @@ pub fn silence_proof(
 /// earlier counted the checkpoints and looked for the event in this list
 /// without joining the two, so an accuser could pass a list with the event
 /// removed, or no list at all, and get `Censored` against an honest log.
-/// Found by the third outside review, H1.)
+/// Found by the third outside review, H1.) The result is `Present` whenever
+/// the event is among them, and bound to a witnessed checkpoint
+/// ([`SilenceProofReport::in_witnessed_history`]) only when they reproduce
+/// a counted checkpoint larger than the event's index.
 ///
 /// `later_checkpoints`: checkpoints the caller observed with
 /// `tree_size > write_receipt.tree_size`, each with its witness receipts.
@@ -2578,23 +2598,8 @@ pub fn silence_proof_for_subject(
     }
     let event_payload_hash = normalize_hex(&write_receipt.payload_hash);
 
-    // 1. In the caller's view: not an accusation, whatever else holds.
-    if let Some(idx) = latest_leaves
-        .iter()
-        .position(|l| normalize_hex(&l.payload_hash) == event_payload_hash)
-    {
-        return SilenceProofReport {
-            result: SilenceProofResult::Present {
-                leaf_index: idx as u64,
-            },
-            bound_tree_size: None,
-            bound_root_hash: None,
-            reason: None,
-        };
-    }
-
-    // 2. Distinct checkpoints after the receipt, of this log, cosigned by
-    // at least two independent operators from the caller's directory.
+    // Distinct checkpoints after the receipt, of this log, cosigned by at
+    // least two independent operators from the caller's directory.
     let mut counted: std::collections::BTreeSet<(u64, String)> = Default::default();
     for oc in later_checkpoints {
         if oc.checkpoint.tree_size <= write_receipt.tree_size
@@ -2620,16 +2625,58 @@ pub fn silence_proof_for_subject(
         ));
     }
     let seen = counted.len();
-
     // Two witnessed roots for one size: the log equivocated, and absence
     // from one history says nothing about the other.
     let mut sizes = HashSet::new();
-    if let Some((n, _)) = counted.iter().find(|(n, _)| !sizes.insert(*n)) {
+    let equivocated_at = counted
+        .iter()
+        .find(|(n, _)| !sizes.insert(*n))
+        .map(|(n, _)| *n);
+
+    // 1. In the caller's view: not an accusation, whatever else holds.
+    // Bound to the largest counted checkpoint after it that the leaves
+    // reproduce, when there is one: then the event is in the witnessed
+    // history, not only in the caller's copy of the leaves.
+    if let Some(idx) = latest_leaves
+        .iter()
+        .position(|l| normalize_hex(&l.payload_hash) == event_payload_hash)
+    {
+        let idx = idx as u64;
+        let bound = match equivocated_at {
+            Some(_) => None,
+            None => largest_reproduced(latest_leaves, &counted, idx),
+        };
+        let reason = match (&bound, equivocated_at) {
+            (Some(_), _) => None,
+            (None, Some(n)) => Some(format!(
+                "the event is leaf {idx} of the leaves supplied, but two witnessed checkpoints of \
+                 size {n} commit to different roots: the log showed two histories, and the event's \
+                 presence in one says nothing about the other"
+            )),
+            (None, None) => Some(format!(
+                "the event is leaf {idx} of the leaves supplied, but they reproduce no checkpoint \
+                 after it that two independent operators from the trusted directory cosigned: it \
+                 is in this copy, not shown to be in the log's witnessed history"
+            )),
+        };
+        let (bound_tree_size, bound_root_hash) = bound.unzip();
+        return SilenceProofReport {
+            result: SilenceProofResult::Present { leaf_index: idx },
+            bound_tree_size,
+            bound_root_hash,
+            reason,
+        };
+    }
+
+    // 2. Witnessed checkpoints after the receipt: at least one, and no
+    // equivocation among them.
+    if let Some(n) = equivocated_at {
         return inconclusive(
             seen,
             None,
             format!(
-                "two witnessed checkpoints of size {n} commit to different roots:                  the log showed two histories (equivocation evidence, not a silence proof)"
+                "two witnessed checkpoints of size {n} commit to different roots: the log showed \
+                 two histories (equivocation evidence, not a silence proof)"
             ),
         );
     }
@@ -2637,7 +2684,8 @@ pub fn silence_proof_for_subject(
         return inconclusive(
             0,
             None,
-            "no checkpoint after the receipt was cosigned by two independent operators              from the trusted directory"
+            "no checkpoint after the receipt was cosigned by two independent operators from the \
+             trusted directory"
                 .into(),
         );
     };
@@ -2649,7 +2697,8 @@ pub fn silence_proof_for_subject(
             seen,
             None,
             format!(
-                "the leaves cover {} entries but the largest witnessed checkpoint has {largest}:                  fetch the log up to that size",
+                "the leaves cover {} entries but the largest witnessed checkpoint has {largest}: \
+                 fetch the log up to that size",
                 latest_leaves.len()
             ),
         );
@@ -2664,7 +2713,8 @@ pub fn silence_proof_for_subject(
                 seen,
                 None,
                 format!(
-                    "the leaves do not reproduce the witnessed root at size {n}: they are not                      the log's history, so the event's absence from them proves nothing"
+                    "the leaves do not reproduce the witnessed root at size {n}: they are not the \
+                     log's history, so the event's absence from them proves nothing"
                 ),
             );
         }
@@ -2691,6 +2741,90 @@ pub fn silence_proof_for_subject(
             ),
         )
     }
+}
+
+/// The largest of `counted` (`(tree_size, root hex)`) with a size greater
+/// than `index` whose root `leaves` reproduce: a witnessed checkpoint that
+/// includes leaf `index`.
+fn largest_reproduced(
+    leaves: &[Leaf],
+    counted: &std::collections::BTreeSet<(u64, String)>,
+    index: u64,
+) -> Option<(u64, String)> {
+    let covered = |n: u64| n > index && n <= leaves.len() as u64;
+    let largest = counted
+        .iter()
+        .map(|(n, _)| *n)
+        .filter(|n| covered(*n))
+        .max()?;
+    let mut tree = MerkleTree::new();
+    for l in leaves.iter().take(largest as usize) {
+        tree.append(leaf_hash(&l.canonical_bytes()));
+    }
+    counted
+        .iter()
+        .rev()
+        .filter(|(n, _)| covered(*n))
+        .find(|(n, root)| tree.root_at(*n).map(hex::encode).as_deref() == Some(root.as_str()))
+        .cloned()
+}
+
+/// Which of `dossiers` [`silence_proof_over_dossiers`] takes the leaves
+/// from: the one with the largest checkpoint `tree_size` among those whose
+/// checkpoint the receipt's signer signed (the first of equals), or the
+/// largest of all when none is. `None` when `dossiers` is empty.
+pub fn silence_proof_leaves_from(
+    write_receipt: &WriteReceipt,
+    dossiers: &[Dossier],
+) -> Option<usize> {
+    let signer = normalize_hex(&write_receipt.signer_pubkey);
+    let largest = |same_log_only: bool| {
+        dossiers
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| !same_log_only || normalize_hex(&d.checkpoint.signer_pubkey) == signer)
+            .fold(None, |best: Option<(usize, u64)>, (i, d)| match best {
+                Some((_, n)) if n >= d.checkpoint.tree_size => best,
+                _ => Some((i, d.checkpoint.tree_size)),
+            })
+            .map(|(i, _)| i)
+    };
+    largest(true).or_else(|| largest(false))
+}
+
+/// [`silence_proof_for_subject`] over dossiers, the form in which a log's
+/// witnessed checkpoints travel: each dossier contributes its checkpoint
+/// and witness receipts as one observed checkpoint, and the leaves come
+/// from the dossier [`silence_proof_leaves_from`] names. No dossier is
+/// trusted for anything the full function does not check: a dossier of
+/// another log or an unwitnessed one counts for nothing, and leaves edited
+/// to drop the event make the result inconclusive, never `Censored`. What
+/// `witness-log prove-silence` runs.
+pub fn silence_proof_over_dossiers(
+    write_receipt: &WriteReceipt,
+    dossiers: &[Dossier],
+    trusted_directory: &WitnessDirectory,
+    min_witnessed_checkpoints: usize,
+    subject_org: Option<&str>,
+) -> SilenceProofReport {
+    let later: Vec<ObservedCheckpoint> = dossiers
+        .iter()
+        .map(|d| ObservedCheckpoint {
+            checkpoint: d.checkpoint.clone(),
+            receipts: d.witness_receipts.clone(),
+        })
+        .collect();
+    let leaves = silence_proof_leaves_from(write_receipt, dossiers)
+        .map(|i| dossiers[i].leaves.as_slice())
+        .unwrap_or(&[]);
+    silence_proof_for_subject(
+        write_receipt,
+        leaves,
+        &later,
+        trusted_directory,
+        min_witnessed_checkpoints,
+        subject_org,
+    )
 }
 
 /// Choose witnesses that maximize operator independence.

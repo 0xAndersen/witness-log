@@ -40,7 +40,7 @@ import math
 import os
 import time
 import weakref
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from ._core import *  # noqa: F401,F403  -- the Rust core's public surface
 from ._core import JournaledLog, WitnessLog  # explicit, for type checkers
@@ -51,6 +51,7 @@ __all__ = [
     "JournaledLog",
     "WitnessService",
     "verify_dossier_json",
+    "prove_silence_json",
     "verify_inclusion",
     "verify_handoff_binding",
     "verify_authorization_binding",
@@ -74,6 +75,7 @@ __all__ = [
     "canonical_json",
     "sorted_json",
     "verify_disclosure",
+    "prove_silence",
     "identity_seed_from_env",
     "IDENTITY_SEED_ENV",
     "Witnesser",
@@ -345,6 +347,60 @@ def verify_disclosure(leaf_json: Union[str, Dict[str, Any]], payload: bytes, sal
         return _core.payload_hash(bytes(payload), salt, index) == want
     except (KeyError, TypeError, ValueError, AttributeError, _core.WitnessLogError):
         return False
+
+
+# ---------------------------------------------------------- silence proofs
+
+
+def prove_silence(
+    receipt_json: Union[str, Dict[str, Any]],
+    dossiers_json: List[Union[str, Dict[str, Any]]],
+    directory_json: Union[str, Dict[str, Any], List[Any]],
+    min_checkpoints: int = 2,
+    subject_org: Optional[str] = None,
+    expected_identity: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Check a write receipt against a log's witnessed dossiers (SPEC §9.4),
+    offline: is the event it names in the history the witnesses cosigned,
+    or provably left out of it? The counterparty's half of
+    ``JournaledLog.write_receipt_json``; the same check and the same object
+    as ``witness-log prove-silence --json``, with dossier indices where the
+    CLI has paths.
+
+    Each dossier contributes its checkpoint and witness receipts as one
+    observed checkpoint; the leaves come from the largest dossier of the
+    receipt's log. A checkpoint counts only when witnesses from at least two
+    independent operators in ``directory_json`` (yours, never a dossier's)
+    cosigned it; ``subject_org``'s witnesses never count. Inputs are JSON
+    strings or the parsed objects.
+
+    ``result`` is ``"present"`` (the event is leaf ``leaf_index`` of the
+    witnessed history, bound to ``bound_tree_size``/``bound_root_hash``),
+    ``"inconclusive"`` (``reason`` says what is missing; never an
+    accusation) or ``"censored"`` (at least ``min_checkpoints`` witnessed
+    checkpoints after the receipt, whose leaves omit the event).
+
+    Raises ``MalformedError`` for input that does not parse,
+    ``SignatureError`` for a receipt that does not verify, and
+    ``ValueError`` for a receipt not signed by ``expected_identity``, an
+    empty ``dossiers_json`` or a bad argument."""
+
+    def text(v: Any) -> str:
+        return v if isinstance(v, str) else json.dumps(v)
+
+    if isinstance(dossiers_json, (str, bytes, dict)):
+        raise TypeError("dossiers_json is a list of dossiers (JSON strings or dicts), not one dossier")
+    report: Dict[str, Any] = json.loads(
+        _core.prove_silence_json(
+            text(receipt_json),
+            [text(d) for d in dossiers_json],
+            text(directory_json),
+            min_checkpoints,
+            subject_org,
+            expected_identity,
+        )
+    )
+    return report
 
 
 def _disclose(self: JournaledLog, index: int) -> Dict[str, Any]:

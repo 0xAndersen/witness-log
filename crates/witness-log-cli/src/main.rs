@@ -124,6 +124,7 @@ mod fleet_cmd;
 mod http;
 mod journal_serve;
 mod log_cmd;
+mod silence_cmd;
 mod testnet;
 mod witness_cmd;
 mod witness_store;
@@ -194,12 +195,24 @@ USAGE:
   witness-log log export <journal> --out dossier.json
   witness-log log disclose <journal> <index>
   witness-log log info <journal>
+  witness-log log receipt <journal> <index> [--out receipt.json]
       An agent's journal from the shell. `append` takes the payload as an
       argument, from @file, or from stdin (-). `disclose` prints the leaf,
       its payload hash and its salt so a verifier can recompute
       SHA256(bucket_pad(payload) || salt || index) for that one entry.
+      `receipt` signs a write receipt for one entry: the log's promise to
+      whoever submitted it, checked later with `prove-silence`.
       A sealed journal (--sealed) never stores its seed; every command then
       needs --identity-seed-env NAME or --identity-seed-file F.
+
+  witness-log prove-silence <receipt.json> --dossier <d.json> [--dossier <d2.json> ...]
+                            --directory <trusted.json> [--identity <hex>]
+                            [--min-checkpoints N] [--subject-org ORG] [--json]
+      Check a write receipt against the log's witnessed dossiers, offline:
+      is the entry in the history the witnesses cosigned, or provably left
+      out of it? Exit 0 PRESENT, 20 INCONCLUSIVE (never an accusation),
+      30 CENSORED: --min-checkpoints (default 2) later checkpoints, each
+      cosigned by two independent operators, whose leaves omit the entry.
 
   witness-log submit <journal> --directory <trusted.json> [--out dossier.json] [--min N] [--allow-partial]
       Same as `witness submit`: get the journal's head cosigned and write
@@ -300,6 +313,8 @@ EXIT CODES — the verdict IS the exit status, so gating needs no JSON parsing:
   11  WITNESSED by fewer than a            witness evidence, or (diff) a second copy
       directory majority (split view   40  INVALID: a check failed; the file proves nothing
       possible; strict is the default)  2  usage / unreadable input
+  prove-silence: 0 PRESENT, 20 INCONCLUSIVE, 30 CENSORED, 2 usage or a receipt that
+      does not verify or is not signed by --identity
 ";
 
 /// First value following `flag`, if present. Values that look like
@@ -425,6 +440,7 @@ fn main() -> ExitCode {
             witness_cmd::run(&rest)
         }
         Some("log") => log_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("prove-silence") => silence_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("fleet") => fleet_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("journal") => journal_serve::run(args.get(2..).unwrap_or(&[])),
         Some("directory") => directory_cmd::run(args.get(2..).unwrap_or(&[])),

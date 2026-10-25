@@ -283,3 +283,148 @@ fn a_smaller_witnessed_checkpoint_from_another_history_is_caught() {
     );
     assert!(r.reason.as_deref().unwrap().contains("size 5"), "{r:?}");
 }
+
+/// A `Present` says the event is in the leaves the caller supplied. It is
+/// in the log's witnessed history only when those leaves reproduce a
+/// checkpoint after it that two independent operators cosigned; that is
+/// what `witness-log prove-silence` reports as PRESENT (exit 0).
+#[test]
+fn present_is_in_the_witnessed_history_only_when_bound_to_a_witnessed_checkpoint() {
+    let (dir, ws) = network(&[("Org A", false), ("Org B", false)]);
+    let (receipt, log, later, key) = scenario(true, &ws);
+
+    let r = report(&receipt, log.leaves(), &later, &dir, None);
+    assert!(
+        matches!(r.result, SilenceProofResult::Present { leaf_index: 3 }),
+        "{r:?}"
+    );
+    assert!(r.in_witnessed_history(), "{r:?}");
+    assert_eq!(r.bound_tree_size, Some(9));
+    assert_eq!(r.bound_root_hash.as_deref(), Some(log.root_hex().as_str()));
+    assert!(r.reason.is_none());
+
+    // The size-5 checkpoint alone still covers leaf 3.
+    let r = report(&receipt, log.leaves(), &later[..1], &dir, None);
+    assert!(r.in_witnessed_history(), "{r:?}");
+    assert_eq!(r.bound_tree_size, Some(5));
+
+    // No witnessed checkpoint at all: in this copy only.
+    let r = report(&receipt, log.leaves(), &[], &dir, None);
+    assert!(matches!(
+        r.result,
+        SilenceProofResult::Present { leaf_index: 3 }
+    ));
+    assert!(!r.in_witnessed_history());
+    assert!(r.reason.as_deref().unwrap().contains("not shown"), "{r:?}");
+
+    // Leaves that reproduce no witnessed root (leaf 0 edited): unbound.
+    let mut doctored: Vec<_> = log.leaves().to_vec();
+    doctored[0].payload_hash = "cd".repeat(32);
+    let r = report(&receipt, &doctored, &later, &dir, None);
+    assert!(matches!(r.result, SilenceProofResult::Present { .. }));
+    assert!(!r.in_witnessed_history(), "{r:?}");
+
+    // A later leaf edited: the size-5 checkpoint still binds leaf 3.
+    let mut tail_edited: Vec<_> = log.leaves().to_vec();
+    tail_edited[7].payload_hash = "cd".repeat(32);
+    let r = report(&receipt, &tail_edited, &later, &dir, None);
+    assert_eq!(r.bound_tree_size, Some(5), "{r:?}");
+
+    // Cosigned by one operator only: not witnessed, so unbound.
+    let (one_op, one_ws) = network(&[("Org A", false), ("org a", false)]);
+    let (receipt1, log1, later1, _) = scenario(true, &one_ws);
+    let r = report(&receipt1, log1.leaves(), &later1, &one_op, None);
+    assert!(!r.in_witnessed_history(), "{r:?}");
+
+    // Two witnessed roots for one size: the log equivocated; not bound.
+    let mut forked_later = later.clone();
+    let forked = SignedTreeHead::sign(&key, 9, &[0xee; 32], now() + 99);
+    forked_later.push(ObservedCheckpoint {
+        receipts: ws
+            .iter()
+            .map(|w| WitnessReceipt::sign(&w.key, &forked, now() + 99))
+            .collect(),
+        checkpoint: forked,
+    });
+    let r = report(&receipt, log.leaves(), &forked_later, &dir, None);
+    assert!(!r.in_witnessed_history(), "{r:?}");
+    assert!(
+        r.reason.as_deref().unwrap().contains("two histories"),
+        "{r:?}"
+    );
+}
+
+fn dossier_at(log: &WitnessLog, oc: &ObservedCheckpoint) -> Dossier {
+    Dossier {
+        identity_pubkey: oc.checkpoint.signer_pubkey.clone(),
+        leaves: log.leaves()[..oc.checkpoint.tree_size as usize].to_vec(),
+        checkpoint: oc.checkpoint.clone(),
+        witness_receipts: oc.receipts.clone(),
+        witness_directory: WitnessDirectory::default(),
+        key_bindings: vec![],
+        revocations: vec![],
+        fleet_anchor: None,
+    }
+}
+
+/// `silence_proof_over_dossiers` is the full function over dossiers: each
+/// one an observed checkpoint, the leaves from the largest of the
+/// receipt's log.
+#[test]
+fn over_dossiers_takes_the_leaves_from_the_largest_dossier_of_the_receipts_log() {
+    let (dir, ws) = network(&[("Org A", false), ("Org B", false)]);
+
+    let (receipt, log, later, _) = scenario(false, &ws);
+    let dossiers = vec![dossier_at(&log, &later[1]), dossier_at(&log, &later[0])];
+    assert_eq!(silence_proof_leaves_from(&receipt, &dossiers), Some(0));
+    let r = silence_proof_over_dossiers(&receipt, &dossiers, &dir, 2, None);
+    assert!(
+        matches!(
+            r.result,
+            SilenceProofResult::Censored {
+                witnessed_checkpoints_after: 2,
+                ..
+            }
+        ),
+        "{r:?}"
+    );
+    assert_eq!(r.bound_tree_size, Some(9));
+    // One dossier: one witnessed checkpoint, below a minimum of 2.
+    let r = silence_proof_over_dossiers(&receipt, &dossiers[..1], &dir, 2, None);
+    assert!(matches!(r.result, SilenceProofResult::Inconclusive { .. }));
+    assert_eq!(r.bound_tree_size, Some(9));
+
+    // A larger dossier of another log is never where the leaves come from.
+    let other_seed = [9u8; 32];
+    let other_key = SigningKey::from_bytes(&other_seed);
+    let mut other = WitnessLog::resume(IdentityKeypair::from_bytes(&other_seed), 0);
+    for i in 0..12u64 {
+        other.append_intent(format!("unrelated {i}").as_bytes());
+    }
+    let foreign = dossier_at(&other, &witnessed(&other, &other_key, &ws));
+    let mut with_foreign = vec![foreign.clone()];
+    with_foreign.extend(dossiers.iter().cloned());
+    assert_eq!(silence_proof_leaves_from(&receipt, &with_foreign), Some(1));
+    assert!(matches!(
+        silence_proof_over_dossiers(&receipt, &with_foreign, &dir, 2, None).result,
+        SilenceProofResult::Censored { .. }
+    ));
+    // Only another log's dossier: its leaves are used, and prove nothing.
+    let only_foreign = [foreign];
+    assert_eq!(silence_proof_leaves_from(&receipt, &only_foreign), Some(0));
+    assert!(matches!(
+        silence_proof_over_dossiers(&receipt, &only_foreign, &dir, 2, None).result,
+        SilenceProofResult::Inconclusive {
+            witnessed_checkpoints_seen: 0,
+            ..
+        }
+    ));
+    assert_eq!(silence_proof_leaves_from(&receipt, &[]), None);
+
+    // The honest log: present, and in the witnessed history.
+    let (receipt, log, later, _) = scenario(true, &ws);
+    let dossiers = vec![dossier_at(&log, &later[0]), dossier_at(&log, &later[1])];
+    let r = silence_proof_over_dossiers(&receipt, &dossiers, &dir, 2, None);
+    assert!(r.in_witnessed_history(), "{r:?}");
+    assert_eq!(r.bound_tree_size, Some(9));
+}

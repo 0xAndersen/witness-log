@@ -60,7 +60,7 @@ prints at the end; they are the threat model in miniature.
 | command | what it does | when you use it |
 |---|---|---|
 | `testnet up / status / down` | three local witnesses as child processes, plus the directory file listing them | trying the whole path on one machine |
-| `log init / append / forget / export / disclose / info` | an agent's journal from the shell: create, record, erase, export, disclose one payload | agents without bindings, scripts, CI |
+| `log init / append / forget / export / disclose / info / receipt` | an agent's journal from the shell: create, record, erase, export, disclose one payload, sign a write receipt for one entry | agents without bindings, scripts, CI |
 | `submit <journal> --directory <dir.json> --out <dossier.json>` | get a journal cosigned by witnesses in your directory (fail-closed: majority or exit 20) | the step that reaches WITNESSED |
 | `verify <dossier.json> [--identity <hex>] [--directory <dir.json>] [--subject-org ORG] [--min-witnesses N] [--allow-sub-majority] [--known-head <size>:<root>] [--evidence <file>] [--json] [--explain]` | offline verification; the exit code **is** the verdict | CI gates, incident review, regulators |
 | `journal serve <journal> --listen 127.0.0.1:7390` | HTTP front for one journal: append, forget, submit, dossier | agents in any language, over loopback |
@@ -69,6 +69,7 @@ prints at the end; they are the threat model in miniature.
 | `doctor [<journal>] [--directory <dir.json>] [--subject-org ORG] [--witness <dir>]` | checks a setup and prints the fix for each problem: unwitnessed leaves, a journal that contradicts its cosigned head, a directory that cannot reach WITNESSED, witnesses down or serving another key | when something does not work, before you ask |
 | `diff <a.json> <b.json>` | compare two dossiers of one log: honest growth, equivocation, or tampering | "these two copies disagree" |
 | `bind <a.json> <b.json> [--json]` | two different agents' dossiers: prove their handoff / authorization leaves commit to the same bytes and scope | multi-agent audits |
+| `prove-silence <receipt.json> --dossier <d.json>... --directory <dir.json> [--identity <hex>]` | holding a write receipt: is the event in the log's witnessed history (0), not provable either way (20), or provably left out (30)? | "the log said it accepted my request" |
 | `witness init / serve / info / add-log / verify-evidence` | run a witness, inspect one, check an equivocation file | operators |
 | `c2sp show / export / verify` | C2SP checkpoint bodies and signed notes, with the dossier's cosignatures attached | interop with other transparency tooling |
 | `conform <dir>` | check another implementation against the corpus | implementers |
@@ -256,7 +257,40 @@ that root.
 
 ---
 
-## 6. From any language
+## 6. Accepted, then dropped? `prove-silence`
+
+Witnesses stop a log from rewriting what they cosigned, not from leaving
+out an event it never appended. When a log accepts an event for someone,
+it signs a **write receipt** for it and hands it over; the holder checks
+it against the log's later dossiers:
+
+<!-- doctest: group=silence before="witness-log testnet up --out trusted.json" after="witness-log testnet down" -->
+```sh
+witness-log log init shop.jsonl
+witness-log log append shop.jsonl --intent '{"order":"A-1001","amount_usd":40}'   # index 0
+witness-log log receipt shop.jsonl 0 --out receipt.json       # the shop hands this to the customer
+witness-log submit shop.jsonl --directory trusted.json --out monday.json
+witness-log log append shop.jsonl --intent '{"order":"A-1002","amount_usd":15}'
+witness-log submit shop.jsonl --directory trusted.json --out friday.json
+# the customer, later, with the shop's dossiers and a directory they trust:
+witness-log prove-silence receipt.json --dossier monday.json --dossier friday.json \
+  --directory trusted.json --identity "$(witness-log log info shop.jsonl | jq -r .identity)"   # PRESENT, exit 0
+```
+
+`--identity` is the shop's key as the customer knows it, never read from
+the receipt: anyone can sign a receipt with a key of their own and then
+"omit" the event from their own log. Exit 0 PRESENT: the event is in leaves that reproduce a
+checkpoint after it which two independent operators cosigned. Exit 30
+CENSORED: the shop signed the receipt, at least two later checkpoints
+(`--min-checkpoints`) were each cosigned by two independent operators,
+their leaves reproduce every one of those roots, and the event is not
+there. Anything less is exit 20 INCONCLUSIVE, never an accusation. What
+CENSORED does and does not prove:
+[Threat model](Threat-Model#proving-an-omission).
+
+---
+
+## 7. From any language
 
 The CLI is the integration for languages without bindings. Write the
 dossier JSON (schema: `spec/dossier.schema.json`), shell out to `verify`,
@@ -267,7 +301,7 @@ runner, or an air-gapped audit workstation.
 
 ---
 
-## 7. Where to go next
+## 8. Where to go next
 
 - Run your own witness in ten minutes: [Running a witness](Running-a-Witness).
 - What the protocol on the wire looks like, including the 409 and 422 paths: [Witness protocol walkthrough](Witness-Protocol-Walkthrough).

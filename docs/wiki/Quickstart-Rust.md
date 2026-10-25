@@ -226,7 +226,11 @@ advance past that size and the log's leaves, which must reproduce those
 checkpoints' roots, do not contain the event, the receipt plus the
 checkpoints and leaves are evidence anyone can check (§9.4,
 `silence_proof_for_subject`, which also says why a result is
-inconclusive).
+inconclusive). `silence_proof_over_dossiers` runs the same check over the
+log's dossiers, as `witness-log prove-silence` does; a `Present` result
+means the event is in the witnessed history only when
+`report.in_witnessed_history()` (the leaves reproduce a witnessed
+checkpoint after it), not merely in the leaves you passed.
 
 ---
 

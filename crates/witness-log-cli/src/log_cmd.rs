@@ -50,6 +50,13 @@ const USAGE: &str = "usage:
       compare it with the leaf's payload_hash.
   witness-log log info <journal>
       Identity, size, root, leaf counts, whether the journal is sealed.
+  witness-log log receipt <journal> <index> [--out receipt.json]
+      Sign a write receipt for leaf <index> (SPEC §9.4): this log's statement
+      that it accepted that entry (its payload_hash) at tree size <index>.
+      Hand it to whoever submitted the entry. With it and the log's later
+      witnessed dossiers they can check the entry was kept, or prove it was
+      left out: `witness-log prove-silence`. Exit 2 for an index the journal
+      does not hold.
   witness-log log revoke <journal> --reason TEXT [--as-of-ms MS] [--out revocation.json]
                          [--experimental --as-of-index N | --experimental --at-current-size]
       Sign a revocation of this journal's identity key (SPEC §5) and print it.
@@ -120,11 +127,81 @@ pub fn run(args: &[String]) -> ExitCode {
         Some("export") => cmd_export(rest),
         Some("disclose") => cmd_disclose(rest),
         Some("info") => cmd_info(rest),
+        Some("receipt") => cmd_receipt(rest),
         Some("revoke") => cmd_revoke(rest),
         _ => usage_err(
-            "log: expected a subcommand (init, append, forget, export, disclose, info, revoke)",
+            "log: expected a subcommand (init, append, forget, export, disclose, info, receipt, revoke)",
         ),
     }
+}
+
+// --------------------------------------------------------------- receipt
+
+/// What the log operator hands the party whose entry it accepted: a
+/// signed `WriteReceipt` for one leaf. The counterparty keeps it and later
+/// runs `witness-log prove-silence` against the log's witnessed dossiers.
+fn cmd_receipt(args: &[String]) -> ExitCode {
+    let positional = match split_args(args, &["--out"], &[]) {
+        Ok(p) => p,
+        Err(e) => return usage_err(&format!("log receipt: {e}")),
+    };
+    let [journal, index] = positional.as_slice() else {
+        return usage_err("log receipt: expected <journal> <index>");
+    };
+    let index = match parse_index(index) {
+        Ok(i) => i,
+        Err(e) => return usage_err(&format!("log receipt: {e}")),
+    };
+    let out = crate::flag_value(args, "--out");
+    if args.iter().any(|a| a == "--out") && out.is_none() {
+        return usage_err("log receipt: --out requires a path");
+    }
+    let seed = match crate::identity_seed_from_args(args) {
+        Ok(s) => s,
+        Err(e) => return usage_err(&format!("log receipt: {e}")),
+    };
+    let (log, report) = match crate::replay_journal(journal, seed.as_deref()) {
+        Ok(x) => x,
+        Err(e) => return fail(format!("{journal}: {e}")),
+    };
+    if report.dropped_trailing_lines > 0 {
+        eprintln!(
+            "note: {journal} has a partially written last line; only its {} complete leaves count",
+            log.tree_size()
+        );
+    }
+    // A receipt for an entry the log does not hold would be a promise about
+    // nothing; the library refuses it, and so does this command.
+    let Some(receipt) = log.write_receipt(index) else {
+        eprintln!(
+            "log receipt: {journal} has no leaf {index} (tree size {}); a write receipt is issued \
+             only for an entry the log holds",
+            log.tree_size()
+        );
+        return ExitCode::from(2);
+    };
+    let text = match serde_json::to_string_pretty(&receipt) {
+        Ok(t) => t,
+        Err(e) => return fail(e),
+    };
+    match out {
+        Some(out) => {
+            if let Err(e) = crate::witness_cmd::atomic_write_shared(
+                Path::new(&out),
+                format!("{text}\n").as_bytes(),
+            ) {
+                return fail(format!("{out}: {e}"));
+            }
+            eprintln!(
+                "write receipt for leaf {index} (payload_hash {}) written to {out}. Hand it to whoever \
+                 submitted that entry; they check it later with `witness-log prove-silence {out} \
+                 --dossier <dossier.json> --directory <trusted.json> --identity {}`",
+                receipt.payload_hash, receipt.signer_pubkey
+            );
+        }
+        None => println!("{text}"),
+    }
+    ExitCode::SUCCESS
 }
 
 // ---------------------------------------------------------------- revoke

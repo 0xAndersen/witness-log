@@ -21,13 +21,13 @@ never parses output.
 
 | code | meaning | produced by |
 |---|---|---|
-| `0` | WITNESSED, cosigned by a strict majority of the trusted directory, or accepted under `--allow-sub-majority` (verify); success (everything else) | all commands |
+| `0` | WITNESSED, cosigned by a strict majority of the trusted directory, or accepted under `--allow-sub-majority` (verify); PRESENT: the event is in the log's witnessed history (`prove-silence`); success (everything else) | all commands |
 | `10` | CONSISTENT-UNWITNESSED: cryptography sound, witness coverage below the gate or from fewer than two independent operators (verify); nothing to bind (`bind`) | `verify`, `submit --allow-partial`, `bind` |
 | `11` | WITNESSED, but the cosigning witnesses are not a strict majority of the trusted directory: a conflicting history could have been cosigned by the rest (split view). The default since 0.5.0; `--allow-sub-majority` accepts it as 0 | `verify` |
-| `20` | UNANCHORED: internally consistent, no trusted directory supplied (verify); a witness refused the history with 422, or fewer than `--min` cosigned (submit) | `verify`, `submit` |
-| `30` | DIVERGED: the dossier is valid but contradicts a `--known-head` its leaves do not reproduce, or an `--evidence` equivocation proof that verifies for this identity (verify); two valid, conflicting copies of one log (`diff`); mismatch (`bind`) | `verify`, `diff`, `bind` |
+| `20` | UNANCHORED: internally consistent, no trusted directory supplied (verify); a witness refused the history with 422, or fewer than `--min` cosigned (submit); INCONCLUSIVE: not enough witnessed evidence either way (`prove-silence`) | `verify`, `submit`, `prove-silence` |
+| `30` | DIVERGED: the dossier is valid but contradicts a `--known-head` its leaves do not reproduce, or an `--evidence` equivocation proof that verifies for this identity (verify); two valid, conflicting copies of one log (`diff`); mismatch (`bind`); CENSORED: the log signed a write receipt for an event its witnessed history omits (`prove-silence`) | `verify`, `diff`, `bind`, `prove-silence` |
 | `40` | INVALID: a check failed: checkpoint signature, identity (including a wrong `--identity`), leaf structure, key bindings or revocations, or Merkle continuity, as for tampered, reordered, dropped or appended leaves (verify); either copy is invalid or tampered (`diff`); a supplied key did not verify or none did (`c2sp verify`); nothing to export (`c2sp export`); the file does not prove equivocation (`witness verify-evidence`) | `verify`, `diff`, `c2sp verify`, `c2sp export`, `witness verify-evidence`, `submit --allow-partial` |
-| `2` | usage error: unknown flag, missing argument, unreadable or unparseable input | all commands |
+| `2` | usage error: unknown flag, missing argument, unreadable or unparseable input; a write receipt that does not verify or is not signed by `--identity` (`prove-silence`); an index the journal does not hold (`log receipt`) | all commands |
 | `1` | the operation itself failed: a file could not be written, a journal is locked, a witness would not start, a lock is held | `log`, `witness init/serve/add-log/info`, `testnet`, `directory` |
 
 Codes 10/20/30/40 are spaced so `-ge 20` means "do not trust this"
@@ -129,6 +129,59 @@ witness-log bind <a.json> <b.json> [--json]
 
 Two *different* agents' dossiers: match their handoff and authorization
 leaves. Exit 0 bound, 30 mismatch, 10 nothing to bind, 2 usage.
+
+## prove-silence
+
+```
+witness-log prove-silence <receipt.json> --dossier <d.json> [--dossier <d2.json> ...]
+                          --directory <trusted.json> [--identity <hex>] [--min-checkpoints N]
+                          [--subject-org <org>] [--json]
+```
+
+Offline. The check made by whoever holds a write receipt (`log receipt`):
+is the event it names in the log's witnessed history, or has the log
+provably left it out (SPEC §9.4)? See
+[Threat model: proving an omission](Threat-Model#proving-an-omission).
+
+Each `--dossier` contributes its checkpoint and witness receipts as one
+observed checkpoint. A checkpoint counts only when it is signed by the
+receipt's signer, is larger than the receipt's `tree_size`, and was
+cosigned by witnesses in `--directory` from at least two independent
+operators (the bar of WITNESSED; project-operated witnesses and the
+`--subject-org` never count). The leaves come from the dossier with the
+largest tree size among those of the receipt's log, and must reproduce
+the root of every counted checkpoint, so leaves edited to drop the event
+prove nothing. Inputs are read with `verify`'s rules: the same size cap,
+`Dossier::from_json`'s depth limit, the same directory forms; the receipt
+is read from a JSON object only.
+
+| flag | effect |
+|---|---|
+| `--dossier <path>` | a dossier of the log; repeatable, at least one. Dossiers of another identity, or no larger than the receipt's size, are listed in a note and not counted |
+| `--directory <path>` | the directory you trust, `{"witnesses":[...]}` or a bare array; required |
+| `--identity <hex>` | the log's identity key, obtained out of band; a receipt signed by any other key is refused (exit 2). Without it the result is about whatever key signed the receipt, and anyone can sign a receipt and then omit the event from their own log |
+| `--min-checkpoints N` | counted checkpoints after the receipt that CENSORED needs; default 2, the library's conservative minimum (5 is robust) |
+| `--subject-org <org>` | the organisation that operates the log; its witnesses never count, as for `verify` |
+| `--json` | one JSON object instead of the verdict line |
+
+| result | exit | means |
+|---|---|---|
+| PRESENT | `0` | the event is leaf `leaf_index`, and the leaves reproduce a counted checkpoint larger than that index (`bound_tree_size`, `bound_root_hash`): it is in a history two independent operators cosigned |
+| INCONCLUSIVE | `20` | not enough witnessed evidence either way, and never an accusation: `reason` says what is missing (too few counted checkpoints, leaves that do not cover or reproduce them, two witnessed roots for one size, or the event found only in leaves no counted checkpoint binds) |
+| CENSORED | `30` | the receipt verifies, at least `--min-checkpoints` counted checkpoints follow it, the leaves reproduce all of them, and the event is not among the leaves. Bound to the largest of them |
+| | `2` | usage error, unreadable or malformed input, a receipt that does not verify, or a receipt not signed by `--identity` |
+
+`--json` prints `result` (`"present"`, `"inconclusive"`, `"censored"`),
+`exit_code`, `leaf_index` (set whenever the event is among the leaves,
+also when the result is inconclusive because they are not bound),
+`receipt_tree_size`, `witnessed_checkpoints_after` (censored) or
+`witnessed_checkpoints_seen` (inconclusive), `min_checkpoints`,
+`bound_tree_size`, `bound_root_hash`, `reason`, `subject_org`, `identity`
+(the receipt's signer), `identity_pinned`, and the inputs: `receipt`
+(`path`, `payload_hash`, `tree_size`, `issued_at_ms`, `signer_pubkey`),
+`directory`, `dossiers` (`path`, `tree_size`, `root_hash`, `leaves`,
+`witness_receipts`, `same_log`, `after_receipt`) and `leaves_from`. The
+wording of `reason` is not part of the contract.
 
 ---
 
@@ -247,6 +300,19 @@ witness-log log info <journal>
 Identity, canonical origin, tree size, root, leaf counts by type, key
 bindings, salts held, sealed or not. For a sealed journal without its
 seed, the public facts from the header.
+
+```
+witness-log log receipt <journal> <index> [--out receipt.json]
+```
+
+Signs a write receipt for leaf `<index>` with the identity key (SPEC
+§9.4): `{payload_hash, tree_size, issued_at_ms, sig_alg, signer_pubkey,
+signature}`, the log's statement that it accepted that event at tree size
+`<index>`, so it is due in every checkpoint larger than that. The
+operator hands it to whoever submitted the event, at that moment; they
+keep it and check it later with [`prove-silence`](#prove-silence).
+Printed on stdout, or written to `--out` (0644) with a note on stderr.
+Exit 2 for an index the journal does not hold.
 
 ```
 witness-log log revoke <journal> --reason TEXT [--as-of-ms MS] [--out revocation.json]
@@ -539,7 +605,7 @@ The worked example; writes nothing, needs no network. Exit 0, or 40
 | `<journal>.salts` | 0600 | `log init`, `log append`, `log forget` |
 | `<journal>.lock` | | while a `log` command or `journal serve` has it open |
 | `<journal>.witnesses.json` | 0600 | `submit` (last cosigned size per witness) |
-| `dossier.json`, `trusted.json`, `note.txt` | 0644 | `submit`, `log export`, `directory`, `testnet up`, `c2sp export` |
+| `dossier.json`, `trusted.json`, `note.txt`, `receipt.json`, `revocation.json` | 0644 | `submit`, `log export`, `directory`, `testnet up`, `c2sp export`, `log receipt --out`, `log revoke --out` |
 | `<witness dir>/witness.key` | 0600 | `witness init` |
 | `<witness dir>/witness.json`, `logs/`, `evidence/` | 0600 | `witness init`, `witness serve` |
 | `<fleet dir>/fleet.key`, `fleet.json`, `entries`, `witnesses.json`, `evidence/` | 0600 | `fleet init`, `fleet serve`, `fleet witness` (experimental) |

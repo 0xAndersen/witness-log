@@ -330,7 +330,49 @@ least two distinct operators regardless of what you pass.
 
 ---
 
-## 6. Restarts, crashes and locks: what to expect
+## 6. Promise an event, and prove later it was kept (or dropped)
+
+Witnesses stop a log from rewriting what they cosigned; they cannot make
+it record an event it never appended. When your agent accepts something
+on someone's behalf (an order, an instruction), sign a **write receipt**
+for it and hand it over: the log's promise that this exact event is in
+its history from that index on.
+
+<!-- doctest: group=receipts before="witness-log testnet up --out directory.json" after="witness-log testnet down" -->
+```python
+import witness_log
+
+shop = witness_log.open("shop.jsonl")
+i = shop.append_intent(b'{"order": "A-1001", "amount_usd": 40}')
+receipt = shop.write_receipt_json(i)      # JSON; give it to whoever placed the order
+first = shop.submit("directory.json", min=2, timeout=10)["dossier"]
+shop.append_intent(b'{"order": "A-1002", "amount_usd": 15}')
+later = shop.submit("directory.json", min=2, timeout=10)["dossier"]
+
+# The customer, later, with the shop's dossiers and a directory THEY trust:
+report = witness_log.prove_silence(
+    receipt, [first, later], open("directory.json").read(),
+    expected_identity=shop.identity_pubkey_hex())   # the shop's key, known out of band
+print(report["result"], report["leaf_index"])        # present 0
+shop.close()
+```
+
+`prove_silence` is `witness-log prove-silence --json` as a dict. Each
+dossier counts as one observed checkpoint; one counts only if witnesses
+from at least two independent operators in *your* directory cosigned it.
+`result` is `"present"` (the event is in leaves that reproduce such a
+checkpoint after it), `"inconclusive"` (`reason` says what is missing;
+never an accusation) or `"censored"`: the receipt verifies, at least
+`min_checkpoints` (default 2) witnessed checkpoints followed it, and their
+leaves, which must reproduce every one of their roots, do not contain the
+event. That bundle (receipt, dossiers, your directory) is evidence anyone
+can recheck. A receipt that does not verify raises `SignatureError`; one
+not signed by `expected_identity` raises `ValueError`. What it does and
+does not prove: [Threat model](Threat-Model#proving-an-omission).
+
+---
+
+## 7. Restarts, crashes and locks: what to expect
 
 - **Restart.** `witness_log.open(path)` resumes an existing journal: same identity, new session key, new binding. Nothing to configure.
 - **Crash mid-write.** A process killed between bytes leaves a torn last line. `resume` detects it, truncates the file to the last complete line, and reports how many lines were dropped (`JournaledLog.resume(path)` returns `(log, dropped)`; `open` hides the count). You lose at most the event in flight, never the file.
@@ -339,7 +381,7 @@ least two distinct operators regardless of what you pass.
 
 ---
 
-## 7. Where to go next
+## 8. Where to go next
 
 - Put it in your framework in one line: [Framework guides](Framework-Guides) (LangChain, OpenAI Agents SDK, CrewAI, AutoGen, Google ADK, LlamaIndex, Claude).
 - Expose it to any MCP-speaking agent: [MCP integration](MCP-Integration).

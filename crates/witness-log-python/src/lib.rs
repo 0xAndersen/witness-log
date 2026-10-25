@@ -302,6 +302,16 @@ impl PyWitnessLog {
         leaf_hash_of(&lock(&self.inner), index)
     }
 
+    /// A write receipt for the leaf at `index` (SPEC §9.4), signed by this
+    /// log's identity, as JSON; `None` past the end. See
+    /// `JournaledLog.write_receipt_json`.
+    fn write_receipt_json(&self, index: u64) -> PyResult<Option<String>> {
+        let receipt = lock(&self.inner).write_receipt(index);
+        receipt
+            .map(|r| serde_json::to_string(&r).map_err(malformed_err))
+            .transpose()
+    }
+
     /// Assemble a full dossier (leaves + checkpoint) as a JSON string,
     /// matching SPEC.md §9 minus witness fields — attach those separately
     /// if/when this log has been witnessed.
@@ -492,6 +502,159 @@ fn verify_dossier_json_detached(
     };
     let report = dossier.verify(threshold, &ctx);
     serde_json::to_string_pretty(&report).map_err(malformed_err)
+}
+
+/// Check a write receipt against a log's witnessed dossiers (SPEC §9.4),
+/// offline: is the event it names in the history the witnesses cosigned,
+/// or provably left out of it? `witness_log_network::
+/// silence_proof_over_dossiers`, the function `witness-log prove-silence`
+/// runs, and the same JSON object as its `--json` with dossier indices
+/// where the CLI has paths and no `exit_code`. `result` is "present" (in
+/// the witnessed history), "inconclusive" (never an accusation) or
+/// "censored".
+///
+/// Errors: `MalformedError` for an input that does not parse,
+/// `SignatureError` for a receipt that does not verify, `ValueError` for a
+/// receipt not signed by `expected_identity`, no dossiers, or a bad
+/// argument.
+#[pyfunction]
+#[pyo3(signature = (receipt_json, dossiers_json, directory_json, min_checkpoints=2, subject_org=None, expected_identity=None))]
+fn prove_silence_json(
+    py: Python<'_>,
+    receipt_json: &str,
+    dossiers_json: Vec<String>,
+    directory_json: &str,
+    min_checkpoints: usize,
+    subject_org: Option<String>,
+    expected_identity: Option<String>,
+) -> PyResult<String> {
+    py.detach(|| {
+        prove_silence_detached(
+            receipt_json,
+            &dossiers_json,
+            directory_json,
+            min_checkpoints,
+            subject_org,
+            expected_identity,
+        )
+    })
+}
+
+fn prove_silence_detached(
+    receipt_json: &str,
+    dossiers_json: &[String],
+    directory_json: &str,
+    min_checkpoints: usize,
+    subject_org: Option<String>,
+    expected_identity: Option<String>,
+) -> PyResult<String> {
+    use witness_log_network::SilenceProofResult;
+    let value_err = |msg: &str| pyo3::exceptions::PyValueError::new_err(msg.to_string());
+    if min_checkpoints == 0 {
+        return Err(value_err("min_checkpoints must be at least 1"));
+    }
+    if subject_org.as_deref().is_some_and(|o| o.trim().is_empty()) {
+        return Err(value_err(
+            "subject_org must name the organisation that operates the log",
+        ));
+    }
+    if let Some(id) = &expected_identity {
+        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(value_err(
+                "expected_identity must be a 32-byte Ed25519 public key as 64 hex characters",
+            ));
+        }
+    }
+    if dossiers_json.is_empty() {
+        return Err(value_err(
+            "at least one dossier is required: the log's witnessed history to check the receipt against",
+        ));
+    }
+    let receipt: witness_log_core::sth::WriteReceipt =
+        serde_json::from_str(receipt_json).map_err(malformed_err)?;
+    if let Err(e) = receipt.verify() {
+        return Err(SignatureError::new_err(format!(
+            "the write receipt does not verify ({e}): it was altered after signing, or is not a write receipt"
+        )));
+    }
+    if let Some(id) = &expected_identity {
+        if !id.eq_ignore_ascii_case(receipt.signer_pubkey.trim()) {
+            return Err(value_err(&format!(
+                "the receipt is signed by {}, not by expected_identity {id}: it is not from the log you named",
+                receipt.signer_pubkey
+            )));
+        }
+    }
+    let dossiers = dossiers_json
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            witness_log_network::Dossier::from_json(d)
+                .map_err(|e| malformed_err(format!("dossier {i}: {e}")))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let directory = parse_directory_json(directory_json)?;
+
+    let report = witness_log_network::silence_proof_over_dossiers(
+        &receipt,
+        &dossiers,
+        &directory,
+        min_checkpoints,
+        subject_org.as_deref(),
+    );
+    let result = match &report.result {
+        SilenceProofResult::Censored { .. } => "censored",
+        SilenceProofResult::Present { .. } if report.in_witnessed_history() => "present",
+        _ => "inconclusive",
+    };
+    let (leaf_index, after, seen) = match &report.result {
+        SilenceProofResult::Present { leaf_index } => (Some(*leaf_index), None, None),
+        SilenceProofResult::Censored {
+            witnessed_checkpoints_after,
+            ..
+        } => (None, Some(*witnessed_checkpoints_after), None),
+        SilenceProofResult::Inconclusive {
+            witnessed_checkpoints_seen,
+            ..
+        } => (None, None, Some(*witnessed_checkpoints_seen)),
+    };
+    let signer = receipt.signer_pubkey.trim();
+    let inputs: Vec<serde_json::Value> = dossiers
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "tree_size": d.checkpoint.tree_size,
+                "root_hash": d.checkpoint.root_hash,
+                "leaves": d.leaves.len(),
+                "witness_receipts": d.witness_receipts.len(),
+                "same_log": d.checkpoint.signer_pubkey.trim().eq_ignore_ascii_case(signer),
+                "after_receipt": d.checkpoint.tree_size > receipt.tree_size,
+            })
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "result": result,
+        "leaf_index": leaf_index,
+        "receipt_tree_size": receipt.tree_size,
+        "witnessed_checkpoints_after": after,
+        "witnessed_checkpoints_seen": seen,
+        "min_checkpoints": min_checkpoints,
+        "bound_tree_size": report.bound_tree_size,
+        "bound_root_hash": report.bound_root_hash,
+        "reason": report.reason,
+        "subject_org": subject_org,
+        "identity": receipt.signer_pubkey,
+        "identity_pinned": expected_identity.is_some(),
+        "receipt": {
+            "payload_hash": receipt.payload_hash,
+            "tree_size": receipt.tree_size,
+            "issued_at_ms": receipt.issued_at_ms,
+            "signer_pubkey": receipt.signer_pubkey,
+        },
+        "dossiers": inputs,
+        "leaves_from": witness_log_network::silence_proof_leaves_from(&receipt, &dossiers),
+    });
+    serde_json::to_string(&doc).map_err(malformed_err)
 }
 
 /// The add-checkpoint request body for this log's current head, signed
@@ -1350,6 +1513,22 @@ impl PyJournaledLog {
         })
     }
 
+    /// A write receipt for leaf `index` (SPEC §9.4) as JSON, or `None` past
+    /// the end: this log's signed statement that it accepted that entry
+    /// (its `payload_hash`) at tree size `index`. Hand it to whoever
+    /// submitted the entry; with it and this log's later witnessed dossiers
+    /// they check it was kept, or prove it was left out
+    /// (`witness_log.prove_silence`, `witness-log prove-silence`). The same
+    /// object `witness-log log receipt` prints.
+    fn write_receipt_json(&self, py: Python<'_>, index: u64) -> PyResult<Option<String>> {
+        self.with_j(py, |j| {
+            j.log()
+                .write_receipt(index)
+                .map(|r| serde_json::to_string(&r).map_err(malformed_err))
+                .transpose()
+        })
+    }
+
     /// The redaction salt for leaf `index` as 64 hex characters, read
     /// from `<path>.salts`, or `None` if it was forgotten or the leaf
     /// never carried a payload. Handing this out together with the
@@ -2163,6 +2342,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyJournaledLog>()?;
     m.add_class::<PyWitnessService>()?;
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(prove_silence_json, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(normalize_label, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(payload_hash, m)?)?;
