@@ -506,27 +506,31 @@ fn verify_dossier_json_detached(
 
 /// Check a write receipt against a log's witnessed dossiers (SPEC §9.4),
 /// offline: is the event it names in the history the witnesses cosigned,
-/// or provably left out of it? `witness_log_network::
-/// silence_proof_over_dossiers`, the function `witness-log prove-silence`
-/// runs, and the same JSON object as its `--json` with dossier indices
-/// where the CLI has paths and no `exit_code`. `result` is "present" (in
-/// the witnessed history), "inconclusive" (never an accusation) or
-/// "censored".
+/// at the index the receipt promised, or provably left out of it?
+/// `witness_log_network::silence_proof_over_dossiers`, the function
+/// `witness-log prove-silence` runs, and the same JSON object as its
+/// `--json` with dossier indices where the CLI has paths and no
+/// `exit_code`. `result` is "present", "inconclusive" (never an
+/// accusation) or "censored". `revocations_json` is one revocation
+/// statement or an array of them, applied with those the dossiers carry: a
+/// receipt whose key was revoked proves nothing.
 ///
 /// Errors: `MalformedError` for an input that does not parse,
 /// `SignatureError` for a receipt that does not verify, `ValueError` for a
 /// receipt not signed by `expected_identity`, no dossiers, or a bad
-/// argument.
+/// argument (`min_checkpoints` below 1 included).
 #[pyfunction]
-#[pyo3(signature = (receipt_json, dossiers_json, directory_json, min_checkpoints=2, subject_org=None, expected_identity=None))]
+#[pyo3(signature = (receipt_json, dossiers_json, directory_json, min_checkpoints=2, subject_org=None, expected_identity=None, revocations_json=None))]
+#[allow(clippy::too_many_arguments)]
 fn prove_silence_json(
     py: Python<'_>,
     receipt_json: &str,
     dossiers_json: Vec<String>,
     directory_json: &str,
-    min_checkpoints: usize,
+    min_checkpoints: i64,
     subject_org: Option<String>,
     expected_identity: Option<String>,
+    revocations_json: Option<String>,
 ) -> PyResult<String> {
     py.detach(|| {
         prove_silence_detached(
@@ -536,6 +540,7 @@ fn prove_silence_json(
             min_checkpoints,
             subject_org,
             expected_identity,
+            revocations_json,
         )
     })
 }
@@ -544,15 +549,21 @@ fn prove_silence_detached(
     receipt_json: &str,
     dossiers_json: &[String],
     directory_json: &str,
-    min_checkpoints: usize,
+    min_checkpoints: i64,
     subject_org: Option<String>,
     expected_identity: Option<String>,
+    revocations_json: Option<String>,
 ) -> PyResult<String> {
     use witness_log_network::SilenceProofResult;
     let value_err = |msg: &str| pyo3::exceptions::PyValueError::new_err(msg.to_string());
-    if min_checkpoints == 0 {
-        return Err(value_err("min_checkpoints must be at least 1"));
-    }
+    let min_checkpoints = match usize::try_from(min_checkpoints) {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            return Err(value_err(&format!(
+                "min_checkpoints must be at least 1, got {min_checkpoints}"
+            )))
+        }
+    };
     if subject_org.as_deref().is_some_and(|o| o.trim().is_empty()) {
         return Err(value_err(
             "subject_org must name the organisation that operates the log",
@@ -594,47 +605,61 @@ fn prove_silence_detached(
         })
         .collect::<PyResult<Vec<_>>>()?;
     let directory = parse_directory_json(directory_json)?;
+    // One statement (as `revoke_json` returns it) or an array of them, as
+    // `verify_dossier_json` reads them.
+    let revocations: Vec<witness_log_core::identity::RevocationStatement> = match &revocations_json
+    {
+        None => Vec::new(),
+        Some(s) if s.trim_start().starts_with('{') => {
+            vec![serde_json::from_str(s).map_err(malformed_err)?]
+        }
+        Some(s) => serde_json::from_str(s).map_err(malformed_err)?,
+    };
 
-    let report = witness_log_network::silence_proof_over_dossiers(
+    let proof = witness_log_network::silence_proof_over_dossiers(
         &receipt,
         &dossiers,
-        &directory,
-        min_checkpoints,
-        subject_org.as_deref(),
+        &witness_log_network::SilenceContext {
+            trusted_directory: &directory,
+            min_witnessed_checkpoints: min_checkpoints,
+            subject_org: subject_org.as_deref(),
+            revocations: &revocations,
+        },
     );
-    let result = match &report.result {
-        SilenceProofResult::Censored { .. } => "censored",
-        SilenceProofResult::Present { .. } if report.in_witnessed_history() => "present",
-        _ => "inconclusive",
-    };
-    let (leaf_index, after, seen) = match &report.result {
-        SilenceProofResult::Present { leaf_index } => (Some(*leaf_index), None, None),
+    let report = &proof.report;
+    let (result, leaf_index, after, seen) = match &report.result {
+        SilenceProofResult::Present { leaf_index } => ("present", Some(*leaf_index), None, None),
         SilenceProofResult::Censored {
             witnessed_checkpoints_after,
             ..
-        } => (None, Some(*witnessed_checkpoints_after), None),
+        } => ("censored", None, Some(*witnessed_checkpoints_after), None),
         SilenceProofResult::Inconclusive {
             witnessed_checkpoints_seen,
             ..
-        } => (None, None, Some(*witnessed_checkpoints_seen)),
+        } => (
+            "inconclusive",
+            report.misplaced_at,
+            None,
+            Some(*witnessed_checkpoints_seen),
+        ),
     };
-    let signer = receipt.signer_pubkey.trim();
     let inputs: Vec<serde_json::Value> = dossiers
         .iter()
-        .map(|d| {
+        .zip(&proof.dossiers)
+        .map(|(d, u)| {
             serde_json::json!({
                 "tree_size": d.checkpoint.tree_size,
                 "root_hash": d.checkpoint.root_hash,
                 "leaves": d.leaves.len(),
                 "witness_receipts": d.witness_receipts.len(),
-                "same_log": d.checkpoint.signer_pubkey.trim().eq_ignore_ascii_case(signer),
-                "after_receipt": d.checkpoint.tree_size > receipt.tree_size,
+                "status": u,
             })
         })
         .collect();
     let doc = serde_json::json!({
         "result": result,
         "leaf_index": leaf_index,
+        "promised_index": receipt.tree_size,
         "receipt_tree_size": receipt.tree_size,
         "witnessed_checkpoints_after": after,
         "witnessed_checkpoints_seen": seen,
@@ -652,7 +677,7 @@ fn prove_silence_detached(
             "signer_pubkey": receipt.signer_pubkey,
         },
         "dossiers": inputs,
-        "leaves_from": witness_log_network::silence_proof_leaves_from(&receipt, &dossiers),
+        "leaves_from": proof.leaves_from,
     });
     serde_json::to_string(&doc).map_err(malformed_err)
 }

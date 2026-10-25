@@ -234,12 +234,14 @@ def prove_silence_json(
     min_checkpoints: int = 2,
     subject_org: Optional[str] = None,
     expected_identity: Optional[str] = None,
+    revocations_json: Optional[str] = None,
 ) -> str:
     """``witness-log prove-silence --json`` as a string, with dossier indices
     where the CLI has paths and no ``exit_code``; ``witness_log.prove_silence``
-    returns it as a dict. Raises ``MalformedError`` for input that does not
-    parse, ``SignatureError`` for a receipt that does not verify, ``ValueError``
-    for a receipt not signed by ``expected_identity``."""
+    returns it as a dict. ``revocations_json`` is one revocation statement or
+    an array of them. Raises ``MalformedError`` for input that does not parse,
+    ``SignatureError`` for a receipt that does not verify, ``ValueError`` for
+    a receipt not signed by ``expected_identity`` or ``min_checkpoints`` below 1."""
 def verify_inclusion(
     leaf_hash_hex: str, leaf_index: int, tree_size: int, proof_hexes: list[str], root_hex: str
 ) -> bool: ...

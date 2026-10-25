@@ -5,14 +5,16 @@
 //! (`witness-log log receipt`) and hands it to whoever submitted the entry.
 //! Later, holding the log's dossiers (each a checkpoint with its witness
 //! receipts, plus the leaves), that party, or anyone they hand the bundle
-//! to, checks whether the entry is in the history the witnesses cosigned,
-//! or provably left out of it. Offline, and a thin renderer over
+//! to, checks whether the entry is in the history the witnesses cosigned
+//! at the index the receipt promised, or provably left out of it. Offline,
+//! and a thin renderer over
 //! `witness_log_network::silence_proof_over_dossiers`, which decides.
 
 use std::process::ExitCode;
+use witness_log_core::identity::RevocationStatement;
 use witness_log_core::sth::WriteReceipt;
 use witness_log_network::{
-    silence_proof_leaves_from, silence_proof_over_dossiers, Dossier, SilenceProofReport,
+    silence_proof_over_dossiers, Dossier, SilenceCheckpointUse, SilenceContext, SilenceProofReport,
     SilenceProofResult, MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED,
 };
 
@@ -32,26 +34,34 @@ mod code {
 /// receipt before an omission counts as censorship.
 const DEFAULT_MIN_CHECKPOINTS: usize = 2;
 
+/// A write receipt is six short fields, a few hundred bytes. Anything much
+/// larger is not one, and is refused before it is read into memory.
+const MAX_RECEIPT_BYTES: u64 = 64 * 1024;
+
 pub(crate) const USAGE: &str =
     "usage: witness-log prove-silence <receipt.json> --dossier <d.json> [--dossier <d2.json> ...]
                                  --directory <trusted.json> [--identity <hex>] [--min-checkpoints N]
-                                 [--subject-org ORG] [--json]
+                                 [--subject-org ORG] [--revocations <path>] [--json]
   Check a write receipt (what `witness-log log receipt` prints) against the log's
-  witnessed dossiers: is the event it names in the history the witnesses cosigned,
-  or provably left out of it? Offline.
+  witnessed dossiers: is the event it names in the history the witnesses cosigned, at
+  the index the receipt promised, or provably left out of it? Offline.
   <receipt.json>       the write receipt the log signed when it accepted the event
-  --dossier <path>     a dossier of the log (repeatable): its checkpoint and witness receipts
-                       are one observed checkpoint; the leaves come from the largest dossier
-                       of the receipt's log, and must reproduce every witnessed root
-  --directory <path>   a witness directory YOU trust: a checkpoint counts only when witnesses
-                       in it from at least two independent operators cosigned it
+  --dossier <path>     a dossier of the log (repeatable). One counts only if its checkpoint is
+                       signed by the receipt's key and verifies, is larger than the receipt's
+                       tree_size, was cosigned by two independent operators from --directory,
+                       and its leaves reproduce it; any other is used for nothing. The leaves
+                       come from the largest counted dossier and must reproduce every counted
+                       checkpoint
+  --directory <path>   a witness directory YOU trust, never one a dossier carries
   --identity <hex>     the log's identity key, obtained out of band; the receipt must be signed
                        by it (exit 2 otherwise). Without it the result is about whatever key
                        signed the receipt
-  --min-checkpoints N  witnessed checkpoints after the receipt that CENSORED needs (default 2)
+  --min-checkpoints N  counted checkpoints after the receipt that CENSORED needs (default 2)
   --subject-org ORG    the organisation that operates the log; its witnesses never count
+  --revocations <path> revocations you know of (one statement or a JSON array), applied with
+                       those the dossiers carry: a receipt whose key was revoked proves nothing
   --json               one JSON object instead of the verdict line
-  Exit: 0 PRESENT: the event is in the log's witnessed history
+  Exit: 0 PRESENT: the event is in the log's witnessed history, at the promised index
         20 INCONCLUSIVE: not enough witnessed evidence either way (never an accusation)
         30 CENSORED: the log signed a receipt for an event its witnessed history omits
         2 usage, unreadable or malformed input, a receipt that does not verify, or a
@@ -64,6 +74,7 @@ struct Options {
     identity: Option<String>,
     min_checkpoints: usize,
     subject_org: Option<String>,
+    revocations_path: Option<String>,
     json: bool,
 }
 
@@ -74,6 +85,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     let mut identity: Option<String> = None;
     let mut min_checkpoints: Option<usize> = None;
     let mut subject_org: Option<String> = None;
+    let mut revocations_path: Option<String> = None;
     let mut json = false;
     // A flag's value; a value that looks like a flag is refused, so
     // `--dossier --json` does not read a file named "--json".
@@ -100,6 +112,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--directory" => {
                 once(directory_path.is_some(), "--directory")?;
                 directory_path = Some(value(i, "a path to a trusted witness directory")?);
+                i += 2;
+            }
+            "--revocations" => {
+                once(revocations_path.is_some(), "--revocations")?;
+                revocations_path = Some(value(i, "a path to revocation statements")?);
                 i += 2;
             }
             "--identity" => {
@@ -167,6 +184,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         identity,
         min_checkpoints: min_checkpoints.unwrap_or(DEFAULT_MIN_CHECKPOINTS),
         subject_org,
+        revocations_path,
         json,
     })
 }
@@ -176,16 +194,42 @@ fn usage(msg: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(crate::exit::USAGE)
 }
 
-/// A write receipt file: the object `log receipt` prints, read under the
-/// same size cap as every other input, from an object only.
+/// A write receipt file: the object `log receipt` prints, at most
+/// [`MAX_RECEIPT_BYTES`], read from an object only.
 fn read_receipt(path: &str) -> Result<WriteReceipt, String> {
-    let raw = crate::read_input(path).map_err(|e| format!("could not read receipt {path}: {e}"))?;
+    use std::io::Read;
+    let mut raw = String::new();
+    std::fs::File::open(path)
+        .and_then(|f| f.take(MAX_RECEIPT_BYTES + 1).read_to_string(&mut raw))
+        .map_err(|e| format!("could not read receipt {path}: {e}"))?;
+    if raw.len() as u64 > MAX_RECEIPT_BYTES {
+        return Err(format!(
+            "{path} is larger than {} KiB: not a write receipt",
+            MAX_RECEIPT_BYTES >> 10
+        ));
+    }
     serde_json::from_str::<WriteReceipt>(&raw).map_err(|e| {
         format!(
             "could not parse write receipt {path}: {} (expected the JSON object `witness-log log receipt` prints)",
             witness_log_core::echo::bounded(&e.to_string())
         )
     })
+}
+
+/// What a note says about a dossier that was not counted.
+fn why_not_counted(u: SilenceCheckpointUse) -> Option<&'static str> {
+    match u {
+        SilenceCheckpointUse::Counted => None,
+        SilenceCheckpointUse::OtherLog => Some("signed by another log's key"),
+        SilenceCheckpointUse::BadSignature => Some("its checkpoint signature does not verify"),
+        SilenceCheckpointUse::NotAfterReceipt => Some("not larger than the receipt's tree size"),
+        SilenceCheckpointUse::NotWitnessed => {
+            Some("not cosigned by two independent operators from your directory")
+        }
+        SilenceCheckpointUse::LeavesDoNotReproduce => {
+            Some("its leaves do not reproduce its checkpoint")
+        }
+    }
 }
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
@@ -251,27 +295,36 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             ))
         }
     };
+    let revocations: Vec<RevocationStatement> = match &opts.revocations_path {
+        Some(p) => match crate::read_input(p)
+            .map_err(|e| e.to_string())
+            .and_then(|t| crate::parse_revocations(&t))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                return usage(format!(
+                    "could not read revocations {p}: {e} (expected one statement as `log revoke` prints it, or a JSON array of them)"
+                ))
+            }
+        },
+        None => Vec::new(),
+    };
 
-    let report = silence_proof_over_dossiers(
+    let proof = silence_proof_over_dossiers(
         &receipt,
         &dossiers,
-        &directory,
-        opts.min_checkpoints,
-        opts.subject_org.as_deref(),
+        &SilenceContext {
+            trusted_directory: &directory,
+            min_witnessed_checkpoints: opts.min_checkpoints,
+            subject_org: opts.subject_org.as_deref(),
+            revocations: &revocations,
+        },
     );
-    let leaves_from = silence_proof_leaves_from(&receipt, &dossiers);
+    let report = &proof.report;
     let (result, exit) = match &report.result {
         SilenceProofResult::Censored { .. } => ("censored", code::CENSORED),
-        SilenceProofResult::Present { .. } if report.in_witnessed_history() => {
-            ("present", code::PRESENT)
-        }
-        _ => ("inconclusive", code::INCONCLUSIVE),
-    };
-    let same_log = |d: &Dossier| {
-        d.checkpoint
-            .signer_pubkey
-            .trim()
-            .eq_ignore_ascii_case(receipt.signer_pubkey.trim())
+        SilenceProofResult::Present { .. } => ("present", code::PRESENT),
+        SilenceProofResult::Inconclusive { .. } => ("inconclusive", code::INCONCLUSIVE),
     };
 
     if opts.json {
@@ -284,21 +337,21 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             SilenceProofResult::Inconclusive {
                 witnessed_checkpoints_seen,
                 ..
-            } => (None, None, Some(*witnessed_checkpoints_seen)),
+            } => (report.misplaced_at, None, Some(*witnessed_checkpoints_seen)),
         };
         let inputs: Vec<serde_json::Value> = opts
             .dossier_paths
             .iter()
             .zip(&dossiers)
-            .map(|(p, d)| {
+            .zip(&proof.dossiers)
+            .map(|((p, d), u)| {
                 serde_json::json!({
                     "path": p,
                     "tree_size": d.checkpoint.tree_size,
                     "root_hash": d.checkpoint.root_hash,
                     "leaves": d.leaves.len(),
                     "witness_receipts": d.witness_receipts.len(),
-                    "same_log": same_log(d),
-                    "after_receipt": d.checkpoint.tree_size > receipt.tree_size,
+                    "status": u,
                 })
             })
             .collect();
@@ -306,6 +359,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             "result": result,
             "exit_code": exit,
             "leaf_index": leaf_index,
+            "promised_index": receipt.tree_size,
             "receipt_tree_size": receipt.tree_size,
             "witnessed_checkpoints_after": after,
             "witnessed_checkpoints_seen": seen,
@@ -324,40 +378,23 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 "signer_pubkey": receipt.signer_pubkey,
             },
             "directory": opts.directory_path,
+            "revocations": opts.revocations_path,
             "dossiers": inputs,
-            "leaves_from": leaves_from.map(|i| opts.dossier_paths[i].clone()),
+            "leaves_from": proof.leaves_from.map(|i| opts.dossier_paths[i].clone()),
         });
         println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
         return ExitCode::from(exit);
     }
 
-    println!("{}", verdict_line(result, &receipt, &report));
-    let other_logs: Vec<&str> = opts
+    println!("{}", verdict_line(&receipt, report));
+    let not_counted: Vec<String> = opts
         .dossier_paths
         .iter()
-        .zip(&dossiers)
-        .filter(|(_, d)| !same_log(d))
-        .map(|(p, _)| p.as_str())
+        .zip(&proof.dossiers)
+        .filter_map(|(p, u)| why_not_counted(*u).map(|why| format!("{p} ({why})")))
         .collect();
-    if !other_logs.is_empty() {
-        println!(
-            "  note: not counted, signed by another log's key: {}",
-            other_logs.join(", ")
-        );
-    }
-    let too_early: Vec<&str> = opts
-        .dossier_paths
-        .iter()
-        .zip(&dossiers)
-        .filter(|(_, d)| same_log(d) && d.checkpoint.tree_size <= receipt.tree_size)
-        .map(|(p, _)| p.as_str())
-        .collect();
-    if !too_early.is_empty() {
-        println!(
-            "  note: not counted, not after the receipt (tree size {} or less): {}",
-            receipt.tree_size,
-            too_early.join(", ")
-        );
+    if !not_counted.is_empty() {
+        println!("  note: not counted: {}", not_counted.join("; "));
     }
     if opts.identity.is_none() && result != "inconclusive" {
         println!(
@@ -370,28 +407,25 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 
 /// The one line a person reads: the result, what it is bound to, and what
 /// it means.
-fn verdict_line(result: &str, receipt: &WriteReceipt, report: &SilenceProofReport) -> String {
+fn verdict_line(receipt: &WriteReceipt, report: &SilenceProofReport) -> String {
     let min = MIN_INDEPENDENT_OPERATORS_FOR_WITNESSED;
     let bound = match (report.bound_tree_size, report.bound_root_hash.as_deref()) {
         (Some(n), Some(root)) => format!("checkpoint {n} (root {root})"),
         _ => "no witnessed checkpoint".to_string(),
     };
-    match (&report.result, result) {
-        (SilenceProofResult::Present { leaf_index }, "present") => format!(
-            "PRESENT: the event (payload_hash {}) is leaf {leaf_index} of the log's witnessed history: the leaves reproduce {bound}, which at least {min} independent operators from your directory cosigned. It was not left out.",
+    match &report.result {
+        SilenceProofResult::Present { leaf_index } => format!(
+            "PRESENT: the event (payload_hash {}) is leaf {leaf_index} of the log's witnessed history, where the receipt promised it: the leaves reproduce every witnessed checkpoint supplied, up to {bound}, each cosigned by at least {min} independent operators from your directory. It was not left out.",
             receipt.payload_hash
         ),
-        (
-            SilenceProofResult::Censored {
-                witnessed_checkpoints_after,
-                ..
-            },
-            _,
-        ) => format!(
+        SilenceProofResult::Censored {
+            witnessed_checkpoints_after,
+            ..
+        } => format!(
             "CENSORED: the log signed a write receipt for this event (payload_hash {}) at tree size {}, and {witnessed_checkpoints_after} later checkpoints of the same log, each cosigned by at least {min} independent operators from your directory, do not contain it, up to {bound}. The receipt, these dossiers and your directory are the evidence: anyone who checks them reaches this result.",
             receipt.payload_hash, receipt.tree_size
         ),
-        _ => {
+        SilenceProofResult::Inconclusive { .. } => {
             let reason = report
                 .reason
                 .as_deref()
@@ -401,7 +435,7 @@ fn verdict_line(result: &str, receipt: &WriteReceipt, report: &SilenceProofRepor
                 None => String::new(),
             };
             format!(
-                "INCONCLUSIVE: {reason}{bound}. Not an accusation, and not proof the event was kept."
+                "INCONCLUSIVE: {reason}{bound}. Not an accusation, and not proof the event was kept where promised."
             )
         }
     }

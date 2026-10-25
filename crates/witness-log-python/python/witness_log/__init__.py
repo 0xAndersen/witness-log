@@ -359,37 +359,47 @@ def prove_silence(
     min_checkpoints: int = 2,
     subject_org: Optional[str] = None,
     expected_identity: Optional[str] = None,
+    revocations_json: Union[str, Dict[str, Any], List[Any], None] = None,
 ) -> Dict[str, Any]:
     """Check a write receipt against a log's witnessed dossiers (SPEC §9.4),
     offline: is the event it names in the history the witnesses cosigned,
-    or provably left out of it? The counterparty's half of
-    ``JournaledLog.write_receipt_json``; the same check and the same object
-    as ``witness-log prove-silence --json``, with dossier indices where the
-    CLI has paths.
+    at the index the receipt promised, or provably left out of it? The
+    counterparty's half of ``JournaledLog.write_receipt_json``; the same
+    check and the same object as ``witness-log prove-silence --json``, with
+    dossier indices where the CLI has paths.
 
-    Each dossier contributes its checkpoint and witness receipts as one
-    observed checkpoint; the leaves come from the largest dossier of the
-    receipt's log. A checkpoint counts only when witnesses from at least two
-    independent operators in ``directory_json`` (yours, never a dossier's)
-    cosigned it; ``subject_org``'s witnesses never count. Inputs are JSON
-    strings or the parsed objects.
+    A dossier counts only when its checkpoint is signed by the receipt's key
+    and verifies, is larger than the receipt's ``tree_size``, was cosigned by
+    witnesses from at least two independent operators in ``directory_json``
+    (yours, never a dossier's; ``subject_org``'s witnesses never count), and
+    its leaves reproduce that checkpoint; any other is used for nothing
+    (``dossiers[i]["status"]`` says why). The leaves come from the largest
+    counted dossier and must reproduce every counted checkpoint. Inputs are
+    JSON strings or the parsed objects. ``revocations_json`` (one statement
+    or a list) is applied with the revocations the dossiers carry: a receipt
+    whose key was revoked proves nothing.
 
-    ``result`` is ``"present"`` (the event is leaf ``leaf_index`` of the
-    witnessed history, bound to ``bound_tree_size``/``bound_root_hash``),
-    ``"inconclusive"`` (``reason`` says what is missing; never an
-    accusation) or ``"censored"`` (at least ``min_checkpoints`` witnessed
+    ``result`` is ``"present"`` (the event is leaf ``leaf_index`` =
+    ``promised_index`` of the witnessed history, bound to
+    ``bound_tree_size``/``bound_root_hash``), ``"inconclusive"``
+    (``reason`` says what is missing; never an accusation; ``leaf_index`` is
+    set when the event is in the witnessed history at another index than
+    promised) or ``"censored"`` (at least ``min_checkpoints`` witnessed
     checkpoints after the receipt, whose leaves omit the event).
 
     Raises ``MalformedError`` for input that does not parse,
     ``SignatureError`` for a receipt that does not verify, and
     ``ValueError`` for a receipt not signed by ``expected_identity``, an
-    empty ``dossiers_json`` or a bad argument."""
+    empty ``dossiers_json``, ``min_checkpoints`` below 1 or another bad
+    argument."""
 
     def text(v: Any) -> str:
         return v if isinstance(v, str) else json.dumps(v)
 
     if isinstance(dossiers_json, (str, bytes, dict)):
         raise TypeError("dossiers_json is a list of dossiers (JSON strings or dicts), not one dossier")
+    if isinstance(min_checkpoints, bool) or not isinstance(min_checkpoints, int) or min_checkpoints < 1:
+        raise ValueError(f"min_checkpoints must be an integer of at least 1, got {min_checkpoints!r}")
     report: Dict[str, Any] = json.loads(
         _core.prove_silence_json(
             text(receipt_json),
@@ -398,6 +408,7 @@ def prove_silence(
             min_checkpoints,
             subject_org,
             expected_identity,
+            None if revocations_json is None else text(revocations_json),
         )
     )
     return report

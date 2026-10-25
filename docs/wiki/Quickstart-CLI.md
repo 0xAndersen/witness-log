@@ -279,13 +279,17 @@ witness-log prove-silence receipt.json --dossier monday.json --dossier friday.js
 
 `--identity` is the shop's key as the customer knows it, never read from
 the receipt: anyone can sign a receipt with a key of their own and then
-"omit" the event from their own log. Exit 0 PRESENT: the event is in leaves that reproduce a
-checkpoint after it which two independent operators cosigned. Exit 30
-CENSORED: the shop signed the receipt, at least two later checkpoints
-(`--min-checkpoints`) were each cosigned by two independent operators,
-their leaves reproduce every one of those roots, and the event is not
-there. Anything less is exit 20 INCONCLUSIVE, never an accusation. What
-CENSORED does and does not prove:
+"omit" the event from their own log. The receipt promises an index (here
+0, the entry's index). Only dossiers whose checkpoint the shop signed, two
+independent operators from your directory cosigned, and whose leaves
+reproduce it count; anything else is listed in a note and ignored. Exit 0
+PRESENT: the event is at the promised index in leaves that reproduce every
+counted checkpoint. Exit 30 CENSORED: the shop signed the receipt, at
+least two later checkpoints (`--min-checkpoints`) count, their leaves
+reproduce every one of those roots, and the event is not there. Anything
+less, including the event at another index or a receipt whose key was
+revoked (`--revocations`), is exit 20 INCONCLUSIVE, never an accusation.
+What CENSORED does and does not prove:
 [Threat model](Threat-Model#proving-an-omission).
 
 ---

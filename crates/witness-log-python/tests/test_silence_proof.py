@@ -83,22 +83,27 @@ def test_an_honest_log_is_present_and_bound_to_the_witnessed_root(accepted):
     d9 = _witness(log, ws, 5)
     rep = witness_log.prove_silence(receipt, [d5, d9], directory, expected_identity=log.identity_pubkey_hex())
     assert rep["result"] == "present", rep
-    assert rep["leaf_index"] == 3
+    assert rep["leaf_index"] == 3 == rep["promised_index"]
     assert rep["bound_tree_size"] == 9
     assert rep["bound_root_hash"] == log.root_hex()
     assert rep["reason"] is None
     assert rep["identity_pinned"] is True
     assert rep["leaves_from"] == 1
+    assert [d["status"] for d in rep["dossiers"]] == ["counted", "counted"]
 
-    # An unwitnessed copy holding the event is not the witnessed history.
+    # An unwitnessed copy holding the event is used for nothing.
     rep = witness_log.prove_silence(receipt, [log.to_dossier_json()], directory)
-    assert rep["result"] == "inconclusive" and rep["leaf_index"] == 3, rep
+    assert rep["result"] == "inconclusive" and rep["leaf_index"] is None, rep
+    assert rep["dossiers"][0]["status"] == "not_witnessed"
 
-    # An accuser dropping the event from the leaves proves nothing.
+    # An accuser dropping the event from the leaves of the size-9 dossier:
+    # the edited copy is set aside, and the size-5 one shows the event.
     doctored = json.loads(d9)
     del doctored["leaves"][3]
     rep = witness_log.prove_silence(receipt, [d5, doctored], directory)
-    assert rep["result"] == "inconclusive", rep
+    assert rep["result"] == "present" and rep["bound_tree_size"] == 5, rep
+    assert rep["dossiers"][1]["status"] == "leaves_do_not_reproduce"
+    assert witness_log.prove_silence(receipt, [doctored], directory)["result"] == "inconclusive"
 
 
 def test_a_log_that_omits_an_event_it_signed_for_is_censored(accepted, tmp_path):
@@ -132,6 +137,17 @@ def test_a_log_that_omits_an_event_it_signed_for_is_censored(accepted, tmp_path)
     # One of the two operators runs the log: nothing counts.
     rep = witness_log.prove_silence(receipt, [c5, c9], directory, subject_org="org 1")
     assert rep["result"] == "inconclusive" and rep["witnessed_checkpoints_seen"] == 0, rep
+
+    # The log's key revoked (stolen, say): a receipt proves nothing, whether
+    # the revocation is passed in or carried by a dossier.
+    revocation = log.revoke_json("key stolen")
+    rep = witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=revocation)
+    assert rep["result"] == "inconclusive" and "revoked" in rep["reason"], rep
+    rep = witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=[json.loads(revocation)])
+    assert rep["result"] == "inconclusive", rep
+    carried = json.loads(c9)
+    carried["revocations"] = [json.loads(revocation)]
+    assert witness_log.prove_silence(receipt, [c5, carried], directory)["result"] == "inconclusive"
     fork.close()
 
 
@@ -160,7 +176,13 @@ def test_bad_inputs_raise(accepted):
         witness_log.prove_silence(receipt, [], directory)
     with pytest.raises(TypeError):
         witness_log.prove_silence(receipt, dossier, directory)
+    for bad in (0, -1, -(2**70), 1.5, True):
+        with pytest.raises(ValueError):
+            witness_log.prove_silence(receipt, [dossier], directory, min_checkpoints=bad)
+    # The extension itself refuses a negative minimum with ValueError too.
     with pytest.raises(ValueError):
-        witness_log.prove_silence(receipt, [dossier], directory, min_checkpoints=0)
+        witness_log._core.prove_silence_json(receipt, [dossier], json.dumps(directory), -1)
     with pytest.raises(ValueError):
         witness_log.prove_silence(receipt, [dossier], directory, subject_org=" ")
+    with pytest.raises(witness_log.MalformedError):
+        witness_log.prove_silence(receipt, [dossier], directory, revocations_json="[1]")

@@ -135,53 +135,69 @@ leaves. Exit 0 bound, 30 mismatch, 10 nothing to bind, 2 usage.
 ```
 witness-log prove-silence <receipt.json> --dossier <d.json> [--dossier <d2.json> ...]
                           --directory <trusted.json> [--identity <hex>] [--min-checkpoints N]
-                          [--subject-org <org>] [--json]
+                          [--subject-org <org>] [--revocations <path>] [--json]
 ```
 
 Offline. The check made by whoever holds a write receipt (`log receipt`):
-is the event it names in the log's witnessed history, or has the log
-provably left it out (SPEC §9.4)? See
+is the event it names in the log's witnessed history, at the index the
+receipt promised, or has the log provably left it out (SPEC §9.4)? See
 [Threat model: proving an omission](Threat-Model#proving-an-omission).
 
-Each `--dossier` contributes its checkpoint and witness receipts as one
-observed checkpoint. A checkpoint counts only when it is signed by the
-receipt's signer, is larger than the receipt's `tree_size`, and was
-cosigned by witnesses in `--directory` from at least two independent
-operators (the bar of WITNESSED; project-operated witnesses and the
-`--subject-org` never count). The leaves come from the dossier with the
-largest tree size among those of the receipt's log, and must reproduce
-the root of every counted checkpoint, so leaves edited to drop the event
-prove nothing. Inputs are read with `verify`'s rules: the same size cap,
-`Dossier::from_json`'s depth limit, the same directory forms; the receipt
-is read from a JSON object only.
+The receipt's `tree_size` is the index the event is due at: `log receipt
+<journal> <index>` signs `tree_size = <index>`, and the log promises that
+every later checkpoint has the event there.
+
+**Which dossiers count.** Only verified, witnessed dossiers are used for
+anything. A `--dossier` counts when its checkpoint is signed by the
+receipt's key and that signature verifies, its `tree_size` is larger than
+the receipt's, it was cosigned by witnesses in `--directory` from at least
+two independent operators (the bar of WITNESSED; project-operated witnesses
+and the `--subject-org` never count), and its leaves reproduce its own
+checkpoint. Any other dossier (another log's, a forged or unwitnessed
+checkpoint, an edited copy) is listed in a note with the reason and used
+for nothing, so adding one never changes the result.
+
+**Where the leaves come from.** The largest counted dossier. They must
+reproduce the root of every counted checkpoint: leaves that reproduce the
+largest but not a smaller one show the log signed two histories (a fork),
+reported as INCONCLUSIVE. The event is looked for only among those leaves,
+up to the largest counted checkpoint.
+
+Inputs are read with `verify`'s rules: the same size cap (64 KiB for the
+receipt), `Dossier::from_json`'s depth limit, the same directory and
+revocation forms; the receipt is read from a JSON object only.
 
 | flag | effect |
 |---|---|
-| `--dossier <path>` | a dossier of the log; repeatable, at least one. Dossiers of another identity, or no larger than the receipt's size, are listed in a note and not counted |
+| `--dossier <path>` | a dossier of the log; repeatable, at least one |
 | `--directory <path>` | the directory you trust, `{"witnesses":[...]}` or a bare array; required |
 | `--identity <hex>` | the log's identity key, obtained out of band; a receipt signed by any other key is refused (exit 2). Without it the result is about whatever key signed the receipt, and anyone can sign a receipt and then omit the event from their own log |
 | `--min-checkpoints N` | counted checkpoints after the receipt that CENSORED needs; default 2, the library's conservative minimum (5 is robust) |
 | `--subject-org <org>` | the organisation that operates the log; its witnesses never count, as for `verify` |
+| `--revocations <path>` | revocations you know of (one statement, as `log revoke` prints it, or an array), applied together with those the dossiers carry. A receipt whose key was revoked is INCONCLUSIVE, whatever its `issued_at_ms` says |
 | `--json` | one JSON object instead of the verdict line |
 
 | result | exit | means |
 |---|---|---|
-| PRESENT | `0` | the event is leaf `leaf_index`, and the leaves reproduce a counted checkpoint larger than that index (`bound_tree_size`, `bound_root_hash`): it is in a history two independent operators cosigned |
-| INCONCLUSIVE | `20` | not enough witnessed evidence either way, and never an accusation: `reason` says what is missing (too few counted checkpoints, leaves that do not cover or reproduce them, two witnessed roots for one size, or the event found only in leaves no counted checkpoint binds) |
-| CENSORED | `30` | the receipt verifies, at least `--min-checkpoints` counted checkpoints follow it, the leaves reproduce all of them, and the event is not among the leaves. Bound to the largest of them |
+| PRESENT | `0` | the leaf at the promised index carries the event, in leaves that reproduce every counted checkpoint (`bound_tree_size`, `bound_root_hash` is the largest): it is in a history two independent operators cosigned, where the log said it would be |
+| INCONCLUSIVE | `20` | not enough witnessed evidence either way, and never an accusation: `reason` says what is missing (no or too few counted checkpoints, leaves that do not cover or reproduce them, a fork or two roots for one size, a revoked key, or the event in the witnessed history at another index than promised, given as `leaf_index`) |
+| CENSORED | `30` | the receipt verifies and its key is not known to be revoked, at least `--min-checkpoints` counted checkpoints follow it, the leaves reproduce all of them, and the event is not among those leaves. Bound to the largest of them |
 | | `2` | usage error, unreadable or malformed input, a receipt that does not verify, or a receipt not signed by `--identity` |
 
 `--json` prints `result` (`"present"`, `"inconclusive"`, `"censored"`),
-`exit_code`, `leaf_index` (set whenever the event is among the leaves,
-also when the result is inconclusive because they are not bound),
-`receipt_tree_size`, `witnessed_checkpoints_after` (censored) or
+`exit_code`, `leaf_index` (where the event is in the bound leaves: the
+promised index for present, another one for an inconclusive misplaced
+event, otherwise `null`), `promised_index` and `receipt_tree_size` (the
+same number), `witnessed_checkpoints_after` (censored) or
 `witnessed_checkpoints_seen` (inconclusive), `min_checkpoints`,
 `bound_tree_size`, `bound_root_hash`, `reason`, `subject_org`, `identity`
 (the receipt's signer), `identity_pinned`, and the inputs: `receipt`
 (`path`, `payload_hash`, `tree_size`, `issued_at_ms`, `signer_pubkey`),
-`directory`, `dossiers` (`path`, `tree_size`, `root_hash`, `leaves`,
-`witness_receipts`, `same_log`, `after_receipt`) and `leaves_from`. The
-wording of `reason` is not part of the contract.
+`directory`, `revocations`, `dossiers` (`path`, `tree_size`, `root_hash`,
+`leaves`, `witness_receipts`, `status`: `counted`, `other_log`,
+`bad_signature`, `not_after_receipt`, `not_witnessed` or
+`leaves_do_not_reproduce`) and `leaves_from`. The wording of `reason` is
+not part of the contract.
 
 ---
 
@@ -307,8 +323,9 @@ witness-log log receipt <journal> <index> [--out receipt.json]
 
 Signs a write receipt for leaf `<index>` with the identity key (SPEC
 §9.4): `{payload_hash, tree_size, issued_at_ms, sig_alg, signer_pubkey,
-signature}`, the log's statement that it accepted that event at tree size
-`<index>`, so it is due in every checkpoint larger than that. The
+signature}` with `tree_size = <index>`, the log's statement that it
+accepted that event at tree size `<index>`: every checkpoint larger than
+that must have it at index `<index>`. The
 operator hands it to whoever submitted the event, at that moment; they
 keep it and check it later with [`prove-silence`](#prove-silence).
 Printed on stdout, or written to `--out` (0644) with a note on stderr.

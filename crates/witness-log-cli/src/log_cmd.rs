@@ -52,7 +52,8 @@ const USAGE: &str = "usage:
       Identity, size, root, leaf counts, whether the journal is sealed.
   witness-log log receipt <journal> <index> [--out receipt.json]
       Sign a write receipt for leaf <index> (SPEC §9.4): this log's statement
-      that it accepted that entry (its payload_hash) at tree size <index>.
+      that it accepted that entry (its payload_hash) at tree size <index>, so
+      every later checkpoint holds it at index <index>.
       Hand it to whoever submitted the entry. With it and the log's later
       witnessed dossiers they can check the entry was kept, or prove it was
       left out: `witness-log prove-silence`. Exit 2 for an index the journal

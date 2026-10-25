@@ -268,10 +268,15 @@ fn silence_proof_requires_a_signed_commitment_to_the_event() {
         });
     }
 
-    // Present in the caller's view: not censored, whatever the witnesses say.
+    // The event in the caller's leaves, which do not reproduce the
+    // witnessed checkpoints: not censored. (Until the review of the CLI's
+    // prove-silence this was `Present`, whatever the witnesses said; now
+    // presence, like absence, is decided only over leaves bound to the
+    // witnessed checkpoints, so an unwitnessed copy can neither accuse nor
+    // acquit. The bound case is in tests/review3_silence_proof.rs.)
     assert!(matches!(
         silence_proof(&receipt, log.leaves(), &later, &dir, 2),
-        SilenceProofResult::Present { leaf_index: 0 }
+        SilenceProofResult::Inconclusive { .. }
     ));
     // Absent from an empty view: since review III (H1) that proves
     // nothing, because no leaves reproduce the witnessed roots. (The full

@@ -357,18 +357,22 @@ print(report["result"], report["leaf_index"])        # present 0
 shop.close()
 ```
 
-`prove_silence` is `witness-log prove-silence --json` as a dict. Each
-dossier counts as one observed checkpoint; one counts only if witnesses
-from at least two independent operators in *your* directory cosigned it.
-`result` is `"present"` (the event is in leaves that reproduce such a
-checkpoint after it), `"inconclusive"` (`reason` says what is missing;
-never an accusation) or `"censored"`: the receipt verifies, at least
-`min_checkpoints` (default 2) witnessed checkpoints followed it, and their
-leaves, which must reproduce every one of their roots, do not contain the
-event. That bundle (receipt, dossiers, your directory) is evidence anyone
-can recheck. A receipt that does not verify raises `SignatureError`; one
-not signed by `expected_identity` raises `ValueError`. What it does and
-does not prove: [Threat model](Threat-Model#proving-an-omission).
+`prove_silence` is `witness-log prove-silence --json` as a dict. The
+receipt promises an index (`promised_index`, the entry's index). A dossier
+counts only if the shop signed its checkpoint, witnesses from at least two
+independent operators in *your* directory cosigned it, and its leaves
+reproduce it (`report["dossiers"][i]["status"]` says why one did not).
+`result` is `"present"` (the event is at the promised index in leaves that
+reproduce every counted checkpoint), `"inconclusive"` (`reason` says what
+is missing, including the event at another index or a key revoked through
+`revocations_json`; never an accusation) or `"censored"`: the receipt
+verifies, at least `min_checkpoints` (default 2) counted checkpoints
+followed it, and their leaves, which must reproduce every one of their
+roots, do not contain the event. That bundle (receipt, dossiers, your
+directory) is evidence anyone can recheck. A receipt that does not verify
+raises `SignatureError`; one not signed by `expected_identity` raises
+`ValueError`. What it does and does not prove:
+[Threat model](Threat-Model#proving-an-omission).
 
 ---
 

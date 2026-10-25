@@ -206,13 +206,14 @@ USAGE:
       needs --identity-seed-env NAME or --identity-seed-file F.
 
   witness-log prove-silence <receipt.json> --dossier <d.json> [--dossier <d2.json> ...]
-                            --directory <trusted.json> [--identity <hex>]
-                            [--min-checkpoints N] [--subject-org ORG] [--json]
+                            --directory <trusted.json> [--identity <hex>] [--min-checkpoints N]
+                            [--subject-org ORG] [--revocations <path>] [--json]
       Check a write receipt against the log's witnessed dossiers, offline:
-      is the entry in the history the witnesses cosigned, or provably left
-      out of it? Exit 0 PRESENT, 20 INCONCLUSIVE (never an accusation),
-      30 CENSORED: --min-checkpoints (default 2) later checkpoints, each
-      cosigned by two independent operators, whose leaves omit the entry.
+      is the entry in the history the witnesses cosigned, at the index the
+      receipt promised, or provably left out of it? Exit 0 PRESENT,
+      20 INCONCLUSIVE (never an accusation), 30 CENSORED: --min-checkpoints
+      (default 2) later checkpoints, each cosigned by two independent
+      operators, whose leaves omit the entry.
 
   witness-log submit <journal> --directory <trusted.json> [--out dossier.json] [--min N] [--allow-partial]
       Same as `witness submit`: get the journal's head cosigned and write
@@ -818,7 +819,7 @@ pub(crate) fn parse_seed(raw: &[u8]) -> Result<zeroize::Zeroizing<[u8; 32]>, Str
 
 /// One revocation statement (what `log revoke` prints) or an array of
 /// them, nested at most 1000 deep (`witness_log_network::revocations_from_json`).
-fn parse_revocations(
+pub(crate) fn parse_revocations(
     text: &str,
 ) -> Result<Vec<witness_log_core::identity::RevocationStatement>, String> {
     witness_log_network::revocations_from_json(text).map_err(|e| e.to_string())

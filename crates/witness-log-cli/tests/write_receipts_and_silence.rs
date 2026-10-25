@@ -388,8 +388,8 @@ fn an_honest_log_that_kept_the_event_is_present_with_its_index() {
 
 #[test]
 fn the_event_in_an_unwitnessed_copy_is_not_present() {
-    // The log's own export holds the event, but no witness cosigned it:
-    // present in that copy, not shown to be in the witnessed history.
+    // The log's own export holds the event, but no witness cosigned it: a
+    // copy nobody else saw, used for nothing.
     let s = Setup::new("unwitnessed");
     let exported = s.t.path("export.json");
     let e = wl(&s.t.0, &["log", "export", &s.journal, "--out", &exported]);
@@ -398,9 +398,17 @@ fn the_event_in_an_unwitnessed_copy_is_not_present() {
     assert_eq!(code(&o), 20, "{}", out(&o));
     let v = json(&o);
     assert_eq!(v["result"], "inconclusive");
-    assert_eq!(v["leaf_index"], 3);
+    assert_eq!(v["leaf_index"], serde_json::Value::Null);
     assert_eq!(v["bound_tree_size"], serde_json::Value::Null);
-    assert!(v["reason"].as_str().unwrap().contains("not shown"), "{v}");
+    assert_eq!(v["leaves_from"], serde_json::Value::Null);
+    assert_eq!(v["dossiers"][0]["status"], "not_witnessed");
+    assert!(v["reason"].as_str().unwrap().contains("cosigned"), "{v}");
+    let o = s.prove(&["--dossier", &exported]);
+    assert!(
+        out(&o).contains("export.json (not cosigned by two independent operators"),
+        "{}",
+        out(&o)
+    );
 }
 
 #[test]
@@ -421,8 +429,11 @@ fn a_log_that_signed_a_receipt_and_published_witnessed_histories_without_the_eve
     assert_eq!(v["result"], "censored");
     assert_eq!(v["exit_code"], 30);
     assert_eq!(v["receipt_tree_size"], 3);
+    assert_eq!(v["promised_index"], 3);
     assert_eq!(v["witnessed_checkpoints_after"], 2);
     assert_eq!(v["leaf_index"], serde_json::Value::Null);
+    assert_eq!(v["dossiers"][0]["status"], "counted");
+    assert_eq!(v["dossiers"][1]["status"], "counted");
     assert_eq!(v["bound_tree_size"], 9);
     assert_eq!(v["bound_root_hash"], log.root_hex());
     assert_eq!(v["leaves_from"], c9.as_str());
@@ -486,13 +497,229 @@ fn an_accuser_who_drops_the_event_from_the_leaves_proves_nothing() {
     replaced.leaves[3].payload_hash = "cd".repeat(32);
     let replaced = write_dossier(&s.t, "replaced.json", &replaced);
 
-    for (doctored, why) in [(&dropped, "cover"), (&replaced, "reproduce")] {
+    for doctored in [&dropped, &replaced] {
+        // The edited copy is set aside, and the genuine size-5 dossier
+        // shows the event where it was promised.
         let o = s.prove(&["--dossier", &d5, "--dossier", doctored, "--json"]);
-        assert_eq!(code(&o), 20, "{}", out(&o));
+        assert_eq!(code(&o), 0, "{}", out(&o));
         let v = json(&o);
-        assert_eq!(v["result"], "inconclusive");
-        assert!(v["reason"].as_str().unwrap().contains(why), "{v}");
+        assert_eq!(v["result"], "present");
+        assert_eq!(v["leaf_index"], 3);
+        assert_eq!(v["bound_tree_size"], 5);
+        assert_eq!(v["dossiers"][1]["status"], "leaves_do_not_reproduce");
+        assert_eq!(v["leaves_from"], d5.as_str());
+        // On its own it proves nothing either way.
+        let o = s.prove(&["--dossier", doctored, "--json"]);
+        assert_eq!(code(&o), 20, "{}", out(&o));
+        let o = s.prove(&["--dossier", doctored]);
+        assert!(
+            out(&o).contains("(its leaves do not reproduce its checkpoint)"),
+            "{}",
+            out(&o)
+        );
     }
+}
+
+/// Review finding 1: a forged or edited dossier never changes a CENSORED.
+#[test]
+fn a_forged_or_edited_dossier_never_changes_a_censored() {
+    let s = Setup::new("forged");
+    let (c5, c9, _) = s.censoring();
+    let receipt: WriteReceipt =
+        serde_json::from_str(&std::fs::read_to_string(&s.receipt).unwrap()).unwrap();
+    let genuine: Dossier = Dossier::from_json(&std::fs::read_to_string(&c9).unwrap()).unwrap();
+    // A checkpoint of size 10 that the log never signed, with the event
+    // appended (before the review: exit 20).
+    let mut forged = genuine.clone();
+    forged.checkpoint.tree_size = 10;
+    let mut extra = forged.leaves[8].clone();
+    extra.index = 9;
+    extra.payload_hash = receipt.payload_hash.clone();
+    forged.leaves.push(extra);
+    let forged = write_dossier(&s.t, "forged.json", &forged);
+    // Genuine checkpoint and cosignatures, the event written into the
+    // promised leaf.
+    let mut edited = genuine.clone();
+    edited.leaves[3].payload_hash = receipt.payload_hash.clone();
+    let edited = write_dossier(&s.t, "edited.json", &edited);
+
+    for extra in [&forged, &edited] {
+        for order in [
+            vec![extra.as_str(), c5.as_str(), c9.as_str()],
+            vec![c5.as_str(), c9.as_str(), extra.as_str()],
+        ] {
+            let mut args = Vec::new();
+            for d in &order {
+                args.extend(["--dossier", d]);
+            }
+            args.push("--json");
+            let o = s.prove(&args);
+            assert_eq!(code(&o), 30, "{extra}: {}", out(&o));
+            assert_eq!(json(&o)["leaves_from"], c9.as_str());
+        }
+    }
+    let o = s.prove(&["--dossier", &c5, "--dossier", &c9, "--dossier", &forged]);
+    assert_eq!(code(&o), 30);
+    assert!(
+        out(&o).contains("forged.json (its checkpoint signature does not verify)"),
+        "{}",
+        out(&o)
+    );
+}
+
+/// Review finding 2: a fork across sizes is not PRESENT.
+#[test]
+fn a_fork_across_sizes_is_inconclusive_not_present() {
+    let s = Setup::new("fork");
+    // Branch A: no event, checkpoints 7 and 10.
+    let mut a = WitnessLog::resume(IdentityKeypair::from_bytes(&SEED), 0);
+    let mut a_dossiers = Vec::new();
+    for i in 0..10 {
+        a.append_intent(format!("a {i}").as_bytes());
+        if a.tree_size() == 7 || a.tree_size() == 10 {
+            let name = format!("a{}.json", a.tree_size());
+            a_dossiers.push(write_dossier(
+                &s.t,
+                &name,
+                &witnessed_dossier(&a, &s.witnesses),
+            ));
+        }
+    }
+    // Branch B: the event at 5, with its receipt, checkpoint 12.
+    let mut b = WitnessLog::resume(IdentityKeypair::from_bytes(&SEED), 0);
+    let mut receipt = None;
+    for i in 0..12 {
+        let idx = b.append_intent(format!("b {i}").as_bytes());
+        if i == 5 {
+            receipt = b.write_receipt(idx);
+        }
+    }
+    let receipt = s.t.write(
+        "b-receipt.json",
+        &serde_json::to_string(&receipt.unwrap()).unwrap(),
+    );
+    let b12 = write_dossier(&s.t, "b12.json", &witnessed_dossier(&b, &s.witnesses));
+    let prove = |dossiers: &[&str]| {
+        let mut args = vec!["prove-silence", &receipt, "--directory", &s.directory];
+        for d in dossiers {
+            args.extend(["--dossier", d]);
+        }
+        args.push("--json");
+        wl(&s.t.0, &args)
+    };
+    let o = prove(&[&a_dossiers[0], &a_dossiers[1]]);
+    assert_eq!(code(&o), 30, "{}", out(&o));
+    // Before the review: exit 0, PRESENT bound to 12.
+    let o = prove(&[&a_dossiers[0], &a_dossiers[1], &b12]);
+    assert_eq!(code(&o), 20, "{}", out(&o));
+    let v = json(&o);
+    assert!(v["reason"].as_str().unwrap().contains("fork"), "{v}");
+    assert_eq!(v["leaves_from"], b12.as_str());
+    // Branch B alone: present where promised.
+    assert_eq!(code(&prove(&[&b12])), 0);
+}
+
+/// Review finding 3: the receipt promises an index. An event left out of
+/// witnessed checkpoints 5 and 9 and appended at index 9 is not PRESENT.
+#[test]
+fn an_event_appended_at_another_index_than_promised_is_not_present() {
+    let s = Setup::new("misplaced");
+    let mut log = WitnessLog::resume(IdentityKeypair::from_bytes(&SEED), 0);
+    let mut dossiers = Vec::new();
+    for i in 0..9 {
+        log.append_intent(format!("other {i}").as_bytes());
+        if log.tree_size() == 5 || log.tree_size() == 9 {
+            let name = format!("m{}.json", log.tree_size());
+            dossiers.push(write_dossier(
+                &s.t,
+                &name,
+                &witnessed_dossier(&log, &s.witnesses),
+            ));
+        }
+    }
+    let late = log.append_intent(b"the event, late");
+    dossiers.push(write_dossier(
+        &s.t,
+        "m10.json",
+        &witnessed_dossier(&log, &s.witnesses),
+    ));
+    // Signed when the event was accepted, at size 0.
+    let receipt = WriteReceipt::sign(
+        &SigningKey::from_bytes(&SEED),
+        &log.leaves()[late as usize].payload_hash,
+        0,
+        1_800_000_000_000,
+    );
+    let receipt =
+        s.t.write("late.json", &serde_json::to_string(&receipt).unwrap());
+    let prove = |dossiers: &[String]| {
+        let mut args = vec!["prove-silence", &receipt, "--directory", &s.directory];
+        for d in dossiers {
+            args.extend(["--dossier", d.as_str()]);
+        }
+        args.push("--json");
+        wl(&s.t.0, &args)
+    };
+    let o = prove(&dossiers);
+    assert_eq!(code(&o), 20, "{}", out(&o));
+    let v = json(&o);
+    assert_eq!(v["result"], "inconclusive");
+    assert_eq!(v["leaf_index"], 9);
+    assert_eq!(v["promised_index"], 0);
+    assert_eq!(v["bound_tree_size"], 10);
+    assert!(v["reason"].as_str().unwrap().contains("not leaf 0"), "{v}");
+    // Without the size-10 checkpoint the event is beyond the witnessed
+    // history: left out of both checkpoints.
+    let o = prove(&dossiers[..2]);
+    assert_eq!(code(&o), 30, "{}", out(&o));
+}
+
+/// Review finding 4: a receipt signed by a revoked key proves nothing.
+#[test]
+fn a_receipt_whose_key_was_revoked_is_inconclusive() {
+    let s = Setup::new("revoked");
+    let (c5, c9, _) = s.censoring();
+    let revocation = s.t.path("revocation.json");
+    let r = wl(
+        &s.t.0,
+        &[
+            "log",
+            "revoke",
+            &s.journal,
+            "--reason",
+            "key stolen",
+            "--out",
+            &revocation,
+        ],
+    );
+    assert_eq!(code(&r), 0, "{}", err(&r));
+    let o = s.prove(&[
+        "--dossier",
+        &c5,
+        "--dossier",
+        &c9,
+        "--revocations",
+        &revocation,
+        "--json",
+    ]);
+    assert_eq!(code(&o), 20, "{}", out(&o));
+    let v = json(&o);
+    assert!(v["reason"].as_str().unwrap().contains("revoked"), "{v}");
+    assert_eq!(v["revocations"], revocation.as_str());
+
+    // Carried by a dossier instead: the same.
+    let mut d9: Dossier = Dossier::from_json(&std::fs::read_to_string(&c9).unwrap()).unwrap();
+    d9.revocations
+        .push(serde_json::from_str(&std::fs::read_to_string(&revocation).unwrap()).unwrap());
+    let d9 = write_dossier(&s.t, "c9-revoked.json", &d9);
+    let o = s.prove(&["--dossier", &c5, "--dossier", &d9]);
+    assert_eq!(code(&o), 20, "{}", out(&o));
+    assert!(out(&o).contains("revoked"), "{}", out(&o));
+
+    // A revocations file that is not one is a usage error.
+    let bad = s.t.write("bad-revocations.json", "[1, 2]");
+    let o = s.prove(&["--dossier", &c5, "--dossier", &c9, "--revocations", &bad]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
 }
 
 #[test]
@@ -578,9 +805,29 @@ fn malformed_inputs_are_usage_errors() {
         &format!("{}{}", "[".repeat(1001), "]".repeat(1001)),
     );
     let bad_dir = s.t.write("bad-dir.json", "{\"witnesses\": 3}");
+    // A valid receipt padded past the 64 KiB a receipt may take.
+    let mut padded = receipt.clone();
+    padded["padding"] = serde_json::json!("x".repeat(64 * 1024));
+    let oversized = s.t.write("oversized.json", &padded.to_string());
     let dir = s.directory.as_str();
 
     let cases: Vec<(&str, Vec<&str>)> = vec![
+        (
+            "receipt over 64 KiB",
+            vec![&oversized, "--dossier", &c9, "--directory", dir],
+        ),
+        (
+            "--revocations missing",
+            vec![
+                &s.receipt,
+                "--dossier",
+                &c9,
+                "--directory",
+                dir,
+                "--revocations",
+                &missing,
+            ],
+        ),
         (
             "receipt not JSON",
             vec![&not_json, "--dossier", &c9, "--directory", dir],
@@ -738,13 +985,14 @@ fn dossiers_of_another_log_or_from_before_the_receipt_do_not_count() {
     assert_eq!(code(&o), 20, "{}", out(&o));
     let text = out(&o);
     assert!(
-        text.contains("signed by another log's key: ") && text.contains("foreign.json"),
+        text.contains("foreign.json (signed by another log's key)"),
         "{text}"
     );
     assert!(
-        text.contains("not after the receipt") && text.contains("early.json"),
+        text.contains("early.json (not larger than the receipt's tree size)"),
         "{text}"
     );
+    assert!(!text.contains("c9.json ("), "{text}");
 
     // The larger foreign dossier is never where the leaves come from.
     let o = s.prove(&[
@@ -759,13 +1007,13 @@ fn dossiers_of_another_log_or_from_before_the_receipt_do_not_count() {
     assert_eq!(code(&o), 30, "{}", out(&o));
     let v = json(&o);
     assert_eq!(v["leaves_from"], c9.as_str());
-    let same: Vec<bool> = v["dossiers"]
+    let status: Vec<&str> = v["dossiers"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|d| d["same_log"].as_bool().unwrap())
+        .map(|d| d["status"].as_str().unwrap())
         .collect();
-    assert_eq!(same, [false, true, true]);
+    assert_eq!(status, ["other_log", "counted", "counted"]);
 }
 
 #[test]
@@ -783,6 +1031,8 @@ fn help_names_both_commands_and_the_exit_codes() {
         "30 CENSORED",
         "2 usage",
         "--min-checkpoints",
+        "--revocations",
+        "the promised index",
     ] {
         assert!(out(&help).contains(needle), "{needle}: {}", out(&help));
     }
