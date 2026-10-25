@@ -70,9 +70,7 @@ pub(crate) struct ListedLog {
 pub fn run(args: &[String]) -> ExitCode {
     let sub = args.first().map(String::as_str);
     let rest = args.get(1..).unwrap_or(&[]);
-    if matches!(sub, Some("--help") | Some("-h") | Some("help"))
-        || rest.iter().any(|a| a == "--help" || a == "-h")
-    {
+    if crate::asks_sub_help(sub, rest) {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }

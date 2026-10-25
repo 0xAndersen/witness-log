@@ -233,7 +233,9 @@ fn why_not_counted(u: SilenceCheckpointUse) -> Option<&'static str> {
 }
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    // Help only as the sole argument: elsewhere `-h` is a value, and an
+    // accidental exit 0 here would read as PRESENT.
+    if crate::asks_help(args) {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }

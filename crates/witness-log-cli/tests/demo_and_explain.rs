@@ -331,6 +331,11 @@ fn help_anywhere_else_is_an_argument_not_a_success() {
         &["directory", "build", "--out", "--help"],
         &["journal", "serve", "j.jsonl", "-h"],
         &["fleet", "init", "x", "--help"],
+        // 0 is PRESENT for prove-silence.
+        &["prove-silence", "r.json", "--dossier", "-h"],
+        &["prove-silence", "r.json", "--help"],
+        &["log", "receipt", "j.jsonl", "0", "--help"],
+        &["witness-network", "log-list", "--contact", "-h"],
     ] {
         let (code, stdout, stderr) = run(args);
         assert_ne!(
