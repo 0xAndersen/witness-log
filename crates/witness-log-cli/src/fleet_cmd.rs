@@ -240,10 +240,10 @@ fn cmd_init(args: &[String]) -> ExitCode {
     let Some(origin) = flag(args, "--origin") else {
         return usage_err("fleet init: --origin <org-domain>/witness-log/fleet is required");
     };
-    if !valid_fleet_origin(&origin) {
+    if !valid_fleet_origin(&origin) || origin.chars().any(char::is_whitespace) {
         return usage_err(
-            "fleet init: --origin must be a C2SP origin (no spaces or '+') that does not start \
-             with witness-log/ (that prefix names one agent's own log)",
+            "fleet init: --origin must be a C2SP origin (no whitespace of any kind, no '+') that \
+             does not start with witness-log/ (that prefix names one agent's own log)",
         );
     }
     let Some(org) = flag(args, "--org").filter(|o| !o.trim().is_empty()) else {

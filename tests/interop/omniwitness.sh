@@ -33,6 +33,9 @@ pids=()
 cleanup() {
   local rc=$?
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
+  for f in "$work"/*.pid; do
+    if [ -f "$f" ]; then kill "$(cat "$f")" 2>/dev/null || true; fi
+  done
   wait 2>/dev/null || true
   if [ "$rc" -ne 0 ]; then
     echo "--- failed (exit $rc); logs:" >&2
@@ -77,7 +80,9 @@ pids+=($!)
 LIST_URL="http://127.0.0.1:$LIST_PORT/log-list.1"
 
 step "Two witnesses, two operators ($IMPL)"
-start_witness() { # name port -> prints the witness's cosignature vkey
+start_witness() { # name port -> writes the witness's cosignature vkey to $name.vkey
+  # Not called in $(...): a subshell's background process would escape
+  # cleanup. The pid goes to $name.pid, which cleanup reads.
   local name=$1 port=$2
   if [ "$IMPL" = omniwitness ]; then
     "$GENKEYS" --origin "interop-$name.example/witness" --print > "$name.keys"
@@ -89,8 +94,8 @@ start_witness() { # name port -> prints the witness's cosignature vkey
       --public_witness_config_url "$LIST_URL" \
       --public_witness_config_poll_interval 1s \
       --alsologtostderr --v=1 > "$name.log" 2>&1 &
-    pids+=($!)
-    sed -n 2p "$name.keys"
+    echo $! > "$name.pid"
+    sed -n 2p "$name.keys" > "$name.vkey"
   else
     # witness-log's witness has no log-list poller: enroll the listed logs
     # the way an operator configuring from the list would.
@@ -100,13 +105,15 @@ start_witness() { # name port -> prints the witness's cosignature vkey
       "$WL" witness add-log "w-$name" "${vkey%%+*}" "$vkey" > /dev/null
     done < www/log-list.1
     "$WL" witness serve "w-$name" --listen "127.0.0.1:$port" > "$name.log" 2>&1 &
-    pids+=($!)
-    json "$name.init.json" 'd["vkey"]'
+    echo $! > "$name.pid"
+    json "$name.init.json" 'd["vkey"]' > "$name.vkey"
   fi
 }
 PA=$(free_port); PB=$(free_port)
-VKA=$(start_witness a "$PA")
-VKB=$(start_witness b "$PB")
+start_witness a "$PA"
+start_witness b "$PB"
+VKA=$(cat a.vkey)
+VKB=$(cat b.vkey)
 echo "witness A: $VKA"
 echo "witness B: $VKB"
 

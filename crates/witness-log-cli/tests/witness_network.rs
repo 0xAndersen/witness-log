@@ -168,6 +168,28 @@ fn the_request_is_printed_not_sent() {
 fn what_cannot_go_on_a_list_is_a_usage_error() {
     let tmp = TempDir::new("usage");
     fleet(&tmp.0);
+    // A fleet log made before `fleet init` refused Unicode whitespace.
+    std::fs::create_dir_all(tmp.0.join("nbsp")).unwrap();
+    let cfg = std::fs::read_to_string(tmp.0.join("fleet/fleet.json"))
+        .unwrap()
+        .replace(
+            "acme.example/witness-log/fleet",
+            "acme.example/fleet\u{a0}x",
+        );
+    std::fs::write(tmp.0.join("nbsp/fleet.json"), cfg).unwrap();
+    let refused = wl(
+        &tmp.0,
+        &[
+            "fleet",
+            "init",
+            "f2",
+            "--origin",
+            "acme.example/fleet\u{a0}x",
+            "--org",
+            "A",
+        ],
+    );
+    assert_eq!(refused.status.code(), Some(2), "{}", text(&refused.stderr));
     let witness = wl(
         &tmp.0,
         &[
@@ -226,6 +248,10 @@ fn what_cannot_go_on_a_list_is_a_usage_error() {
         (
             vec!["--fleet", "nowhere", "--qpd", "1", "--contact", "x"],
             "fleet.json",
+        ),
+        (
+            vec!["--fleet", "nbsp", "--qpd", "1", "--contact", "x"],
+            "has whitespace",
         ),
         (
             vec![

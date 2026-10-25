@@ -1493,7 +1493,7 @@ pub(crate) fn post_add_checkpoint(
             429 | 503 if retry_after.is_some_and(|s| s <= 60) => {
                 std::thread::sleep(Duration::from_secs(retry_after.unwrap_or(1)));
             }
-            422 => return Err(SubmitError::Refused(text.trim().to_string())),
+            422 => return Err(SubmitError::Refused(untrusted_text(&text))),
             other => return Err(status_error(other, path, &text).into()),
         }
     }
@@ -1504,11 +1504,33 @@ pub(crate) fn post_add_checkpoint(
     )
 }
 
+/// A witness's response body, for a terminal: bounded, on one line, with
+/// every control character escaped. A witness is a remote party; its body
+/// must not be able to move the cursor or print a forged "✓ cosigned" line.
+fn untrusted_text(body: &str) -> String {
+    let one_line: String = body
+        .trim()
+        .chars()
+        .flat_map(|c| match c {
+            '\n' | '\r' | '\t' => vec![' '],
+            c if c.is_control()
+                || ('\u{202a}'..='\u{202e}').contains(&c)
+                || ('\u{2066}'..='\u{2069}').contains(&c) =>
+            {
+                c.escape_unicode().collect()
+            }
+            c => vec![c],
+        })
+        .collect();
+    witness_log_core::echo::bounded(&one_line)
+}
+
 /// What an unexpected add-checkpoint status means, in the terms of
 /// `c2sp.org/tlog-witness`. Witnesses outside this project (omniwitness,
-/// litewitness) answer with the bare status, so the status is the message.
+/// litewitness) answer with a bare status or a generic body, so the status
+/// is the message.
 fn status_error(status: u16, path: &str, body: &str) -> String {
-    let body = witness_log_core::echo::bounded(body.trim());
+    let body = untrusted_text(body);
     let detail = if body.is_empty() {
         String::new()
     } else {
@@ -1516,17 +1538,18 @@ fn status_error(status: u16, path: &str, body: &str) -> String {
     };
     match (status, path) {
         (404, "/add-checkpoint") => format!(
-            "HTTP 404{detail}: this witness has not enrolled the log. A witness-log witness \
-             enrolls it with `witness add-log`; a public witness-network witness once a log \
-             list it configures carries it (`witness-log witness-network request`)"
+            "HTTP 404{detail}: this witness has not enrolled the log, or this URL is not its \
+             add-checkpoint endpoint. A witness-log witness enrolls a log with `witness add-log`; \
+             a public witness-network witness once a log list it configures carries it \
+             (`witness-log witness-network request`)"
         ),
         (403, "/add-checkpoint") => format!(
             "HTTP 403{detail}: the witness could not verify the checkpoint's signature: it \
              holds a different key for this origin"
         ),
-        (429, _) => format!(
-            "HTTP 429{detail}: rate limited. A witness may limit a log that asks more often \
-             than the add-checkpoint rate it declared"
+        (429, "/add-checkpoint") => format!(
+            "HTTP 429{detail}: the witness is busy or limiting requests. For a public \
+             witness, keep to the add-checkpoint rate your log declared"
         ),
         (other, _) => format!("HTTP {other}{detail}"),
     }
@@ -1534,7 +1557,7 @@ fn status_error(status: u16, path: &str, body: &str) -> String {
 
 #[cfg(test)]
 mod status_error_tests {
-    use super::status_error;
+    use super::{status_error, untrusted_text};
 
     #[test]
     fn statuses_from_other_witnesses_are_explained() {
@@ -1556,13 +1579,31 @@ mod status_error_tests {
             e.starts_with("HTTP 403 (checkpoint signature not verified): "),
             "{e}"
         );
-        assert!(status_error(429, "/add-entry", "").contains("rate limited"));
+        let e = status_error(429, "/add-checkpoint", "Too Many Requests\n");
+        assert!(
+            e.starts_with("HTTP 429 (Too Many Requests): the witness is busy"),
+            "{e}"
+        );
         // Not a witness endpoint: the status as it was.
+        assert_eq!(status_error(429, "/add-entry", ""), "HTTP 429");
         assert_eq!(
             status_error(404, "/add-entry", "not found\n"),
             "HTTP 404 (not found)"
         );
         assert_eq!(status_error(500, "/add-checkpoint", ""), "HTTP 500");
+    }
+
+    #[test]
+    fn a_witness_body_cannot_draw_on_the_terminal() {
+        let e = status_error(
+            403,
+            "/add-checkpoint",
+            "\x1b[2K\r  \u{2713} forged cosigned\nmore\u{202e}",
+        );
+        assert!(!e.chars().any(|c| c.is_control()), "{e:?}");
+        assert!(e.contains("\\u{1b}[2K") && e.contains("\\u{202e}"), "{e}");
+        let long = untrusted_text(&"x".repeat(100_000));
+        assert!(long.len() < 1_000, "{}", long.len());
     }
 }
 

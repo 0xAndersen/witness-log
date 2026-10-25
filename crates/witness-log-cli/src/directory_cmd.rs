@@ -654,6 +654,11 @@ fn cmd_add(args: &[String]) -> ExitCode {
         Ok(v) => v,
         Err(e) => return usage_err(&format!("directory add: bad vkey: {e}")),
     };
+    if vk.sig_type != SIG_TYPE_COSIGNATURE_V1 {
+        return usage_err(
+            "directory add: this is a log (signature) key, not a witness cosignature key; a witness's vkey is what `witness init` prints and GET / serves",
+        );
+    }
     // Witness about pages (the public witness network's among them) give
     // the full add-checkpoint URL; every witness-log client appends
     // `/add-checkpoint` to the directory URL itself.
@@ -667,11 +672,6 @@ fn cmd_add(args: &[String]) -> ExitCode {
         }
         None => url,
     };
-    if vk.sig_type != SIG_TYPE_COSIGNATURE_V1 {
-        return usage_err(
-            "directory add: this is a log (signature) key, not a witness cosignature key; a witness's vkey is what `witness init` prints and GET / serves",
-        );
-    }
     let entry = WitnessEntry::independent(
         vk.name.clone(),
         org,

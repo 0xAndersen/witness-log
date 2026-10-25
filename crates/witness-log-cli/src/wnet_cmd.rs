@@ -40,7 +40,8 @@ const USAGE: &str = "usage:
     <logs> is one or more of (each repeatable):
       --fleet <dir>       a fleet log (RFC-0001), from its fleet.json
       --identity <hex>    an agent's own log, origin witness-log/<hex>
-      --vkey <log vkey>   any C2SP checkpoint log (Ed25519, key type 0x01)
+      --vkey <log vkey>   any C2SP checkpoint log whose origin is its key name
+                          (Ed25519, key type 0x01)
     --every SECS   how often the log asks each witness to cosign (as given to
                    `fleet serve --witness-every`); qpd = ceil(86400 / SECS)
     --qpd N        add-checkpoint requests per day, 1 <= N < 2^31, instead
@@ -189,6 +190,14 @@ fn collect_logs(args: &[String]) -> Result<Vec<ListedLog>, Problem> {
         let log = match flag {
             "--fleet" => {
                 let (origin, org, vk) = fleet_public(Path::new(value)).map_err(Problem::Input)?;
+                if !valid_origin(&origin) {
+                    // A no-break space, say: note.NewVerifier refuses the
+                    // key name, and omniwitness then refuses the whole list.
+                    return Err(Problem::Input(format!(
+                        "{value}: the fleet origin {} has whitespace, which a vkey name and a log list cannot carry",
+                        witness_log_core::echo::quoted(&origin)
+                    )));
+                }
                 ListedLog {
                     origin,
                     vkey: vk.encode(),

@@ -28,11 +28,11 @@ before you rely on a detail.
   `participate (at) lists.witness-network.org` and gives the origin line,
   the Ed25519 vkey, the add-checkpoint rate, the list, and a contact.
 
-The site's witness tables list:
+By the site's witness tables, these operators configure:
 
-- **Testing list:** Elias Rudberg, Florian Larysch, IPng Networks,
-  Markovian Protocol, rgdd and TrustFabric.
-- **Staging lists:** GDB Security, Geomys, IPng Networks, Markovian
+- **The testing list:** Elias Rudberg, Florian Larysch, Geomys, IPng
+  Networks, Markovian Protocol, Mullvad VPN, rgdd and TrustFabric.
+- **A staging list:** GDB Security, Geomys, IPng Networks, Markovian
   Protocol, Mullvad VPN and TrustFabric.
 
 None of them is run by this project.
@@ -43,7 +43,7 @@ None of them is run by this project.
 |---|---|---|
 | Requests | One per organisation, whatever the number of agents | One per agent |
 | What a witness commits to | The fleet log's head | That agent's head |
-| Verdict | WITNESSED via the fleet anchor. `verify` exits 11 (split view possible) unless `--allow-sub-majority` ([why](Fleet-Log#what-it-proves-less-well-than-direct-witnessing)) | WITNESSED with direct receipts. Exit 0 once a strict majority of your directory cosigned |
+| Verdict | WITNESSED via the fleet anchor. `verify` exits 11 (split view possible) unless `--allow-sub-majority` ([why](Fleet-Log#what-it-proves-less-well-than-direct-witnessing)) | WITNESSED with direct receipts: exit 0 when they pass the count gate (66% of your directory, or `--min-witnesses N`), come from two or more independent operators, and are a strict majority of your directory (else exit 11) |
 | Status | EXPERIMENTAL ([RFC-0001](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0001-fleet-checkpoint-log.md)) | Specification |
 
 The fleet log is the unit a public witness can reasonably admit for an
@@ -71,8 +71,8 @@ Read it and send it yourself; nothing is sent from the CLI.
   cosign: for a fleet log, the `--witness-every` you will give `fleet
   serve`. It becomes `qpd = ceil(86400 / SECS)`. Use `--qpd N` to state the
   rate directly. A witness may rate-limit or drop a log that asks more
-  often than it declared; witness-log reports such a refusal as
-  `HTTP 429: rate limited`. A log with a small load is easier to approve,
+  often than it declared; witness-log reports a 429 as "the witness is
+  busy or limiting requests". A log with a small load is easier to approve,
   so the network's guidelines suggest asking rarely.
 - **Name.** The origin is the vkey's key name, as the guidelines
   recommend. A fleet origin is a schema-less URL under a domain you
@@ -85,6 +85,7 @@ Read it and send it yourself; nothing is sent from the CLI.
 omniwitness polls:
 
 ```sh
+mkdir -p www
 witness-log witness-network log-list --fleet fleet --every 300 \
   --contact "ops (at) acme.example" > www/log-list.1
 python3 -m http.server 8000 --directory www &
@@ -153,4 +154,6 @@ usual. Before the witnesses have read the list, each answers 404, and
   network's witnesses is WITNESSED only for a verifier whose directory
   lists them under two or more independent operators.
 - The testing list's witnesses are "just trying things out". Expect them
-  to come and go, and keep more than the minimum in your directory.
+  to come and go. A witness in your directory that stops answering still
+  counts in the 66% gate, so list the witnesses you expect to cosign, or
+  gate on an absolute count with `--min-witnesses N`.
