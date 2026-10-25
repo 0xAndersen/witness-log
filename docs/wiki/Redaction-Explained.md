@@ -106,16 +106,22 @@ tree is built, a checkpoint signed, a salt forgotten, and the vector shows
 that the previously committed leaf hash and every proof are unchanged. Run
 `witness-log demo` to watch it with narration, or in Python:
 
+<!-- doctest -->
 ```python
-import witness_log
+import json, witness_log
 log = witness_log.open("demo.jsonl")
 a = log.append_intent(b'{"tool":"lookup","args":{"customer":"alice@example.com"}}')
 b = log.append_result(b'{"status":"ok"}')
 before = log.to_dossier_json()                        # includes a proof of leaf a
 log.forget(a)
 after = log.to_dossier_json()
-# leaf a's payload_hash is identical in both dossiers; its salt is gone from demo.jsonl.salts;
-# `after` has one more leaf: type 0x03 naming index a. verify() passes on both.
+
+old, new = json.loads(before)["leaves"], json.loads(after)["leaves"]
+assert new[a]["payload_hash"] == old[a]["payload_hash"]                # leaf a's hash is unchanged
+assert not log.can_forget(a)                                           # its salt is gone from demo.jsonl.salts
+assert new[-1]["leaf_type"] == 3 and new[-1]["redacted_index"] == a    # one more leaf: 0x03 naming a
+for d in (before, after):                                              # and both dossiers verify
+    assert json.loads(witness_log.verify_dossier_json(d, 0.66))["internally_consistent"]
 ```
 
 ## How this compares

@@ -202,10 +202,9 @@ let receipt = log.log().write_receipt(42);              // Some(receipt): "I acc
 
 `inclusion_proof`, `consistency_proof` and `write_receipt` return `Option`:
 `None` means the index or size does not exist in this tree, not an error.
-`evidence_window` in 0.3.6 **clamps** a range that runs past the tree
-(`100..200` on a 150-leaf log yields 50 entries, silently); 0.4.0 plans to
-refuse an out-of-range window instead, so check `window.entries.len()`
-against what you asked for until then.
+`evidence_window` refuses a range that runs past the tree or starts after
+it ends (`Err(EvidenceWindowError)`, since 0.4.0; 0.3.6 clamped `100..200`
+on a 150-leaf log to 50 entries, silently).
 
 **`EvidenceWindow`** answers the commonest compliance request: "show me
 what the agent did between 09:00 and 09:05" without revealing anything

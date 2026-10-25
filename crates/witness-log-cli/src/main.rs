@@ -347,6 +347,17 @@ fn all_flag_values(args: &[String], flag: &str) -> Vec<String> {
     out
 }
 
+/// The paragraphs of `HELP` about one command, for the commands that have
+/// no usage text of their own: `witness-log diff --help` used to be
+/// "unrecognized flag" (exit 2), though the docs say every subcommand has
+/// `--help`.
+fn help_for(cmd: &str) -> String {
+    let head = format!("  witness-log {cmd} ");
+    HELP.split("\n\n")
+        .filter_map(|p| p.find(&head).map(|at| format!("{}\n\n", &p[at..])))
+        .collect()
+}
+
 fn main() -> ExitCode {
     // Rust ignores SIGPIPE at startup, which turns a closed pipe (`| head`)
     // into a panic with a backtrace on the next print. A CLI should just
@@ -358,6 +369,14 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
     let args: Vec<String> = env::args().collect();
+    if let Some(cmd @ ("demo" | "diff" | "bind" | "explain" | "c2sp" | "conform")) =
+        args.get(1).map(String::as_str)
+    {
+        if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+            print!("{}", help_for(cmd));
+            return ExitCode::SUCCESS;
+        }
+    }
     match args.get(1).map(String::as_str) {
         Some("demo") => {
             // Reject unrecognized flags rather than silently ignoring

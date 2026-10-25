@@ -26,6 +26,7 @@ your database or trace backend) and the log holds the salted hash of each
 entry. This split is the point: the proof is tiny and leaks nothing, and
 the content stays under your own retention and access rules.
 
+<!-- doctest: group=tutorial file=payments_agent.py -->
 ```python
 # payments_agent.py
 import witness_log, json, sys
@@ -73,6 +74,7 @@ if __name__ == "__main__":
     print("tree size:", log.tree_size(), "root:", log.root_hex())
 ```
 
+<!-- doctest: group=tutorial -->
 ```sh
 python payments_agent.py 250        # approved path
 python payments_agent.py 50000      # declined path, same journal, new session
@@ -94,6 +96,7 @@ right trade; for a chat agent sync at checkpoints instead.
 
 ## Step 2: look at what was recorded
 
+<!-- doctest: group=tutorial -->
 ```python
 import witness_log, json
 log = witness_log.open("payments.jsonl")
@@ -101,6 +104,7 @@ events = {e["index"]: e for e in map(json.loads, open("payments.events.jsonl"))}
 for leaf in json.loads(log.leaves_json()):
     e = events.get(leaf["index"], {})
     print(leaf["index"], hex(leaf["leaf_type"]), leaf["payload_hash"][:16], e.get("tool", e.get("note", "")))
+log.close()                                           # one handle per journal: step 3 opens it again
 ```
 
 Notice: the journal has only hashes and metadata; your event store has the
@@ -115,6 +119,7 @@ the witnessed root.
 `cust_42`'s email address is in the `lookup_customer` result. Erase it from
 both places:
 
+<!-- doctest: group=tutorial -->
 ```python
 import witness_log, json
 log = witness_log.open("payments.jsonl")
@@ -130,6 +135,7 @@ with open("payments.events.jsonl", "w") as f:          # and delete the content 
         if e["index"] not in targets:
             f.write(json.dumps(e) + "\n")
 print("erased", targets, "| root changed:", root_before != log.root_hex())
+log.close()
 ```
 
 What happened, and what did not: the salts for those leaves were deleted
@@ -145,15 +151,18 @@ nothing else was touched. ([Redaction explained](Redaction-Explained))
 
 Start two witnesses, standing in for two organisations, in a second terminal:
 
+<!-- doctest: group=tutorial -->
 ```sh
 witness-log witness init ./wA --name local/a --org "Org A" --url http://127.0.0.1:7381
 witness-log witness init ./wB --name local/b --org "Org B" --url http://127.0.0.1:7382
 witness-log witness serve ./wA --listen 127.0.0.1:7381 --open-enrollment &
 witness-log witness serve ./wB --listen 127.0.0.1:7382 --open-enrollment &
+sleep 1                                                  # give them a moment to start listening
 ```
 
 Build the directory **you** trust from their entries, then submit:
 
+<!-- doctest: group=tutorial -->
 ```sh
 python3 - <<'EOF'
 import json, urllib.request
@@ -178,10 +187,13 @@ In production, the two organisations are real and not yours:
 
 Copy `dossier.json` and `trusted.json` to a laptop with no network and the
 `witness-log` binary. Compliance also has, from your configuration
-management (not from the dossier), the agent's identity key.
+management (not from the dossier), the agent's identity key: the
+`agent identity:` that step 1 printed, which `log info` also shows.
 
+<!-- doctest: group=tutorial -->
 ```sh
-witness-log verify dossier.json --identity f7809c16…0506b3be --directory trusted.json --min-witnesses 2
+AGENT_ID=$(witness-log log info payments.jsonl | jq -r .identity)    # compliance: from configuration management
+witness-log verify dossier.json --identity "$AGENT_ID" --directory trusted.json --min-witnesses 2
 echo "exit $?"
 ```
 
@@ -189,23 +201,36 @@ echo "exit $?"
 ✓ Checkpoint signature valid
 ✓ Identity bound to --identity f7809c16...0506b3be
 ✓ Leaf structure valid
-✓ Key bindings valid (2 bindings, 0 revocations)
-✓ Merkle continuity verified (9 leaves)
+✓ Key bindings valid (5 bindings, 0 revocations)
+✓ Merkle continuity verified (13 leaves)
 ✓ 2/2 witness signatures valid (gate: at least 2 witnesses)
-✓ Independent operators: 2 cosigned (Org A, Org B); 2 of 2 known operators represented (100%)
-Verdict: WITNESSED
+✓ Independent operators: 2 cosigned (org a, org b); 2 of 2 known operators represented (100%)
+...
+Verdict: WITNESSED — proofs verify and at least 2 independent operators from your trusted directory cosigned this checkpoint
+...
 exit 0
 ```
+
+Thirteen leaves: eleven from the two runs and the two Redaction leaves of
+step 3.
 
 Read `--explain` once to see what each line does and does not prove. The
 precise claim is: this record, including the erasures, has not changed since
 Org A and Org B saw it, and it belongs to the identity compliance expected.
 
-Now see the other verdicts with the same file:
+Now see the other verdicts with the same file. With nothing from outside
+the file:
 
+<!-- doctest: group=tutorial exit=20 -->
 ```sh
-witness-log verify dossier.json; echo $?                                   # 20 UNANCHORED: no directory, nothing external checked
-witness-log verify dossier.json --identity 00…00 --directory trusted.json  # 40 INVALID: not the identity you expected
+witness-log verify dossier.json; echo $?          # 20 UNANCHORED: no directory, nothing external checked
+```
+
+Pinned to an identity that is not the agent's (64 zeros):
+
+<!-- doctest: group=tutorial exit=40 -->
+```sh
+witness-log verify dossier.json --identity "$(printf '%064d' 0)" --directory trusted.json; echo $?   # 40 INVALID
 ```
 
 ## Step 6: the counterparty tries to catch you cheating
@@ -213,21 +238,24 @@ witness-log verify dossier.json --identity 00…00 --directory trusted.json  # 4
 Suppose the counterparty suspects a leaf was edited after the fact. Flip
 one character of a `payload_hash` in `dossier.json` and verify:
 
+<!-- doctest: group=tutorial exit=40 -->
 ```sh
 python3 -c "
 import json; d=json.load(open('dossier.json')); h=d['leaves'][3]['payload_hash']
 d['leaves'][3]['payload_hash']=('0' if h[0]!='0' else '1')+h[1:]; json.dump(d,open('edited.json','w'))"
-witness-log verify edited.json --identity f7809c16…0506b3be --directory trusted.json; echo $?
+witness-log verify edited.json --identity "$AGENT_ID" --directory trusted.json; echo $?
 # ✗ Merkle continuity ... Verdict: INVALID, exit 40
 ```
 
 Suppose instead *you* try to rewrite history: restore `payments.jsonl` from
-yesterday's backup, append a different result, and `submit`. The local guard
-refuses (the cache says the witnesses already hold a larger size). Force it
+a backup one leaf short of what was witnessed, append a different result in
+its place, and `submit`. The local guard refuses (the cache says the
+witnesses already cosigned a head this journal does not extend). Force it
 by deleting `payments.jsonl.witnesses.json` and the witness answers `422`
 and writes `wA/evidence/<hash>.json`: two checkpoints signed by *your* key
 for one size with two roots. Anyone can check it:
 
+<!-- doctest: group=tutorial before="sed '$d' payments.jsonl > backup.jsonl && cat backup.jsonl > payments.jsonl && witness-log log append payments.jsonl --result forged && ! witness-log submit payments.jsonl --directory trusted.json --out forged.json && rm payments.jsonl.witnesses.json && ! witness-log submit payments.jsonl --directory trusted.json --out forged.json" -->
 ```sh
 witness-log witness verify-evidence wA/evidence/*.json   # exit 0: equivocation proven
 ```

@@ -42,6 +42,7 @@ mismatch is visible instead of silently absorbed.
 
 ## Step 1: two agents, two journals
 
+<!-- doctest: group=handoff -->
 ```python
 # orchestrator.py and worker.py can be separate processes on separate machines;
 # shown in one file for brevity.
@@ -57,6 +58,7 @@ a signed manifest). They are public keys; nothing secret moves.
 
 ## Step 2: the orchestrator decides and hands off
 
+<!-- doctest: group=handoff -->
 ```python
 task = witness_log.canonical_json({"task": "reconcile_ledger", "rows": 1200, "deadline": "2026-10-11T18:00Z"})
 
@@ -71,6 +73,7 @@ handoff leaf says *what* (the exact bytes) and *to whom*.
 
 ## Step 3: the worker receives and acknowledges
 
+<!-- doctest: group=handoff -->
 ```python
 received = task                                           # the bytes that actually arrived
 i_recv = worker.append_handoff_received(received, ORCH_ID)   # 0x05 Received, counterparty = orchestrator
@@ -85,6 +88,7 @@ changed in transit.
 
 ## Step 4: optionally, hand the result back
 
+<!-- doctest: group=handoff -->
 ```python
 result = witness_log.canonical_json({"status": "ok", "mismatches": 3})
 worker.append_handoff_sent(result, ORCH_ID)
@@ -100,6 +104,7 @@ two accounts cross-reference each other at two points.
 Each agent submits its own journal, exactly as a single agent would
 ([Getting witnessed](Getting-Witnessed)):
 
+<!-- doctest: group=handoff before="witness-log testnet up --out trusted.json" -->
 ```sh
 witness-log witness submit orchestrator.jsonl --directory trusted.json --out orch.json
 witness-log witness submit worker.jsonl       --directory trusted.json --out worker.json
@@ -112,10 +117,12 @@ The witnesses do not know the two logs are related. They do not need to.
 Given both dossiers, the auditor verifies each (`WITNESSED`, pinned to the
 expected identities), then matches the cross-log leaves with one command:
 
+<!-- doctest: group=handoff -->
 ```sh
 witness-log bind orch.json worker.json
-#   ✓ handoff bound: 1ae11da3…#3 → fb2e8280…#0  state f72a7560…
-#   Result: BOUND — both parties committed, in their own logs, to the same content ...
+#   ✓ handoff bound: d9afb40b...a528d2d4#1 → dc661f17...b18cbacb#0  state 2bf77e65...56c48330
+#   ✓ handoff bound: dc661f17...b18cbacb#3 → d9afb40b...a528d2d4#2  state 896c89df...c17b52c1
+#   Result: BOUND — both parties committed, in their own logs, to the same content ... (2 binding(s)).
 # exit 0 bound · 30 mismatch · 10 nothing to bind;  --json for a machine-readable report
 ```
 
@@ -124,6 +131,7 @@ receiver_id, receiver_leaf_json)` returns `True` when they bind;
 `witness_log.handoff_binding_error(...)` returns the reason when they do
 not (`None` when they bind). By hand, the match is:
 
+<!-- doctest: group=handoff after="witness-log testnet down" -->
 ```python
 import json
 A, B = json.load(open("orch.json")), json.load(open("worker.json"))

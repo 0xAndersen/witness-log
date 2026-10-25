@@ -190,10 +190,14 @@ jobs:
         run: |
           pip install "mcp>=2.2.0" anyio
           pytest -q integrations/mcp -p anyio
-      - name: Docs that run (README, quickstarts, Getting witnessed)
+      - name: Docs that run (README, quickstarts, tutorials, troubleshooting)
         # Every code block marked <!-- doctest --> runs as written; a
         # quickstart that stops working fails here, not for a newcomer.
-        run: WITNESS_LOG_CLI=target/release/witness-log python docs/doctest.py
+        # docs/tests checks the runner itself and that every page with a
+        # marked block is on its list.
+        run: |
+          pytest -q docs/tests
+          WITNESS_LOG_CLI=target/release/witness-log python docs/doctest.py
       - name: Three-organisation pilot (CLI only, --subject-org)
         run: WITNESS_LOG_BIN=target/release/witness-log python examples/pilot-triangle/run.py
       - name: Live witness network (10 scenarios, 10 witnesses)

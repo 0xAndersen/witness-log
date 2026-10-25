@@ -8,6 +8,7 @@ Start with `witness-log doctor` (0.6.0+). Given a journal, your directory
 and, if you run one, a witness state directory, it checks each and prints
 the command that fixes what it finds, without changing anything:
 
+<!-- doctest: before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello && witness-log witness init ./witness --name w.example.org/w --org 'Example Org' --url http://127.0.0.1:1" after="witness-log testnet down" -->
 ```sh
 witness-log doctor agent.jsonl --directory trusted.json --subject-org "<your organisation>"
 witness-log doctor --witness ./witness          # on a witness host
@@ -101,9 +102,8 @@ means two handles, which is exactly the fork the lock exists to prevent.
 
 **The Python `OSError` message mentions `JournaledLog::force_unlock`, Rust syntax.**
 Same error as above, raised through the binding; the message text comes
-from the Rust core (0.3.6). In Python the call is
-`witness_log.JournaledLog.force_unlock(path)`. 0.4.0 plans to word the
-message for the language it is raised in.
+from the Rust core (still so in 0.6.1). In Python the call is
+`witness_log.JournaledLog.force_unlock(path)`.
 
 **`this journal is sealed (header holds only identity_pubkey_hex); resume it with the identity seed`.**
 A sealed journal (`open(..., seal=True)` / `create_sealed`) stores no
@@ -112,19 +112,16 @@ Pass the seed every time: `witness_log.open(path, identity_seed=seed)` in
 Python, `JournaledLog::resume_with_identity(path, &seed)` in Rust. A wrong
 seed fails with `supplied identity seed does not match the public key this
 sealed journal was created with`: the header pins the public key, so a
-stranger's seed cannot continue your history. In 0.3.6 the CLI
-(`witness submit`, `c2sp show --sign-with`) cannot open a sealed journal at
-all and exits 2; `--identity-seed-env NAME` / `--identity-seed-file PATH`
-are planned for 0.4.0. Until then export a dossier from Python or Rust and
-submit that, or keep the submitting process the one that holds the seed.
+stranger's seed cannot continue your history. From the CLI pass
+`--identity-seed-env NAME` or `--identity-seed-file PATH` (every `log`
+command, `submit`, `journal serve`, `c2sp show` and `c2sp export`; since
+0.4.0, before which the CLI could not open a sealed journal at all).
 
-**`evidence_window(start, end)` returned fewer entries than the range.**
-0.3.6 clamps the range to the tree: `evidence_window(100, 200)` on a
-150-leaf log returns 50 entries and does not complain, and a range that
-starts past the end returns an empty window whose `verify()` succeeds
-(nothing to check). Compare `len(window.entries)` with what you asked for.
-0.4.0 plans to refuse an out-of-range window with an error naming the tree
-size.
+**`evidence_window(start, end)`: `window 100..200 is outside the tree (tree_size 150)`.**
+Since 0.4.0 a window that runs past the tree, or starts after it ends, is
+an error; ask for `0..tree_size` for everything. 0.3.6 clamped it
+silently: `evidence_window(100, 200)` on a 150-leaf log returned 50
+entries and did not complain.
 
 **`resume` reports `dropped_trailing_lines > 0`.**
 A crash tore the last line. The partial line was discarded and the file
@@ -204,9 +201,8 @@ Two different causes share the code, both "I will not cosign this":
   not a 422; a 422 for a log the witness has never seen means the note's
   origin is not the canonical `witness-log/<identity hex>` of the key that
   signed it, or the size-0 checkpoint does not carry the empty-tree root.
-`submit` in 0.3.6 prints the 422 per witness but exits 0 if at least
-`--min` others cosigned (default 1); 0.4.0 plans to exit non-zero on any
-422.
+`submit` prints the 422 per witness and exits 20 whatever `--min` says
+(since 0.4.0; 0.3.6 exited 0 if at least `--min` others cosigned).
 
 **`422 consistency proof failed`.**
 Your submitted history does not extend what the witness remembers. If you
@@ -220,13 +216,14 @@ or different head than this journal. This is the guard that stops a
 restored backup from equivocating. Find the current journal; do not delete
 the cache to force it.
 
-**`submit --min N` exits 1 with every witness line showing `✓ cosigned`.**
+**`submit --min N` exits 20 with every witness line showing `✓ cosigned`.**
 `N` is larger than the number of witnesses in the directory, so the gate
-can never be met; 0.3.6 prints the per-witness lines and the summary and
-exits 1 without naming the cause. Check `jq '.witnesses | length'
-trusted.json`. The same happens when the directory is the (empty) public
-registry: `0/0 witnesses cosigned`. 0.4.0 plans to default `--min` to a
-majority of the directory and to say when `--min` exceeds it.
+can never be met; the first line of the output says so (`note: --min N
+cannot be met by a directory of M witnesses`). Check `jq '.witnesses |
+length' trusted.json`. The same happens when the directory is the (empty)
+public registry: `0/0 witnesses cosigned`. Since 0.4.0 `--min` defaults to
+a strict majority of the directory, never below 2; 0.3.6 defaulted to 1
+and exited 1 here without naming the cause.
 
 **`select_witnesses(...)` returns a JSON string, not a list / "expected a directory object".**
 The Python helper takes the directory as a JSON *string* (`directory_json`),

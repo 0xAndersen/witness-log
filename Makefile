@@ -60,7 +60,7 @@ python: cli
 
 docs: cli
 	@if ! python3 -c "import witness_log" 2>/dev/null; then echo "skip docs: witness_log not importable (make python first, in a venv)"; exit 0; fi; \
-	WITNESS_LOG_CLI=$(CLI) python3 docs/doctest.py
+	python3 -m pytest -q docs/tests && WITNESS_LOG_CLI=$(CLI) python3 docs/doctest.py
 
 pilot: cli
 	WITNESS_LOG_BIN=$(CLI) python3 examples/pilot-triangle/run.py

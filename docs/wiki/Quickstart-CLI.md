@@ -137,6 +137,7 @@ The reasoning behind each is in [Verification and verdicts](Verification-and-Ver
 
 **The deployment gate is one line:**
 
+<!-- doctest: group=gate before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello && witness-log submit agent.jsonl --directory trusted.json --out dossier.json && AGENT_KEY=$(witness-log log info agent.jsonl | jq -r .identity)" after="witness-log testnet down" -->
 ```sh
 witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json --min-witnesses 3 || exit 1
 ```
@@ -157,6 +158,7 @@ it, or accept the split-view risk explicitly with `--allow-sub-majority`.
 
 ## 3. Get a journal witnessed
 
+<!-- doctest: group=submit before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello" after="witness-log testnet down" -->
 ```sh
 witness-log submit agent.jsonl --directory trusted.json --out dossier.json
 witness-log verify dossier.json --identity $(jq -r .identity_pubkey dossier.json) --directory trusted.json
@@ -240,6 +242,7 @@ Line by line, what was actually checked:
 
 ## 5. Two copies disagree: `diff`
 
+<!-- doctest: group=diff before="witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory monday && witness-log log export agent.jsonl --out monday.json && witness-log log append agent.jsonl --memory friday && witness-log log export agent.jsonl --out friday.json" -->
 ```sh
 witness-log diff monday.json friday.json
 ```

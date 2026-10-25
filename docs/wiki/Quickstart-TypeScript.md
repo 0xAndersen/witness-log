@@ -183,15 +183,17 @@ Two witnesses from two different `operator_org` values are the floor for
 
 You need a directory of witnesses *you* trust, `{"witnesses": [...]}`. The
 public registry is at `registry/` in the repository. For development run
-two local witnesses with the CLI (`cargo install witness-log-cli`, or a
+local witnesses with the CLI (`cargo install witness-log-cli`, or a
 release binary, or the Docker image `ghcr.io/0xandersen/witness-log`):
 
+<!-- doctest: group=testnet after="witness-log testnet down" -->
 ```sh
-witness-log testnet up                   # CLI 0.4.0+: two local witnesses (two organisations) and a directory file
+witness-log testnet up --out trusted.json    # CLI 0.4.0+: three local witnesses (three organisations) and the directory file
 ```
 
 or on an earlier CLI, by hand (each `witness init` prints a directory entry):
 
+<!-- doctest: group=by-hand -->
 ```sh
 witness-log witness init ./w1 --name w1.local/witness --org "Org One" --url http://127.0.0.1:7381 > w1.json
 witness-log witness init ./w2 --name w2.local/witness --org "Org Two" --url http://127.0.0.1:7382 > w2.json

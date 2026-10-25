@@ -260,6 +260,39 @@ fn diff_rejects_extra_paths_and_stray_flags() {
     assert!(stderr.contains("unrecognized flag"), "{stderr}");
 }
 
+/// The CLI quickstart says "Every subcommand has `--help`". Through 0.6.1
+/// `demo`, `diff`, `bind`, `c2sp` and `conform` answered it with
+/// "unrecognized flag" and exit 2.
+#[test]
+fn every_subcommand_in_help_answers_help() {
+    let (_, help, _) = run(&["--help"]);
+    let mut cmds: Vec<&str> = help
+        .lines()
+        .filter_map(|l| l.strip_prefix("  witness-log "))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter(|c| !c.starts_with('-'))
+        .collect();
+    cmds.dedup();
+    assert!(cmds.len() >= 15, "{cmds:?}");
+    for cmd in cmds {
+        let (code, stdout, stderr) = run(&[cmd, "--help"]);
+        assert_eq!(
+            code, 0,
+            "`{cmd} --help`\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            stdout.contains("witness-log ") && stdout.contains(&format!(" {cmd} ")),
+            "`{cmd} --help` must show its usage: {stdout}"
+        );
+    }
+    let (code, stdout, _) = run(&["c2sp", "show", "-h"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("witness-log c2sp show <dossier.json>"),
+        "{stdout}"
+    );
+}
+
 #[test]
 fn help_lists_every_subcommand_and_the_exit_codes() {
     let (code, stdout, _) = run(&["--help"]);

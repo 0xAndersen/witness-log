@@ -19,16 +19,27 @@ Options, space-separated inside the comment after "doctest:":
                   (e.g. start a local testnet the prose already mentioned)
     after="..."   a shell command run afterwards, even if the block failed
     timeout=S     seconds before the block is killed (default 120)
+    file=NAME     do not run the block: write it to NAME in the group's
+                  directory, for a script the prose tells the reader to
+                  save (a later block runs it). Any fence language.
 
-`sh`/`bash`/`shell` blocks run with `bash -eo pipefail`; the `python` blocks
-of a group run in one interpreter (this one), in order, sharing variables
-as if pasted into one session. Each group runs in a fresh temporary directory with
-the witness-log CLI first on PATH; every process a group starts (a
-witness put in the background with `&`, say) is killed when the group
-ends. Exit 0 when every marked block behaved, 1 otherwise.
+`sh`/`bash`/`shell` blocks run with `bash -eo pipefail`. Shell variables a
+block (or a before=/after= command) sets are set in the later shell blocks
+of its group, as in one terminal; changes to inherited variables such as
+PATH are not carried, nor is `cd`. The `python` blocks of a group run in
+one interpreter (this one), in order, sharing variables as if pasted into
+one session. Each group runs in a fresh temporary directory with the
+witness-log CLI first on PATH and, when this interpreter is a virtual
+environment's, that environment's commands next, so `python`, `pip` and
+the package's own commands in a shell block are the ones the python
+blocks use (`pip install witness-log` then finds the build under test
+installed and changes nothing). Every process a group starts (a witness
+put in the background with `&`, say) is killed when the group ends. Exit
+0 when every marked block behaved, 1 otherwise.
 
     python3 docs/doctest.py                      # every file listed below
     python3 docs/doctest.py docs/wiki/Quickstart-CLI.md
+    python3 docs/doctest.py -v docs/wiki/Quickstart-CLI.md   # and print each block's output
     WITNESS_LOG_CLI=target/release/witness-log python3 docs/doctest.py
 """
 
@@ -53,7 +64,15 @@ FILES = [
     "docs/wiki/Quickstart-CLI.md",
     "docs/wiki/Getting-Witnessed.md",
     "docs/wiki/Quickstart-Python.md",
+    "docs/wiki/Quickstart-TypeScript.md",
+    "docs/wiki/Tutorial-Audit-a-Payments-Agent.md",
+    "docs/wiki/Tutorial-Multi-Agent-Handoff.md",
+    "docs/wiki/Redaction-Explained.md",
+    "docs/wiki/Keys-and-Identity.md",
+    "docs/wiki/Troubleshooting.md",
+    "docs/wiki/Hooks.md",
 ]
+VERBOSE = False  # -v: print every block's output, to refresh a page's sample output
 MARK = re.compile(r"^<!--\s*doctest(?::(?P<opts>.*?))?\s*-->\s*$")
 FENCE = re.compile(r"^```(?P<lang>[A-Za-z0-9_-]*)\s*$")
 LANGS = {"sh": "sh", "bash": "sh", "shell": "sh", "console": "sh", "python": "python", "py": "python"}
@@ -70,12 +89,14 @@ def blocks(path: Path):
             continue
         opts = dict(kv.split("=", 1) for kv in shlex.split(m.group("opts") or "") if "=" in kv)
         f = FENCE.match(lines[i + 1].strip()) if i + 1 < len(lines) else None
-        if not f or f.group("lang") not in LANGS:
-            raise SystemExit(f"{path}:{i + 1}: a doctest marker must sit right above a ```sh or ```python fence")
+        if not f or (f.group("lang") not in LANGS and "file" not in opts):
+            raise SystemExit(f"{path}:{i + 1}: a doctest marker must sit right above a ```sh or ```python fence"
+                             " (or any fence, with file=)")
         j = i + 2
         while j < len(lines) and lines[j].strip() != "```":
             j += 1
-        yield i + 2, LANGS[f.group("lang")], "\n".join(lines[i + 2 : j]) + "\n", opts
+        lang = "file" if "file" in opts else LANGS[f.group("lang")]
+        yield i + 2, lang, "\n".join(lines[i + 2 : j]) + "\n", opts
         i = j + 1
 
 
@@ -91,6 +112,42 @@ def cli_dir() -> str:
     if found:
         return str(Path(found).parent)
     raise SystemExit("no witness-log CLI: cargo build --release -p witness-log-cli (or set WITNESS_LOG_CLI)")
+
+
+# Put before every shell block: the variables earlier blocks of the group
+# set come back, and on any exit (a failing command included) the ones this
+# block set, everything not inherited from the environment, are written
+# for the next. Names with __dt_ are this prelude's own.
+PRELUDE = r"""set -eo pipefail
+__dt_vars=%(vars)s
+__dt_base=" $(compgen -v | tr '\n' ' ') "
+if [ -f "$__dt_vars" ]; then . "$__dt_vars"; fi
+__dt_save() {
+  local __dt_n
+  for __dt_n in $(compgen -v); do
+    case "$__dt_base" in *" $__dt_n "*) continue ;; esac
+    case "$__dt_n" in __dt_*|BASH_*|FUNCNAME|PIPESTATUS|GROUPS|DIRSTACK) continue ;; esac
+    declare -p "$__dt_n"
+  done > "$__dt_vars.new" 2>/dev/null || true
+  mv -f "$__dt_vars.new" "$__dt_vars" 2>/dev/null || true
+}
+trap __dt_save EXIT
+"""
+
+
+def shell_script(work: str, name: str, code: str) -> list:
+    """argv running `code` with bash -eo pipefail, sharing the group's variables."""
+    script = os.path.join(work, name)
+    with open(script, "w") as f:
+        f.write(PRELUDE % {"vars": shlex.quote(os.path.join(work, ".doctest-vars"))} + code)
+    return ["bash", script]
+
+
+def shown(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
 
 
 def run(argv: list, cwd: str, env: dict, timeout: float, sessions: list) -> tuple:
@@ -174,35 +231,37 @@ def run_group(path: Path, name: str, items, env: dict) -> list[str]:
     py = None
     try:
         for line, lang, code, opts in items:
-            where = f"{path.relative_to(REPO)}:{line}"
+            where = f"{shown(path)}:{line}"
             want = int(opts.get("exit", "0"))
             timeout = float(opts.get("timeout", "120"))
-            if lang == "sh":
-                script = os.path.join(work, ".block.sh")
-                with open(script, "w") as f:
-                    f.write("set -eo pipefail\n" + code)
-                argv = ["bash", script]
-            else:
-                argv = None
             setup_ok = True
             if "before" in opts:
-                rc, out = run(["bash", "-c", opts["before"]], work, env, timeout, sessions)
+                argv = shell_script(work, ".before.sh", opts["before"] + "\n")
+                rc, out = run(argv, work, env, timeout, sessions)
                 if rc != 0:
                     failures.append(f"{where}: hidden setup {opts['before']!r} exited {rc}\n{out[-1500:]}")
                     setup_ok = False
-            if setup_ok:
+            if setup_ok and lang == "file":
+                target = os.path.join(work, opts["file"])
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w") as f:
+                    f.write(code)
+                print(f"ok   {where} [{name}] (written to {opts['file']})")
+            elif setup_ok:
                 t0 = time.monotonic()
-                if argv is None:
+                if lang == "python":
                     py = py or PySession(work, env, sessions)
                     rc, out = py.run(code, timeout)
                 else:
-                    rc, out = run(argv, work, env, timeout, sessions)
+                    rc, out = run(shell_script(work, ".block.sh", code), work, env, timeout, sessions)
                 status = "ok  " if rc == want else "FAIL"
                 print(f"{status} {where} [{name}] ({lang}, exit {rc}, want {want}, {time.monotonic() - t0:.1f} s)")
+                if VERBOSE:
+                    print("    " + out.rstrip().replace("\n", "\n    "))
                 if rc != want:
                     failures.append(f"{where}: exited {rc}, the docs promise {want}\n--- output (tail) ---\n{out[-2500:]}")
             if "after" in opts:
-                run(["bash", "-c", opts["after"]], work, env, timeout, sessions)
+                run(shell_script(work, ".after.sh", opts["after"] + "\n"), work, env, timeout, sessions)
     finally:
         if py is not None:
             py.p.stdin.close()
@@ -220,11 +279,18 @@ def run_group(path: Path, name: str, items, env: dict) -> list[str]:
     return failures
 
 
-def main() -> int:
-    files = [Path(a).resolve() for a in sys.argv[1:]] or [REPO / f for f in FILES]
+def main(argv: list | None = None) -> int:
+    global VERBOSE
+    args = sys.argv[1:] if argv is None else argv
+    VERBOSE = "-v" in args
+    files = [Path(a).resolve() for a in args if a != "-v"] or [REPO / f for f in FILES]
     env = dict(os.environ)
-    env["PATH"] = cli_dir() + os.pathsep + env.get("PATH", "")
+    first = [cli_dir()]
+    if sys.prefix != sys.base_prefix:      # a venv: its python, pip and console scripts
+        first.append(os.path.dirname(sys.executable))
+    env["PATH"] = os.pathsep.join(first + [env.get("PATH", "")])
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
     failures: list[str] = []
     total = 0
     for path in files:

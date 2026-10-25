@@ -78,6 +78,7 @@ apply it with `witness-log verify --revocations revocation.json` (or
 when a dossier omits it. Leaves and checkpoints signed at or after
 `as_of_ms` stop counting.
 
+<!-- doctest: group=revoke before="witness-log log init agent.jsonl" -->
 ```sh
 witness-log log revoke agent.jsonl --reason "key on a lost laptop" --out revocation.json
 ```
@@ -90,6 +91,7 @@ every checkpoint larger than N, whatever its timestamps. Pair it with a
 witnessed checkpoint of size N; witnesses refuse a different root at
 that size, so the history below the cut-off cannot be rewritten either.
 
+<!-- doctest: group=index before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello" after="witness-log testnet down" -->
 ```sh
 witness-log submit agent.jsonl --directory trusted.json --out last-good.json   # witness the last good head
 witness-log log revoke agent.jsonl --reason "compromised" --experimental --at-current-size --out revocation.json

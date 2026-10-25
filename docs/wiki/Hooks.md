@@ -8,17 +8,19 @@ sends the event to `witness-log-hookd`, a small daemon that holds the
 journal open behind a Unix socket. Both ship in the `witness-log` Python
 package (stdlib only; Unix sockets, so not Windows).
 
+<!-- doctest -->
 ```sh
 pip install witness-log
 witness-log-hook install claude-code --journal ~/.witness-log/claude-code.jsonl
 ```
 
-prints (and does not write) the entries for `.claude/settings.json`:
+prints (and does not write) the entries for `.claude/settings.json`, with
+the journal path your shell expanded:
 
 ```json
 {"hooks": {
-  "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal ~/.witness-log/claude-code.jsonl"}]}],
-  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal ~/.witness-log/claude-code.jsonl"}]}]}}
+  "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"}]}],
+  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"}]}]}}
 ```
 
 `--autostart` starts the daemon on the first call if none is listening.

@@ -20,6 +20,7 @@ anything else; and a `WITNESSED` verdict from independent operators.
 Python ≥ 3.9. The wheel contains the compiled Rust core, so there is no
 compiler, no C toolchain, no native dependency to install.
 
+<!-- doctest: group=install -->
 ```sh
 pip install witness-log
 python -c "import witness_log; print(witness_log.__version__)"
