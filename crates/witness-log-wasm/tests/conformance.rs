@@ -149,7 +149,30 @@ fn corpus_07_08_binding_via_bind() {
     bad["handoff_state_hash"] = json!("99".repeat(32));
     let out = bind_value(&a, &dossier_with(receiver, vec![bad])).unwrap();
     assert_eq!(out["exit"], json!(30));
-    assert_eq!(out["failed"].as_array().unwrap().len(), 1);
+    // Both leaves are left over: the Sent (sender_leaf) and the Received
+    // (receiver_leaf), whichever dossier comes first.
+    assert_eq!(out["failed"].as_array().unwrap().len(), 2, "{out}");
+    assert_eq!(out["failed"][1]["receiver_leaf"], json!(0), "{out}");
+    // A Received leaf the sender never logged sending: a mismatch, not
+    // "nothing to bind", in either order.
+    let lone = dossier_with(receiver, vec![h["received_leaf"]["leaf"].clone()]);
+    let quiet = dossier_with(sender, vec![]);
+    for (x, y) in [(&quiet, &lone), (&lone, &quiet)] {
+        let out = bind_value(x, y).unwrap();
+        assert_eq!(out["exit"], json!(30), "{out}");
+        assert_eq!(out["failed"][0]["receiver_leaf"], json!(0), "{out}");
+    }
+    // One Sent, two identical Received: the second Received is left over.
+    let mut again = h["received_leaf"]["leaf"].clone();
+    again["index"] = json!(1);
+    let twice = dossier_with(receiver, vec![h["received_leaf"]["leaf"].clone(), again]);
+    for (x, y) in [(&a, &twice), (&twice, &a)] {
+        let out = bind_value(x, y).unwrap();
+        assert_eq!(out["exit"], json!(30), "{out}");
+        assert_eq!(out["bound"].as_array().unwrap().len(), 1, "{out}");
+        assert_eq!(out["failed"].as_array().unwrap().len(), 1, "{out}");
+        assert_eq!(out["failed"][0]["receiver_leaf"], json!(1), "{out}");
+    }
 
     let g = read_json("corpus/08_authorization_event.json");
     let granter = g["granter_identity_pubkey"].as_str().unwrap();
@@ -165,6 +188,26 @@ fn corpus_07_08_binding_via_bind() {
     bad["authorization_scope_hash"] = json!("99".repeat(32));
     let out = bind_value(&a, &dossier_with(grantee, vec![bad])).unwrap();
     assert_eq!(out["exit"], json!(30));
+    assert_eq!(out["failed"].as_array().unwrap().len(), 2, "{out}");
+    // The same grant logged twice by the grantee, once by the granter: one
+    // to one, so the second binds to nothing (it used to bind the same
+    // granter leaf again and exit 0).
+    let mut repeat = g["received_grant_leaf"]["leaf"].clone();
+    repeat["index"] = json!(1);
+    let b3 = dossier_with(
+        grantee,
+        vec![g["received_grant_leaf"]["leaf"].clone(), repeat],
+    );
+    for (x, y) in [(&a, &b3), (&b3, &a)] {
+        let out = bind_value(x, y).unwrap();
+        assert_eq!(out["exit"], json!(30), "{out}");
+        assert_eq!(out["bound"].as_array().unwrap().len(), 1, "{out}");
+        assert_eq!(out["failed"].as_array().unwrap().len(), 1, "{out}");
+    }
+    assert_eq!(
+        bind_value(&a, &b3).unwrap()["failed"][0]["reason"],
+        json!("a leaf 0: already bound to b leaf 0")
+    );
     // A second, wider grant only the grantee recorded, next to the real one:
     // a mismatch in either argument order (bind(a, b) used to exit 0).
     let mut extra = g["received_grant_leaf"]["leaf"].clone();

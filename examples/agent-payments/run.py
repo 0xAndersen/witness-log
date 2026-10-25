@@ -22,9 +22,10 @@ three disputes, each of which must fail in a specific way:
     cargo install witness-log-cli        # or put a release binary on PATH
     python3 examples/agent-payments/run.py
 
-The CLI must be newer than 0.6.1, or built from this checkout (`make
-payments` does that): 0.6.1's `bind` misses a grant only its second
-argument holds, and the run fails on that row.
+The CLI must be built from this repository at or after the one-to-one
+`bind` change (0.7.0 when released; a build from this checkout still
+reports 0.6.1). `make payments` builds one. An older `bind` misses a grant
+only one side holds; the run then fails on those rows and says why.
 
 All payment data is fictional test data: placeholder addresses, amounts in
 test USDC on Base Sepolia (a test network), synthetic signature bytes. No
@@ -42,6 +43,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -279,6 +281,28 @@ def verify(work: str, dossier: str, identity: str, *extra: str) -> tuple[int, di
         return code, {"error": err.strip()}
 
 
+def bind_json(work: str, x: str, y: str) -> dict:
+    """`witness-log bind x y --json`, not printed: what the asserts read."""
+    _, out, err = cli(work, "bind", x, y, "--json", show=False)
+    try:
+        return json.loads(out)
+    except ValueError:
+        return {"bound": [], "failed": [{"kind": "error", "reason": err.strip()}]}
+
+
+def pair_summary(p: dict) -> str:
+    """A bound pair as "<kind> <hash both sides committed to>"."""
+    return f"{p['kind']} {p.get('scope_hash') or p.get('state_hash')}"
+
+
+def leaf_owner(f: dict) -> str:
+    """The identity whose dossier holds a `bind` failure's leaf."""
+    for who, idx in (("sender", "sender_leaf"), ("receiver", "receiver_leaf"), ("a", "a_leaf"), ("b", "b_leaf")):
+        if idx in f:
+            return f[who]
+    return ""
+
+
 def describe(rep: dict) -> str:
     """One line from `verify --json`: the verdict and why."""
     if "error" in rep:
@@ -291,7 +315,7 @@ def describe(rep: dict) -> str:
     if rep.get("verdict") == "WITNESSED":
         ops = ", ".join(q.get("independent_operators_represented") or [])
         return (f"WITNESSED: {q.get('valid_receipts')}/{q.get('total_directory_witnesses')} witnesses cosigned; "
-                f"independent of the log's operator: {ops}")
+                f"independent of the log's operator by org label only: {ops}")
     if not q:
         return f"{rep.get('verdict')}: the file carries no witness receipts"
     return str(rep.get("verdict"))
@@ -319,6 +343,265 @@ def rewrite_from(src: str, dst: str, keep: int):
     return wl.open(dst, BUYER_SEED)
 
 
+def scenarios(work: str, procs: list, logs: list) -> None:
+    """Every step of the example. Witness processes go in `procs` and their
+    log files in `logs`, so the caller can stop and close them whatever happens."""
+    # ── witnesses ────────────────────────────────────────────────────
+    step("1. Three organisations each start one witness (local processes, loopback only)")
+    for slug, org in ORGS:
+        port = free_port()
+        url = f"http://127.0.0.1:{port}"
+        code, out, err = cli(work, "witness", "init", f"{slug}/witness", "--name", f"witness.{slug}.example/w1",
+                             "--org", org, "--url", url, "--json", show=False)
+        if code != 0:
+            check(False, f"{org}: witness init ({err.strip()[-160:]})")
+            raise Abort("could not set up the witnesses")
+        info = json.loads(out)
+        logs.append(open(os.path.join(work, f"{slug}-witness.log"), "w"))
+        procs.append(subprocess.Popen(
+            [CLI, "witness", "serve", f"{slug}/witness", "--listen", f"127.0.0.1:{port}", "--open-enrollment"],
+            cwd=work, stdout=logs[-1], stderr=subprocess.STDOUT))
+        healthy = wait_healthy(url)
+        check(healthy, f"{org}: witness answering at {url}")
+        if not healthy:
+            raise Abort("a witness did not start; see its log in the work directory (--keep DIR)")
+        code, _, err = cli(work, "directory", "add", "trusted.json", "--vkey", info["vkey"], "--org", org,
+                           "--url", url, show=False)
+        check(code == 0, f"{org}: added to trusted.json" + (f" ({err.strip()})" if code else ""))
+    say("   trusted.json is the verifier's own list of witnesses; in real use the verifier builds it.")
+
+    # ── agents ───────────────────────────────────────────────────────
+    step("2. Two agents, two journals, two identities")
+    buyer = wl.open(os.path.join(work, "buyer.jsonl"), BUYER_SEED)
+    seller = wl.open(os.path.join(work, "seller.jsonl"), SELLER_SEED)
+    B, S = buyer.identity_pubkey_hex(), seller.identity_pubkey_hex()
+    aliases.update({B: "$BUYER", S: "$SELLER"})
+    say(f"   BUYER={B}   buyer agent, run by {BUYER_ORG}")
+    say(f"   SELLER={S}   seller agent (resource server), run by {SELLER_ORG}")
+    say("   Each side knows the other's identity key (a public key, exchanged out of band).")
+
+    # ── AP2 ──────────────────────────────────────────────────────────
+    step("3. AP2: the user's intent, the seller's cart, the user's sign-off on it")
+    h_intent = ap2.mandate_hash(INTENT_MANDATE)
+    i = buyer.append_intent(wl.canonical_json({"tool": "shop", "intent_mandate_sha256": h_intent,
+                                               "budget": {"asset": "test USDC", "atomic": BUDGET_ATOMIC}}))
+    leaf("buyer", i, "intent", f"shop under the user's IntentMandate (budget 0.05 test USDC, sha256 {h_intent[:12]}…)")
+    say(f"   seller offers cart {CART_MANDATE['contents']['id']}: 1 × {RESOURCE['description']}, 0.01 test USDC")
+    say("   the user approves it: the PaymentMandate (user_authorization is synthetic here) goes to both agents")
+    h_pm = ap2.mandate_hash(PAYMENT_MANDATE)
+    i = ap2.record_grant(buyer, PAYMENT_MANDATE, counterparty=S, scope="granted_by_me")
+    leaf("buyer", i, "authorization", f"granted_by_me → SELLER, PaymentMandate sha256 {h_pm[:12]}…")
+    i = ap2.record_grant(seller, PAYMENT_MANDATE, counterparty=B, scope="granted_to_me")
+    leaf("seller", i, "authorization", f"granted_to_me ← BUYER, PaymentMandate sha256 {h_pm[:12]}…")
+
+    # ── x402 ─────────────────────────────────────────────────────────
+    step("4. x402: 402 Payment Required → payment payload → settlement → the resource")
+    required = payment_required(RESOURCE, "10000")
+    req = required["accepts"][0]
+    say(f"   GET {RESOURCE['url']} → 402: {req['scheme']} {req['amount']} atomic test USDC on {req['network']} to {req['payTo']}")
+    check(int(req["amount"]) <= BUDGET_ATOMIC, "buyer: the amount is within the IntentMandate's budget")
+    payload = payment_payload(required)
+    mandate = x402.mandate(req, payload)
+    h_x402 = x402.mandate_hash(mandate)
+    i = buyer.append_intent(wl.canonical_json({"tool": "x402_pay", "resource": RESOURCE["url"], "amount": req["amount"],
+                                               "network": NETWORK, "payment_mandate_sha256": h_pm}))
+    leaf("buyer", i, "intent", f"pay {req['amount']} atomic test USDC for {RESOURCE['url']}")
+    i = x402.record_grant(buyer, mandate, counterparty=S)
+    leaf("buyer", i, "authorization", f"granted_by_me → SELLER, x402 requirements+payload sha256 {h_x402[:12]}…")
+    say("   buyer retries the GET with the payment payload; the seller receives it")
+    i = x402.record_grant(seller, mandate, counterparty=B, scope="granted_to_me")
+    leaf("seller", i, "authorization", f"granted_to_me ← BUYER, x402 requirements+payload sha256 {h_x402[:12]}…")
+    i = seller.append_intent(wl.canonical_json({"tool": "x402_settle", "x402_mandate_sha256": h_x402,
+                                                "amount": req["amount"], "network": NETWORK}))
+    leaf("seller", i, "intent", "settle the payment (a local stand-in facilitator; nothing leaves this machine)")
+    settlement = local_facilitator_settle(payload)
+    i = seller.append_result(wl.canonical_json({"tool": "x402_settle", "settlement": settlement}))
+    leaf("seller", i, "result", f"settled: success, transaction {SYNTHETIC_TX[:10]}… (synthetic)")
+    i = x402.record_receipt(seller, settlement, anchor_url=EXPLORER + SYNTHETIC_TX, mandate=mandate)
+    leaf("seller", i, "anchor", f"settlement response, chain {NETWORK}, names the x402 mandate")
+    i = seller.append_handoff_sent(DELIVERED, B)
+    h_delivered = hashlib.sha256(DELIVERED).hexdigest()
+    leaf("seller", i, "handoff sent", f"200 OK: the report, {len(DELIVERED)} bytes, sha256 {h_delivered[:12]}…")
+    i = buyer.append_handoff_received(DELIVERED, S)
+    leaf("buyer", i, "handoff recv", f"the same {len(DELIVERED)} bytes")
+    i = buyer.append_result(wl.canonical_json({"tool": "x402_pay", "http_status": 200, "transaction": SYNTHETIC_TX,
+                                               "resource_sha256": h_delivered}))
+    leaf("buyer", i, "result", "200 OK, report received")
+    for log in (buyer, seller):
+        log.sync()
+    buyer_root, buyer_size = buyer.root_hex(), buyer.tree_size()
+    seller_size = seller.tree_size()
+    buyer.close()
+    seller.close()
+
+    # ── witnessed ────────────────────────────────────────────────────
+    step("5. Both logs witnessed, then each verified pinned to its identity and its operator")
+    for name, size in (("buyer", buyer_size), ("seller", seller_size)):
+        code, _, err = cli(work, "witness", "submit", f"{name}.jsonl", "--directory", "trusted.json",
+                           "--out", f"{name}.json", "--min", "3")
+        quote(err, keep=("cosigned size",), limit=4)
+        check(code == 0, f"{name}: 3/3 witnesses cosigned size {size}" + (f" ({err.strip()[-160:]})" if code else ""))
+    say("   --subject-org names who operates the log, so that organisation's own witness is not counted as")
+    say("   independent of its own agent: each log is WITNESSED by the two organisations that do not run it.")
+    say("   Here the organisations are labels on processes this script runs: the count shows the mechanics,")
+    say("   not independence.")
+    for name, ident, org in (("buyer", B, BUYER_ORG), ("seller", S, SELLER_ORG)):
+        var = "$" + name.upper()
+        code, rep = verify(work, f"{name}.json", ident, "--subject-org", org)
+        say(f"     │ {clip(describe(rep))}")
+        expect("happy path", f"verify {name}.json --identity {var} --subject-org ...", 0, code,
+               f"{name}.json WITNESSED by the two organisations that do not run it")
+
+    # ── bound ────────────────────────────────────────────────────────
+    step("6. Bind the two logs: same mandate, same payment, same delivered bytes")
+    code, out, _ = cli(work, "bind", "buyer.json", "seller.json")
+    quote(out, keep=("bound", "Result"))
+    expect("happy path", "bind buyer.json seller.json", 0, code, "bind: BOUND")
+    rep = bind_json(work, "buyer.json", "seller.json")
+    check(sorted(pair_summary(p) for p in rep["bound"]) == sorted([f"authorization {h_pm}", f"authorization {h_x402}",
+                                                                   f"handoff {h_delivered}"]) and not rep["failed"],
+          "three bindings: the PaymentMandate, the x402 payment and the delivered bytes; nothing left over")
+    rep = x402.bind(os.path.join(work, "buyer.json"), os.path.join(work, "seller.json"), mandate=mandate)
+    p = rep["ap2"]
+    say(f"   x402.bind (Python): mandate_hash_equal={p['mandate_hash_equal']}  scope_not_widened={p['scope_not_widened']}"
+        f"  settlement anchors on the seller's side: {p['settlement_anchors']['b']['proof_hash_ok']} hash-checked")
+    rows.append(("happy path", "x402.bind(buyer, seller, mandate=...) [Python]", "ok", "ok" if p["ok"] else "not ok"))
+    check(p["ok"], "x402 profile checks: both sides committed to this payment and the receipt names it")
+
+    # ── dispute (a) ──────────────────────────────────────────────────
+    step("7. Dispute (a): the seller shows a log claiming 10 test USDC for a bigger report")
+    say("   The seller's operator holds its key and writes a second journal: same AP2 mandate, but the x402")
+    say("   payment and the delivered resource say 10 test USDC for a 30-day all-cities report.")
+    big = {"url": "https://seller.example/reports/all-cities-30-day",
+           "description": "30-day report, all cities (fictional test data)", "mimeType": "application/json"}
+    big_required = payment_required(big, "10000000")
+    big_payload = payment_payload(big_required)
+    big_mandate = x402.mandate(big_required["accepts"][0], big_payload)
+    big_delivered = wl.canonical_json({"report": "all cities, 30 days", "note": "fictional test data"})
+    claim = wl.open(os.path.join(work, "seller-claim.jsonl"), SELLER_SEED)
+    ap2.record_grant(claim, PAYMENT_MANDATE, counterparty=B, scope="granted_to_me")
+    x402.record_grant(claim, big_mandate, counterparty=B, scope="granted_to_me")
+    claim.append_intent(wl.canonical_json({"tool": "x402_settle", "x402_mandate_sha256": x402.mandate_hash(big_mandate),
+                                           "amount": "10000000", "network": NETWORK}))
+    claim.append_result(wl.canonical_json({"tool": "x402_settle", "settlement": settlement}))
+    x402.record_receipt(claim, settlement, anchor_url=EXPLORER + SYNTHETIC_TX, mandate=big_mandate)
+    claim.append_handoff_sent(big_delivered, B)
+    claim.sync()
+    with open(os.path.join(work, "seller-claim.json"), "w") as f:
+        f.write(claim.to_dossier_json())
+    claim.close()
+    code, out, _ = cli(work, "bind", "buyer.json", "seller-claim.json")
+    quote(out, keep=("bound", "Result"))
+    expect("(a) seller claims more", "bind buyer.json seller-claim.json", 30, code,
+           "bind: MISMATCH on the x402 payment and the delivered bytes")
+    rep = bind_json(work, "buyer.json", "seller-claim.json")
+    check([pair_summary(p) for p in rep["bound"]] == [f"authorization {h_pm}"],
+          "the AP2 PaymentMandate still binds; nothing else does")
+    left_over = sorted(f"{f['kind']} {'buyer' if leaf_owner(f) == B else 'seller'}" for f in rep["failed"])
+    check(left_over == ["authorization buyer", "authorization seller", "handoff buyer", "handoff seller"],
+          "left over on each side: its x402 grant and its delivery record (" + ", ".join(left_over) + ")")
+    rep = x402.bind(os.path.join(work, "buyer.json"), os.path.join(work, "seller-claim.json"), mandate=mandate)
+    p = rep["ap2"]
+    say(f"   x402.bind (Python): mandate_hash_equal={p['mandate_hash_equal']}  "
+        f"scope_not_widened={p['scope_not_widened']}  ok={p['ok']}")
+    rows.append(("(a) seller claims more", "x402.bind(buyer, seller-claim, mandate=...) [Python]", "not ok",
+                 "ok" if p["ok"] else "not ok"))
+    check(not p["ok"] and not p["mandate_hash_equal"] and not p["scope_not_widened"],
+          "x402 profile checks: no bound pair is this payment, and the two sides' grants differ")
+    code, rep = verify(work, "seller-claim.json", S, "--subject-org", SELLER_ORG)
+    say(f"     │ {clip(describe(rep))}")
+    expect("(a) seller claims more", "verify seller-claim.json --identity $SELLER ...", 10, code,
+           "the claim was never witnessed: CONSISTENT-UNWITNESSED, not WITNESSED")
+
+    say("   Or the seller keeps its real log and appends one more grant naming the buyer: the 10 test USDC")
+    say("   payment. That only extends the log, so the witnesses cosign it. bind is what catches it.")
+    seller = wl.open(os.path.join(work, "seller.jsonl"), SELLER_SEED)
+    i = x402.record_grant(seller, big_mandate, counterparty=B, scope="granted_to_me")
+    leaf("seller", i, "authorization", "granted_to_me ← BUYER, x402 payment for 10 test USDC (only the seller says so)")
+    seller.sync()
+    seller.close()
+    code, _, err = cli(work, "witness", "submit", "seller.jsonl", "--directory", "trusted.json",
+                       "--out", "seller-extra.json", "--min", "3")
+    quote(err, keep=("cosigned size",), limit=3)
+    check(code == 0, f"the witnesses cosigned the extended seller log (exit {code})")
+    code, rep = verify(work, "seller-extra.json", S, "--subject-org", SELLER_ORG)
+    say(f"     │ {clip(describe(rep))}")
+    expect("(a) seller claims more", "verify seller-extra.json --identity $SELLER ...", 0, code,
+           "the extended seller log is WITNESSED: witnesses check history, not content")
+    for x, y in (("buyer.json", "seller-extra.json"), ("seller-extra.json", "buyer.json")):
+        code, out, _ = cli(work, "bind", x, y)
+        quote(out, keep=("NOT bound", "Result"), limit=2)
+        expect("(a) seller claims more", f"bind {x} {y}", 30, code,
+               "a grant only the seller recorded is a MISMATCH, whichever log comes first")
+        if code == 0:
+            say("     this CLI's `bind` predates one-to-one matching (it ignores a grant only one side holds);")
+            say("     build the CLI from this repository (`make payments` does) and run again")
+
+    # ── dispute (b) ──────────────────────────────────────────────────
+    step("8. Dispute (b): the buyer rewrites its log to say nothing was delivered")
+    say("   x402 has no refunds, so the buyer's operator copies the journal, cuts it back to before the")
+    say(f"   delivery (what restoring an old backup does) and writes a different ending. Same key, same size {buyer_size}.")
+    rw = rewrite_from(os.path.join(work, "buyer.jsonl"), os.path.join(work, "buyer-rewritten.jsonl"), keep=4)
+    i = rw.append_result(wl.canonical_json({"tool": "x402_pay", "http_status": 502, "transaction": SYNTHETIC_TX,
+                                            "error": "paid, but no resource was delivered"}))
+    leaf("buyer'", i, "result", "502: paid, but nothing delivered")
+    i = rw.append_intent(wl.canonical_json({"tool": "open_dispute", "transaction": SYNTHETIC_TX, "claim": "not delivered"}))
+    leaf("buyer'", i, "intent", "open a dispute: not delivered")
+    rw.sync()
+    check(rw.identity_pubkey_hex() == B and rw.tree_size() == buyer_size and rw.root_hex() != buyer_root,
+          f"same identity, same size {rw.tree_size()}, different root")
+    rw.close()
+    code, _, err = cli(work, "witness", "submit", "buyer-rewritten.jsonl", "--directory", "trusted.json",
+                       "--out", "buyer-rewritten.json", "--min", "3")
+    quote(err, keep=("REFUSED (422)",), limit=3)
+    expect("(b) buyer rewrites", "witness submit buyer-rewritten.jsonl ...", 20, code,
+           "every witness refused the rewritten history (422)")
+    aliases[buyer_root] = "<buyer root>"
+    code, rep = verify(work, "buyer-rewritten.json", B, "--subject-org", BUYER_ORG,
+                       "--known-head", f"{buyer_size}:{buyer_root}")
+    say(f"     │ {clip(describe(rep))}")
+    expect("(b) buyer rewrites", f"verify buyer-rewritten.json ... --known-head {buyer_size}:<buyer root>", 30, code,
+           "a verifier holding the witnessed head: DIVERGED")
+    code, out, _ = cli(work, "bind", "buyer-rewritten.json", "seller.json")
+    quote(out, keep=("bound", "Result"), limit=5)
+    expect("(b) buyer rewrites", "bind buyer-rewritten.json seller.json", 30, code,
+           "the rewrite also contradicts the seller's witnessed delivery")
+    # Same size, different root: each witness now holds two checkpoints
+    # signed by the buyer's key for one size, and wrote them to evidence/.
+    kept = {}
+    for slug, _ in ORGS:
+        ev_dir = os.path.join(work, slug, "witness", "evidence")
+        kept[slug] = sorted(os.listdir(ev_dir)) if os.path.isdir(ev_dir) else []
+    check(all(len(v) == 1 for v in kept.values()),
+          "each witness kept a proof file: " + ", ".join(f"{k}/witness/evidence/ ({len(v)})" for k, v in kept.items()))
+    if kept["third-org"]:
+        ev = os.path.join("third-org", "witness", "evidence", kept["third-org"][0])
+        aliases[ev] = "<evidence file>"
+        code, out, _ = cli(work, "witness", "verify-evidence", ev)
+        quote(out, keep=("PROVEN",), limit=1)
+        expect("(b) buyer rewrites", "witness verify-evidence <evidence file>", 0, code,
+               "the buyer's key provably signed two histories of one size")
+        code, rep = verify(work, "buyer.json", B, "--subject-org", BUYER_ORG, "--evidence", ev)
+        say(f"     │ {clip(describe(rep))}")
+        expect("(b) buyer rewrites", "verify buyer.json ... --evidence <evidence file>", 30, code,
+               "with that proof, even the buyer's original dossier is DIVERGED")
+
+    # ── dispute (c) ──────────────────────────────────────────────────
+    step("9. Dispute (c): one leaf of the seller's witnessed dossier is edited")
+    say("   The x402 grant leaf's scope hash is replaced with the 10 test USDC mandate's hash; the witness")
+    say("   receipts are kept as they were.")
+    with open(os.path.join(work, "seller.json")) as f:
+        d = json.load(f)
+    grant = next(lf for lf in d["leaves"] if lf.get("authorization_scope_hash") == h_x402)
+    grant["authorization_scope_hash"] = x402.mandate_hash(big_mandate)
+    with open(os.path.join(work, "seller-tampered.json"), "w") as f:
+        json.dump(d, f)
+    code, rep = verify(work, "seller-tampered.json", S, "--subject-org", SELLER_ORG)
+    say(f"     │ {clip(describe(rep))}")
+    expect("(c) edited leaf", "verify seller-tampered.json --identity $SELLER ...", 40, code,
+           "the edited leaf no longer rebuilds the signed root: INVALID")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--keep", metavar="DIR", help="keep artefacts in DIR instead of a temp dir")
@@ -332,273 +615,59 @@ def main() -> int:
         work = tempfile.mkdtemp(prefix="wl-payments-")
     t0 = time.monotonic()
     procs: list[subprocess.Popen] = []
-    _, version, _ = cli(work, "--version", show=False)
-    say(f"witness-log agent-payments example  ({version.strip()}, Python witness_log {wl.__version__})")
-    say("x402 + AP2-style mandate, both sides logged and witnessed. All payment data is fictional test data.")
-
+    logs: list = []
+    # SIGTERM (a CI timeout, `kill`) unwinds like Ctrl-C, so the finally
+    # blocks below stop the witnesses and remove the work directory.
+    signal.signal(signal.SIGTERM, _terminate)
     try:
-        # ── witnesses ────────────────────────────────────────────────────
-        step("1. Three organisations each start one witness (local processes, loopback only)")
-        for slug, org in ORGS:
-            port = free_port()
-            url = f"http://127.0.0.1:{port}"
-            code, out, err = cli(work, "witness", "init", f"{slug}/witness", "--name", f"witness.{slug}.example/w1",
-                                 "--org", org, "--url", url, "--json", show=False)
-            if code != 0:
-                check(False, f"{org}: witness init ({err.strip()[-160:]})")
-                raise Abort("could not set up the witnesses")
-            info = json.loads(out)
-            procs.append(subprocess.Popen(
-                [CLI, "witness", "serve", f"{slug}/witness", "--listen", f"127.0.0.1:{port}", "--open-enrollment"],
-                cwd=work, stdout=open(os.path.join(work, f"{slug}-witness.log"), "w"), stderr=subprocess.STDOUT))
-            healthy = wait_healthy(url)
-            check(healthy, f"{org}: witness answering at {url}")
-            if not healthy:
-                raise Abort("a witness did not start; see its log in the work directory (--keep DIR)")
-            code, _, err = cli(work, "directory", "add", "trusted.json", "--vkey", info["vkey"], "--org", org,
-                               "--url", url, show=False)
-            check(code == 0, f"{org}: added to trusted.json" + (f" ({err.strip()})" if code else ""))
-        say("   trusted.json is the verifier's own list of witnesses; in real use the verifier builds it.")
+        _, version, _ = cli(work, "--version", show=False)
+        say(f"witness-log agent-payments example  ({version.strip()}, Python witness_log {wl.__version__})")
+        say("x402 + AP2-style mandate, both sides logged and witnessed. All payment data is fictional test data.")
+        try:
+            scenarios(work, procs, logs)
+        except Abort as e:
+            say(f"   stopped: {e}")
+        finally:
+            stop_witnesses(procs, logs)
 
-        # ── agents ───────────────────────────────────────────────────────
-        step("2. Two agents, two journals, two identities")
-        buyer = wl.open(os.path.join(work, "buyer.jsonl"), BUYER_SEED)
-        seller = wl.open(os.path.join(work, "seller.jsonl"), SELLER_SEED)
-        B, S = buyer.identity_pubkey_hex(), seller.identity_pubkey_hex()
-        aliases.update({B: "$BUYER", S: "$SELLER"})
-        say(f"   BUYER={B}   buyer agent, run by {BUYER_ORG}")
-        say(f"   SELLER={S}   seller agent (resource server), run by {SELLER_ORG}")
-        say("   Each side knows the other's identity key (a public key, exchanged out of band).")
-
-        # ── AP2 ──────────────────────────────────────────────────────────
-        step("3. AP2: the user's intent, the seller's cart, the user's sign-off on it")
-        h_intent = ap2.mandate_hash(INTENT_MANDATE)
-        i = buyer.append_intent(wl.canonical_json({"tool": "shop", "intent_mandate_sha256": h_intent,
-                                                   "budget": {"asset": "test USDC", "atomic": BUDGET_ATOMIC}}))
-        leaf("buyer", i, "intent", f"shop under the user's IntentMandate (budget 0.05 test USDC, sha256 {h_intent[:12]}…)")
-        say(f"   seller offers cart {CART_MANDATE['contents']['id']}: 1 × {RESOURCE['description']}, 0.01 test USDC")
-        say("   the user approves it: the PaymentMandate (user_authorization is synthetic here) goes to both agents")
-        h_pm = ap2.mandate_hash(PAYMENT_MANDATE)
-        i = ap2.record_grant(buyer, PAYMENT_MANDATE, counterparty=S, scope="granted_by_me")
-        leaf("buyer", i, "authorization", f"granted_by_me → SELLER, PaymentMandate sha256 {h_pm[:12]}…")
-        i = ap2.record_grant(seller, PAYMENT_MANDATE, counterparty=B, scope="granted_to_me")
-        leaf("seller", i, "authorization", f"granted_to_me ← BUYER, PaymentMandate sha256 {h_pm[:12]}…")
-
-        # ── x402 ─────────────────────────────────────────────────────────
-        step("4. x402: 402 Payment Required → payment payload → settlement → the resource")
-        required = payment_required(RESOURCE, "10000")
-        req = required["accepts"][0]
-        say(f"   GET {RESOURCE['url']} → 402: {req['scheme']} {req['amount']} atomic test USDC on {req['network']} to {req['payTo']}")
-        check(int(req["amount"]) <= BUDGET_ATOMIC, "buyer: the amount is within the IntentMandate's budget")
-        payload = payment_payload(required)
-        mandate = x402.mandate(req, payload)
-        h_x402 = x402.mandate_hash(mandate)
-        i = buyer.append_intent(wl.canonical_json({"tool": "x402_pay", "resource": RESOURCE["url"], "amount": req["amount"],
-                                                   "network": NETWORK, "payment_mandate_sha256": h_pm}))
-        leaf("buyer", i, "intent", f"pay {req['amount']} atomic test USDC for {RESOURCE['url']}")
-        i = x402.record_grant(buyer, mandate, counterparty=S)
-        leaf("buyer", i, "authorization", f"granted_by_me → SELLER, x402 requirements+payload sha256 {h_x402[:12]}…")
-        say("   buyer retries the GET with the payment payload; the seller receives it")
-        i = x402.record_grant(seller, mandate, counterparty=B, scope="granted_to_me")
-        leaf("seller", i, "authorization", f"granted_to_me ← BUYER, x402 requirements+payload sha256 {h_x402[:12]}…")
-        i = seller.append_intent(wl.canonical_json({"tool": "x402_settle", "x402_mandate_sha256": h_x402,
-                                                    "amount": req["amount"], "network": NETWORK}))
-        leaf("seller", i, "intent", "settle the payment (a local stand-in facilitator; nothing leaves this machine)")
-        settlement = local_facilitator_settle(payload)
-        i = seller.append_result(wl.canonical_json({"tool": "x402_settle", "settlement": settlement}))
-        leaf("seller", i, "result", f"settled: success, transaction {SYNTHETIC_TX[:10]}… (synthetic)")
-        i = x402.record_receipt(seller, settlement, anchor_url=EXPLORER + SYNTHETIC_TX, mandate=mandate)
-        leaf("seller", i, "anchor", f"settlement response, chain {NETWORK}, names the x402 mandate")
-        i = seller.append_handoff_sent(DELIVERED, B)
-        h_delivered = hashlib.sha256(DELIVERED).hexdigest()
-        leaf("seller", i, "handoff sent", f"200 OK: the report, {len(DELIVERED)} bytes, sha256 {h_delivered[:12]}…")
-        i = buyer.append_handoff_received(DELIVERED, S)
-        leaf("buyer", i, "handoff recv", f"the same {len(DELIVERED)} bytes")
-        i = buyer.append_result(wl.canonical_json({"tool": "x402_pay", "http_status": 200, "transaction": SYNTHETIC_TX,
-                                                   "resource_sha256": h_delivered}))
-        leaf("buyer", i, "result", "200 OK, report received")
-        for log in (buyer, seller):
-            log.sync()
-        buyer_root, buyer_size = buyer.root_hex(), buyer.tree_size()
-        seller_size = seller.tree_size()
-        buyer.close()
-        seller.close()
-
-        # ── witnessed ────────────────────────────────────────────────────
-        step("5. Both logs witnessed, then each verified pinned to its identity and its operator")
-        for name, size in (("buyer", buyer_size), ("seller", seller_size)):
-            code, _, err = cli(work, "witness", "submit", f"{name}.jsonl", "--directory", "trusted.json",
-                               "--out", f"{name}.json", "--min", "3")
-            quote(err, keep=("cosigned size",), limit=4)
-            check(code == 0, f"{name}: 3/3 witnesses cosigned size {size}" + (f" ({err.strip()[-160:]})" if code else ""))
-        say("   --subject-org names who operates the log, so that organisation's own witness is not counted as")
-        say("   independent of its own agent: each log is WITNESSED by the two organisations that do not run it.")
-        for name, ident, org in (("buyer", B, BUYER_ORG), ("seller", S, SELLER_ORG)):
-            var = "$" + name.upper()
-            code, rep = verify(work, f"{name}.json", ident, "--subject-org", org)
-            say(f"     │ {clip(describe(rep))}")
-            expect("happy path", f"verify {name}.json --identity {var} --subject-org ...", 0, code,
-                   f"{name}.json WITNESSED by the two organisations that do not run it")
-
-        # ── bound ────────────────────────────────────────────────────────
-        step("6. Bind the two logs: same mandate, same payment, same delivered bytes")
-        code, out, _ = cli(work, "bind", "buyer.json", "seller.json")
-        quote(out, keep=("bound", "Result"))
-        expect("happy path", "bind buyer.json seller.json", 0, code, "bind: BOUND")
-        rep = x402.bind(os.path.join(work, "buyer.json"), os.path.join(work, "seller.json"), mandate=mandate)
-        p = rep["ap2"]
-        say(f"   x402.bind (Python): mandate_hash_equal={p['mandate_hash_equal']}  scope_not_widened={p['scope_not_widened']}"
-            f"  settlement anchors on the seller's side: {p['settlement_anchors']['b']['proof_hash_ok']} hash-checked")
-        rows.append(("happy path", "x402.bind(buyer, seller, mandate=...) [Python]", "ok", "ok" if p["ok"] else "not ok"))
-        check(p["ok"], "x402 profile checks: both sides committed to this payment and the receipt names it")
-
-        # ── dispute (a) ──────────────────────────────────────────────────
-        step("7. Dispute (a): the seller shows a log claiming 10 test USDC for a bigger report")
-        say("   The seller's operator holds its key and writes a second journal: same AP2 mandate, but the x402")
-        say("   payment and the delivered resource say 10 test USDC for a 30-day all-cities report.")
-        big = {"url": "https://seller.example/reports/all-cities-30-day",
-               "description": "30-day report, all cities (fictional test data)", "mimeType": "application/json"}
-        big_required = payment_required(big, "10000000")
-        big_payload = payment_payload(big_required)
-        big_mandate = x402.mandate(big_required["accepts"][0], big_payload)
-        big_delivered = wl.canonical_json({"report": "all cities, 30 days", "note": "fictional test data"})
-        claim = wl.open(os.path.join(work, "seller-claim.jsonl"), SELLER_SEED)
-        ap2.record_grant(claim, PAYMENT_MANDATE, counterparty=B, scope="granted_to_me")
-        x402.record_grant(claim, big_mandate, counterparty=B, scope="granted_to_me")
-        claim.append_intent(wl.canonical_json({"tool": "x402_settle", "x402_mandate_sha256": x402.mandate_hash(big_mandate),
-                                               "amount": "10000000", "network": NETWORK}))
-        claim.append_result(wl.canonical_json({"tool": "x402_settle", "settlement": settlement}))
-        x402.record_receipt(claim, settlement, anchor_url=EXPLORER + SYNTHETIC_TX, mandate=big_mandate)
-        claim.append_handoff_sent(big_delivered, B)
-        claim.sync()
-        with open(os.path.join(work, "seller-claim.json"), "w") as f:
-            f.write(claim.to_dossier_json())
-        claim.close()
-        code, out, _ = cli(work, "bind", "buyer.json", "seller-claim.json")
-        quote(out, keep=("bound", "Result"))
-        expect("(a) seller claims more", "bind buyer.json seller-claim.json", 30, code,
-               "bind: MISMATCH on the x402 payment and the delivered bytes")
-        rep = x402.bind(os.path.join(work, "buyer.json"), os.path.join(work, "seller-claim.json"), mandate=mandate)
-        say(f"   x402.bind (Python): mandate_hash_equal={rep['ap2']['mandate_hash_equal']}  "
-            f"scope_not_widened={rep['ap2']['scope_not_widened']}  ok={rep['ap2']['ok']}")
-        code, rep = verify(work, "seller-claim.json", S, "--subject-org", SELLER_ORG)
-        say(f"     │ {clip(describe(rep))}")
-        expect("(a) seller claims more", "verify seller-claim.json --identity $SELLER ...", 10, code,
-               "the claim was never witnessed: CONSISTENT-UNWITNESSED, not WITNESSED")
-
-        say("   Or the seller keeps its real log and appends one more grant naming the buyer: the 10 test USDC")
-        say("   payment. That only extends the log, so the witnesses cosign it. bind is what catches it.")
-        seller = wl.open(os.path.join(work, "seller.jsonl"), SELLER_SEED)
-        i = x402.record_grant(seller, big_mandate, counterparty=B, scope="granted_to_me")
-        leaf("seller", i, "authorization", "granted_to_me ← BUYER, x402 payment for 10 test USDC (only the seller says so)")
-        seller.sync()
-        seller.close()
-        code, _, err = cli(work, "witness", "submit", "seller.jsonl", "--directory", "trusted.json",
-                           "--out", "seller-extra.json", "--min", "3")
-        quote(err, keep=("cosigned size",), limit=3)
-        check(code == 0, f"the witnesses cosigned the extended seller log (exit {code})")
-        code, rep = verify(work, "seller-extra.json", S, "--subject-org", SELLER_ORG)
-        say(f"     │ {clip(describe(rep))}")
-        expect("(a) seller claims more", "verify seller-extra.json --identity $SELLER ...", 0, code,
-               "the extended seller log is WITNESSED: witnesses check history, not content")
-        for x, y in (("buyer.json", "seller-extra.json"), ("seller-extra.json", "buyer.json")):
-            code, out, _ = cli(work, "bind", x, y)
-            quote(out, keep=("NOT bound", "Result"), limit=2)
-            expect("(a) seller claims more", f"bind {x} {y}", 30, code,
-                   "a grant only the seller recorded is a MISMATCH, whichever log comes first")
-
-        # ── dispute (b) ──────────────────────────────────────────────────
-        step("8. Dispute (b): the buyer rewrites its log to say nothing was delivered")
-        say("   x402 has no refunds, so the buyer's operator copies the journal, cuts it back to before the")
-        say(f"   delivery (what restoring an old backup does) and writes a different ending. Same key, same size {buyer_size}.")
-        rw = rewrite_from(os.path.join(work, "buyer.jsonl"), os.path.join(work, "buyer-rewritten.jsonl"), keep=4)
-        i = rw.append_result(wl.canonical_json({"tool": "x402_pay", "http_status": 502, "transaction": SYNTHETIC_TX,
-                                                "error": "paid, but no resource was delivered"}))
-        leaf("buyer'", i, "result", "502: paid, but nothing delivered")
-        i = rw.append_intent(wl.canonical_json({"tool": "open_dispute", "transaction": SYNTHETIC_TX, "claim": "not delivered"}))
-        leaf("buyer'", i, "intent", "open a dispute: not delivered")
-        rw.sync()
-        check(rw.identity_pubkey_hex() == B and rw.tree_size() == buyer_size and rw.root_hex() != buyer_root,
-              f"same identity, same size {rw.tree_size()}, different root")
-        rw.close()
-        code, _, err = cli(work, "witness", "submit", "buyer-rewritten.jsonl", "--directory", "trusted.json",
-                           "--out", "buyer-rewritten.json", "--min", "3")
-        quote(err, keep=("REFUSED (422)",), limit=3)
-        expect("(b) buyer rewrites", "witness submit buyer-rewritten.jsonl ...", 20, code,
-               "every witness refused the rewritten history (422)")
-        aliases[buyer_root] = "<buyer root>"
-        code, rep = verify(work, "buyer-rewritten.json", B, "--subject-org", BUYER_ORG,
-                           "--known-head", f"{buyer_size}:{buyer_root}")
-        say(f"     │ {clip(describe(rep))}")
-        expect("(b) buyer rewrites", f"verify buyer-rewritten.json ... --known-head {buyer_size}:<buyer root>", 30, code,
-               "a verifier holding the witnessed head: DIVERGED")
-        code, out, _ = cli(work, "bind", "buyer-rewritten.json", "seller.json")
-        quote(out, keep=("bound", "Result"), limit=5)
-        expect("(b) buyer rewrites", "bind buyer-rewritten.json seller.json", 30, code,
-               "the rewrite also contradicts the seller's witnessed delivery")
-        # Same size, different root: each witness now holds two checkpoints
-        # signed by the buyer's key for one size, and wrote them to evidence/.
-        kept = {}
-        for slug, _ in ORGS:
-            ev_dir = os.path.join(work, slug, "witness", "evidence")
-            kept[slug] = sorted(os.listdir(ev_dir)) if os.path.isdir(ev_dir) else []
-        check(all(len(v) == 1 for v in kept.values()),
-              "each witness kept a proof file: " + ", ".join(f"{k}/witness/evidence/ ({len(v)})" for k, v in kept.items()))
-        if kept["third-org"]:
-            ev = os.path.join("third-org", "witness", "evidence", kept["third-org"][0])
-            aliases[ev] = "<evidence file>"
-            code, out, _ = cli(work, "witness", "verify-evidence", ev)
-            quote(out, keep=("PROVEN",), limit=1)
-            expect("(b) buyer rewrites", "witness verify-evidence <evidence file>", 0, code,
-                   "the buyer's key provably signed two histories of one size")
-            code, rep = verify(work, "buyer.json", B, "--subject-org", BUYER_ORG, "--evidence", ev)
-            say(f"     │ {clip(describe(rep))}")
-            expect("(b) buyer rewrites", "verify buyer.json ... --evidence <evidence file>", 30, code,
-                   "with that proof, even the buyer's original dossier is DIVERGED")
-
-        # ── dispute (c) ──────────────────────────────────────────────────
-        step("9. Dispute (c): one leaf of the seller's witnessed dossier is edited")
-        say("   The x402 grant leaf's scope hash is replaced with the 10 test USDC mandate's hash; the witness")
-        say("   receipts are kept as they were.")
-        with open(os.path.join(work, "seller.json")) as f:
-            d = json.load(f)
-        grant = next(lf for lf in d["leaves"] if lf.get("authorization_scope_hash") == h_x402)
-        grant["authorization_scope_hash"] = x402.mandate_hash(big_mandate)
-        with open(os.path.join(work, "seller-tampered.json"), "w") as f:
-            json.dump(d, f)
-        code, rep = verify(work, "seller-tampered.json", S, "--subject-org", SELLER_ORG)
-        say(f"     │ {clip(describe(rep))}")
-        expect("(c) edited leaf", "verify seller-tampered.json --identity $SELLER ...", 40, code,
-               "the edited leaf no longer rebuilds the signed root: INVALID")
-    except Abort as e:
-        say(f"   stopped: {e}")
+        say()
+        say("Summary: expected vs actual")
+        w = max([len(r[1]) for r in rows] + [7])
+        say(f"   {'scenario':<23} {'command':<{w}}  expected  actual")
+        for scenario, shown, want, got in rows:
+            mark = "✓" if want == got else "✗"
+            say(f"   {scenario:<23} {shown:<{w}}  {want:>8}  {got:>6}  {mark}")
+        say()
+        elapsed = time.monotonic() - t0
+        if failures:
+            say(f"FAILED ({len(failures)}): " + "; ".join(failures))
+        else:
+            say("Result: both agents committed to the same mandate, payment and delivered bytes in witnessed logs;")
+            say("a different claim, a rewritten history and an edited dossier each failed with the expected exit code.")
+        say(f"({elapsed:.1f} s; artefacts in {work})" if args.keep else f"({elapsed:.1f} s)")
+        return 1 if failures else 0
     finally:
-        for p in procs:
-            p.terminate()
-        for p in procs:
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
 
-    say()
-    say("Summary: expected vs actual")
-    w = max([len(r[1]) for r in rows] + [7])
-    say(f"   {'scenario':<23} {'command':<{w}}  expected  actual")
-    for scenario, shown, want, got in rows:
-        mark = "✓" if want == got else "✗"
-        say(f"   {scenario:<23} {shown:<{w}}  {want:>8}  {got:>6}  {mark}")
-    say()
-    elapsed = time.monotonic() - t0
-    if failures:
-        say(f"FAILED ({len(failures)}): " + "; ".join(failures))
-    else:
-        say("Result: both agents committed to the same mandate, payment and delivered bytes in witnessed logs;")
-        say("a different claim, a rewritten history and an edited dossier each failed with the expected exit code.")
-    say(f"({elapsed:.1f} s; artefacts in {work})" if args.keep else f"({elapsed:.1f} s)")
-    if not args.keep:
-        shutil.rmtree(work, ignore_errors=True)
-    return 1 if failures else 0
+
+def _terminate(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def stop_witnesses(procs: list, logs: list) -> None:
+    """Stop every witness this script started and close its log file."""
+    for p in procs:
+        if p.poll() is None:
+            p.terminate()
+    for p in procs:
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    for f in logs:
+        f.close()
 
 
 if __name__ == "__main__":

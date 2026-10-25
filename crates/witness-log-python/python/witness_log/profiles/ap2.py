@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .. import _core
@@ -224,6 +225,16 @@ def _names_other(leaves: Sequence[Mapping[str, Any]], other: str, tag: int) -> L
     return [l for l in leaves if l.get("leaf_type") == tag and l.get("counterparty_pubkey") == other]
 
 
+_MIRRORED_KIND = {
+    "GrantedByMe": "GrantedToMe",
+    "GrantedToMe": "GrantedByMe",
+    "RevokedByMe": "RevokedToMe",
+    "RevokedToMe": "RevokedByMe",
+    "ScopeChangedByMe": "ScopeChangedToMe",
+    "ScopeChangedToMe": "ScopeChangedByMe",
+}
+
+
 def _event_name(kind: Optional[str]) -> str:
     table = {
         "GrantedByMe": "granted_by_me",
@@ -236,17 +247,64 @@ def _event_name(kind: Optional[str]) -> str:
     return table.get(kind or "", "unknown")
 
 
+class _Matching:
+    """One-to-one matching of two leaf lists (each in index order), as the
+    CLI does it: each left leaf binds the first right leaf ``check``
+    accepts (returns ``None``) that no earlier left leaf took. A leaf binds
+    at most once, so an event one side recorded twice and the other once
+    leaves one over, and what is bound or left over does not depend on
+    which side is left."""
+
+    def __init__(self, left: Sequence[Mapping[str, Any]], right: Sequence[Mapping[str, Any]], check: Any):
+        self.left, self.right, self.check = left, right, check
+        self.left_partner: List[Optional[int]] = [None] * len(left)
+        self.right_partner: List[Optional[int]] = [None] * len(right)
+        self.pairs: List[Tuple[int, int]] = []
+        for i, l in enumerate(left):
+            for j, r in enumerate(right):
+                if self.right_partner[j] is None and check(l, r) is None:
+                    self.left_partner[i], self.right_partner[j] = j, i
+                    self.pairs.append((i, j))
+                    break
+
+    def left_over(self, side: str) -> List[int]:
+        partners = self.left_partner if side == "left" else self.right_partner
+        return [k for k, p in enumerate(partners) if p is None]
+
+    def why(self, side: str, k: int, names: Tuple[str, str], none: str) -> str:
+        """Why leaf ``k`` of ``side`` bound to nothing, one clause per leaf
+        on the other side (the CLI's wording)."""
+        if side == "left":
+            others, other_partner, other_name, own_name, own = self.right, self.right_partner, names[1], names[0], self.left
+        else:
+            others, other_partner, other_name, own_name, own = self.left, self.left_partner, names[0], names[1], self.right
+        if not others:
+            return none
+        out = []
+        for o, other in enumerate(others):
+            err = self.check(self.left[k], other) if side == "left" else self.check(other, self.right[k])
+            if err is not None:
+                out.append(f"{other_name} leaf {other['index']}: {err}")
+            elif other_partner[o] is not None:
+                out.append(f"{other_name} leaf {other['index']}: already bound to {own_name} leaf {own[other_partner[o]]['index']}")
+            else:
+                out.append(f"{other_name} leaf {other['index']}: unbound")
+        return "; ".join(out)
+
+
 def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
-    """``witness-log bind`` in Python: every HandoffAttestation and
-    AuthorizationEvent in A naming B is matched against B's leaves naming
-    A with the core's ``verify_handoff_binding`` /
-    ``verify_authorization_binding``; an AuthorizationEvent in B naming A
-    that nothing in A binds to fails too (its ``failed`` entry carries
-    ``"b_leaf"``), so the exit code does not depend on argument order.
-    Returns ``{"a", "b", "bound",
-    "failed", "exit"}`` with the CLI's exit codes (0 bound, 30 mismatch,
-    10 nothing to bind). Raises ``ValueError`` when both dossiers claim
-    one identity (that is ``diff``'s job)."""
+    """``witness-log bind`` in Python: the HandoffAttestations and
+    AuthorizationEvents in A naming B are matched one to one against B's
+    leaves naming A with the core's ``verify_handoff_binding`` /
+    ``verify_authorization_binding``. Every such leaf on either side that
+    binds to nothing is a failure: a Sent leaf (``"sender_leaf"``), a
+    Received leaf (``"receiver_leaf"``), an AuthorizationEvent of A
+    (``"a_leaf"``) or of B (``"b_leaf"``), including a repeated event the
+    other side recorded fewer times. Bound pairs and failures are the same
+    in either argument order. Returns ``{"a", "b", "bound", "failed",
+    "exit"}`` with the CLI's exit codes (0 bound, 30 mismatch, 10 nothing
+    to bind). Raises ``ValueError`` when both dossiers claim one identity
+    (that is ``diff``'s job)."""
     a, b = _load(dossier_a), _load(dossier_b)
     ia, ib = str(a["identity_pubkey"]), str(b["identity_pubkey"])
     if ia == ib:
@@ -257,56 +315,42 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
     for sender, sid, receiver, rid in ((a, ia, b, ib), (b, ib, a, ia)):
         sent = [l for l in _names_other(sender["leaves"], rid, LEAF_HANDOFF) if l.get("handoff_direction") == "Sent"]
         recv = [l for l in _names_other(receiver["leaves"], sid, LEAF_HANDOFF) if l.get("handoff_direction") == "Received"]
-        for s in sent:
-            hit = None
-            reasons = []
-            for r in recv:
-                err = _core.handoff_binding_error(sid, json.dumps(s), rid, json.dumps(r))
-                if err is None:
-                    hit = r
-                    break
-                reasons.append(f"receiver leaf {r['index']}: {err}")
-            if hit is not None:
-                bound.append({"kind": "handoff", "sender": sid, "sender_leaf": s["index"], "receiver": rid,
-                              "receiver_leaf": hit["index"], "state_hash": s.get("handoff_state_hash")})
-            else:
-                failed.append({"kind": "handoff", "sender": sid, "sender_leaf": s["index"], "receiver": rid,
-                               "reason": "; ".join(reasons) or "receiver logged no HandoffAttestation naming this sender"})
+
+        def check_handoff(s: Mapping[str, Any], r: Mapping[str, Any], sid: str = sid, rid: str = rid) -> Optional[str]:
+            return _core.handoff_binding_error(sid, json.dumps(s), rid, json.dumps(r))
+
+        m = _Matching(sent, recv, check_handoff)
+        for i, j in m.pairs:
+            bound.append({"kind": "handoff", "sender": sid, "sender_leaf": sent[i]["index"], "receiver": rid,
+                          "receiver_leaf": recv[j]["index"], "state_hash": sent[i].get("handoff_state_hash")})
+        for i in m.left_over("left"):
+            failed.append({"kind": "handoff", "sender": sid, "sender_leaf": sent[i]["index"], "receiver": rid,
+                           "reason": m.why("left", i, ("sender", "receiver"),
+                                           "receiver logged no HandoffAttestation naming this sender")})
+        for j in m.left_over("right"):
+            failed.append({"kind": "handoff", "sender": sid, "receiver": rid, "receiver_leaf": recv[j]["index"],
+                           "reason": m.why("right", j, ("sender", "receiver"),
+                                           "sender logged no HandoffAttestation (Sent) naming this receiver")})
 
     auth_a = _names_other(a["leaves"], ib, LEAF_AUTHORIZATION)
     auth_b = _names_other(b["leaves"], ia, LEAF_AUTHORIZATION)
-    failed_before = len(failed)
-    for la in auth_a:
-        hit = None
-        reasons = []
-        for lb in auth_b:
-            err = _core.authorization_binding_error(ia, json.dumps(la), ib, json.dumps(lb))
-            if err is None:
-                hit = lb
-                break
-            reasons.append(f"b leaf {lb['index']}: {err}")
-        if hit is not None:
-            bound.append({"kind": "authorization", "a": ia, "a_leaf": la["index"], "a_event": _event_name(la.get("authorization_event_kind")),
-                          "b": ib, "b_leaf": hit["index"], "b_event": _event_name(hit.get("authorization_event_kind")),
-                          "scope_hash": la.get("authorization_scope_hash")})
-        else:
-            failed.append({"kind": "authorization", "a": ia, "a_leaf": la["index"], "b": ib,
-                           "reason": "; ".join(reasons) or "the other log has no AuthorizationEvent naming this agent"})
-    # And a B leaf naming A that no A leaf binds to: a grant, revocation or
-    # scope change only B recorded. As in the CLI, so the result does not
-    # depend on which dossier is passed first; skipped when an A leaf already
-    # failed (its reason lists every B leaf, and the result is a mismatch).
-    a_side_failed = len(failed) > failed_before
-    for lb in [] if a_side_failed else auth_b:
-        reasons = []
-        for la in auth_a:
-            err = _core.authorization_binding_error(ia, json.dumps(la), ib, json.dumps(lb))
-            if err is None:
-                break
-            reasons.append(f"a leaf {la['index']}: {err}")
-        else:
-            failed.append({"kind": "authorization", "a": ia, "b": ib, "b_leaf": lb["index"],
-                           "reason": "; ".join(reasons) or "the other log has no AuthorizationEvent naming this agent"})
+
+    def check_auth(la: Mapping[str, Any], lb: Mapping[str, Any]) -> Optional[str]:
+        return _core.authorization_binding_error(ia, json.dumps(la), ib, json.dumps(lb))
+
+    m = _Matching(auth_a, auth_b, check_auth)
+    for i, j in m.pairs:
+        la, lb = auth_a[i], auth_b[j]
+        bound.append({"kind": "authorization", "a": ia, "a_leaf": la["index"], "a_event": _event_name(la.get("authorization_event_kind")),
+                      "b": ib, "b_leaf": lb["index"], "b_event": _event_name(lb.get("authorization_event_kind")),
+                      "scope_hash": la.get("authorization_scope_hash")})
+    no_auth = "the other log has no AuthorizationEvent naming this agent"
+    for i in m.left_over("left"):
+        failed.append({"kind": "authorization", "a": ia, "a_leaf": auth_a[i]["index"], "b": ib,
+                       "reason": m.why("left", i, ("a", "b"), no_auth)})
+    for j in m.left_over("right"):
+        failed.append({"kind": "authorization", "a": ia, "b": ib, "b_leaf": auth_b[j]["index"],
+                       "reason": m.why("right", j, ("a", "b"), no_auth)})
 
     code = EXIT_MISMATCH if failed else (EXIT_NO_CROSS_LOG_LEAVES if not bound else EXIT_BOUND)
     return {"a": {"identity": ia}, "b": {"identity": ib}, "bound": bound, "failed": failed, "exit": code}
@@ -344,10 +388,13 @@ def bind_profile_ap2(
     * ``mandate_hash_equal``: at least one authorization pair bound, and
       (when ``mandate`` is given) its scope hash is that mandate's hash
       (with ``nonce`` when the grants were recorded ``salted=True``).
-    * ``scope_not_widened``: the set of scope hashes A committed to
-      towards B equals the set B committed to towards A. A side that
-      holds a grant, revocation or scope change the other never recorded
-      fails this; that is how a unilateral widening shows up.
+    * ``scope_not_widened``: every grant, revocation or scope change A
+      recorded towards B has exactly one counterpart in B's log (the
+      mirrored kind, the same scope hash) and the other way round,
+      counted per (kind, scope): equal multisets, not just equal sets. A
+      side that holds an event the other never recorded, or holds it more
+      times (a re-grant after a revocation, say), fails this; that is how
+      a unilateral widening shows up.
     * ``settlement_anchors``: ExternalAnchor leaves on each side, how
       many carry their proof, how many proofs hash to the committed
       ``anchor_proof_hash``, and how many name this mandate.
@@ -375,9 +422,14 @@ def bind_profile_ap2(
     else:
         mandate_equal = any(p["scope_hash"] == want_scope for p in auth_pairs)
 
-    scopes_a = {l.get("authorization_scope_hash") for l in _names_other(a["leaves"], ib, LEAF_AUTHORIZATION)}
-    scopes_b = {l.get("authorization_scope_hash") for l in _names_other(b["leaves"], ia, LEAF_AUTHORIZATION)}
-    not_widened = scopes_a == scopes_b and bool(scopes_a)
+    auth_a = _names_other(a["leaves"], ib, LEAF_AUTHORIZATION)
+    auth_b = _names_other(b["leaves"], ia, LEAF_AUTHORIZATION)
+    scopes_a = {l.get("authorization_scope_hash") for l in auth_a}
+    scopes_b = {l.get("authorization_scope_hash") for l in auth_b}
+    # Count (kind, scope) per side, B's kinds mirrored into A's role.
+    events_a = Counter((l.get("authorization_event_kind"), l.get("authorization_scope_hash")) for l in auth_a)
+    events_b = Counter((_MIRRORED_KIND.get(str(l.get("authorization_event_kind"))), l.get("authorization_scope_hash")) for l in auth_b)
+    not_widened = bool(events_a) and events_a == events_b
 
     anc_a = _anchor_checks(a["leaves"], want)
     anc_b = _anchor_checks(b["leaves"], want)

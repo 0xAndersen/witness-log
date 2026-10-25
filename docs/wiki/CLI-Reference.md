@@ -128,10 +128,14 @@ witness-log bind <a.json> <b.json> [--json]
 ```
 
 Two *different* agents' dossiers: match their handoff and authorization
-leaves. Exit 0 bound, 30 mismatch, 10 nothing to bind, 2 usage. An
-authorization event that only one side recorded (a grant, revocation or
-scope change the other never logged) is a mismatch whichever dossier comes
-first.
+leaves. Exit 0 bound, 30 mismatch, 10 nothing to bind, 2 usage. Leaves
+are matched one to one: each handoff or authorization leaf naming the
+other identity binds at most one leaf on the other side. Any such leaf left
+over on either side is a mismatch: a grant, revocation or scope change only
+one side recorded, or recorded more times on one side; a Sent handoff the
+receiver never logged, or a Received one the sender never logged. Each is
+reported with the dossier that holds it (`A leaf N` / `B leaf N`), and the
+result is the same whichever dossier comes first.
 
 ## prove-silence
 

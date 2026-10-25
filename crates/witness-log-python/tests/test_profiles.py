@@ -188,7 +188,9 @@ def test_bind_profile_ap2_tampered_mandate_is_a_mismatch(tmp_path):
     ap2.record_grant(claim, wider, counterparty=A, scope="granted_to_me")
     rep = ap2.bind_profile_ap2(a.to_dossier_json(), claim.to_dossier_json(), mandate=MANDATE)
     assert rep["exit"] == 30 and rep["bound"] == []
-    assert len(rep["failed"]) == 1 and "scope hashes do not match" in rep["failed"][0]["reason"]
+    # Both leaves are left over, the shopper's and the claim's.
+    assert [(f.get("a_leaf"), f.get("b_leaf")) for f in rep["failed"]] == [(0, None), (None, 0)]
+    assert all("scope hashes do not match" in f["reason"] for f in rep["failed"])
     p = rep["ap2"]
     assert not p["ok"] and not p["mandate_hash_equal"] and not p["scope_not_widened"]
     assert p["scopes"]["a"] == [ap2.mandate_hash(MANDATE)] and p["scopes"]["b"] == [ap2.mandate_hash(wider)]
@@ -245,6 +247,72 @@ def test_bind_handoffs_too(tmp_path):
     b2.append_handoff_received(b"other state", A)
     rep = ap2.bind_dossiers(a.to_dossier_json(), b2.to_dossier_json())
     assert rep["exit"] == 30 and "state hashes do not match" in rep["failed"][0]["reason"]
+    # Both sides of the mismatch are reported: the Sent and the Received.
+    assert [(f.get("sender_leaf"), f.get("receiver_leaf")) for f in rep["failed"]] == [(0, None), (None, 0)]
+
+
+def _outcome(x, y, first):
+    """bind_dossiers(x, y) as (exit, bound, failed), leaves named by the
+    identity whose dossier holds them, so both orders compare equal."""
+    rep = ap2.bind_dossiers(x, y)
+    bound, failed = [], []
+    for p in rep["bound"]:
+        if p["kind"] == "handoff":
+            own = {p["sender"]: p["sender_leaf"], p["receiver"]: p["receiver_leaf"]}
+        else:
+            own = {p["a"]: p["a_leaf"], p["b"]: p["b_leaf"]}
+        other = next(k for k in own if k != first)
+        bound.append((p["kind"], own[first], own[other]))
+    for f in rep["failed"]:
+        for who, leaf in (("sender", "sender_leaf"), ("receiver", "receiver_leaf"), ("a", "a_leaf"), ("b", "b_leaf")):
+            if leaf in f:
+                failed.append((f["kind"], f[who], f[leaf]))
+                break
+    return rep["exit"], sorted(bound), sorted(failed)
+
+
+def _both_orders(x, y):
+    dx, dy = x.to_dossier_json(), y.to_dossier_json()
+    first = x.identity_pubkey_hex()
+    out = _outcome(dx, dy, first)
+    assert _outcome(dy, dx, first) == out, "bind must not depend on argument order"
+    return out
+
+
+def test_bind_is_one_to_one(tmp_path):
+    """A repeated event binds once: a re-grant after a revocation that only
+    the grantee logged used to bind the granter's first grant again (exit 0
+    in both orders, and scope_not_widened compared sets, so it passed too)."""
+    a, b, A, B = _pair(tmp_path)
+    for kind, log, cp in (("granted_by_me", a, B), ("revoked_by_me", a, B), ("granted_to_me", b, A), ("revoked_to_me", b, A)):
+        ap2.record_grant(log, MANDATE, counterparty=cp, scope=kind)
+    assert _both_orders(a, b)[0] == 0
+    ap2.record_grant(b, MANDATE, counterparty=A, scope="granted_to_me")  # the re-grant only B logged
+    code, bound, failed = _both_orders(a, b)
+    assert code == 30 and len(bound) == 2 and failed == [("authorization", B, 2)]
+    rep = ap2.bind_profile_ap2(a.to_dossier_json(), b.to_dossier_json(), mandate=MANDATE, require_anchors="none")
+    assert not rep["ap2"]["scope_not_widened"] and not rep["ap2"]["ok"]
+    assert rep["failed"][0]["reason"] == (
+        "a leaf 0: already bound to b leaf 0; "
+        "a leaf 1: mismatched event kinds: party_a is RevokedByMe, party_b is GrantedToMe, expected RevokedToMe"
+    )
+    ap2.record_grant(a, MANDATE, counterparty=B, scope="granted_by_me")  # now A logs it too
+    assert _both_orders(a, b)[0] == 0
+    rep = ap2.bind_profile_ap2(a.to_dossier_json(), b.to_dossier_json(), mandate=MANDATE, require_anchors="none")
+    assert rep["ap2"]["scope_not_widened"] and rep["ap2"]["ok"]
+
+
+def test_bind_reports_a_received_handoff_nobody_sent(tmp_path):
+    a, b, A, B = _pair(tmp_path)
+    b.append_handoff_received(b"state H1", A)
+    # Alone: a mismatch, not "nothing to bind" (it used to exit 10).
+    assert _both_orders(a, b) == (30, [], [("handoff", B, 0)])
+    rep = ap2.bind_dossiers(a.to_dossier_json(), b.to_dossier_json())
+    assert rep["failed"][0]["reason"] == "sender logged no HandoffAttestation (Sent) naming this receiver"
+    # One Sent, two identical Received: one Received is left over.
+    a.append_handoff_sent(b"state H1", B)
+    b.append_handoff_received(b"state H1", A)
+    assert _both_orders(a, b) == (30, [("handoff", 0, 0)], [("handoff", B, 1)])
 
 
 # -------------------------------------------------------------- dispute export

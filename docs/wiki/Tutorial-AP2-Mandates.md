@@ -311,13 +311,17 @@ witness-log bind
   A: a9aa05d4c72d07b3f2a8b5774f11afb12f9714ee5d45b0fe5d4053264db7c732
   B: c30d7e033708259fa64922ad8cd86f0c378ca463a539c0d648a9dd91e35c324b
 
-✗ authorization NOT bound (leaf 0): b leaf 0: scope hashes do not match — the two sides committed to different scope descriptions
+✗ authorization NOT bound (A leaf 0): b leaf 0: scope hashes do not match — the two sides committed to different scope descriptions
+✗ authorization NOT bound (B leaf 0): a leaf 0: scope hashes do not match — the two sides committed to different scope descriptions
 
 Result: MISMATCH — the two logs disagree about what was handed over or to whom. Neither copy is 'the wrong one'; the disagreement is the finding.
 
 This checks the two logs against each other only. Run `witness-log verify` on each dossier first; a binding between two unverified logs proves nothing.
 exit 30
 ```
+
+Both grants are listed: each side holds one the other never recorded, and
+`bind` reports every leaf that binds to nothing, whichever file comes first.
 
 Had the merchant actually tried to get that history cosigned after its
 honest size-4 head was witnessed, the witnesses would have refused it with

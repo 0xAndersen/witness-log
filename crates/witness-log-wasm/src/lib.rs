@@ -377,10 +377,113 @@ fn names_other<'a>(leaves: &'a [Leaf], other: &str, tag: u8) -> Vec<&'a Leaf> {
         .collect()
 }
 
+type Check<'c> = dyn Fn(&Leaf, &Leaf) -> Result<(), String> + 'c;
+
+/// A one-to-one matching of two leaf lists (each in index order): each
+/// left leaf binds the first right leaf `check` accepts that no earlier
+/// left leaf took. Same rule as `witness-log bind`: a leaf binds at most
+/// once, and what is bound or left over does not depend on which side is
+/// left.
+/// (Written without indexing: this crate denies `clippy::indexing_slicing`.)
+struct Matching {
+    /// For each left leaf, the position of the right leaf it bound to.
+    left_partner: Vec<Option<usize>>,
+    /// For each right leaf, the position of the left leaf it bound to.
+    right_partner: Vec<Option<usize>>,
+}
+
+fn match_one_to_one(left: &[&Leaf], right: &[&Leaf], check: &Check) -> Matching {
+    let mut right_partner: Vec<Option<usize>> = vec![None; right.len()];
+    let mut left_partner = Vec::with_capacity(left.len());
+    for (i, l) in left.iter().enumerate() {
+        let free = right
+            .iter()
+            .zip(right_partner.iter_mut())
+            .enumerate()
+            .find(|(_, (r, p))| p.is_none() && check(l, r).is_ok());
+        match free {
+            Some((j, (_, p))) => {
+                *p = Some(i);
+                left_partner.push(Some(j));
+            }
+            None => left_partner.push(None),
+        }
+    }
+    Matching {
+        left_partner,
+        right_partner,
+    }
+}
+
+/// The leaves of `leaves` whose entry in `partners` is `None`.
+fn unbound<'a>(leaves: &[&'a Leaf], partners: &[Option<usize>]) -> Vec<&'a Leaf> {
+    leaves
+        .iter()
+        .zip(partners)
+        .filter(|(_, p)| p.is_none())
+        .map(|(l, _)| *l)
+        .collect()
+}
+
+impl Matching {
+    /// The bound pairs, in left index order.
+    fn pairs<'a>(&self, left: &[&'a Leaf], right: &[&'a Leaf]) -> Vec<(&'a Leaf, &'a Leaf)> {
+        left.iter()
+            .zip(&self.left_partner)
+            .filter_map(|(l, p)| p.and_then(|j| right.get(j)).map(|r| (*l, *r)))
+            .collect()
+    }
+
+    /// Why `leaf` (from the left list, or with `right_side` the right one)
+    /// bound to nothing: one clause per leaf on the other side, in the
+    /// CLI's wording.
+    #[allow(clippy::too_many_arguments)]
+    fn why(
+        &self,
+        leaf: &Leaf,
+        right_side: bool,
+        left: &[&Leaf],
+        right: &[&Leaf],
+        check: &Check,
+        names: (&str, &str),
+        none: &str,
+    ) -> String {
+        let (others, other_partner, other_name, own_name, own) = if right_side {
+            (left, &self.left_partner, names.0, names.1, right)
+        } else {
+            (right, &self.right_partner, names.1, names.0, left)
+        };
+        if others.is_empty() {
+            return none.to_string();
+        }
+        others
+            .iter()
+            .zip(other_partner)
+            .map(|(other, partner)| {
+                let res = if right_side {
+                    check(other, leaf)
+                } else {
+                    check(leaf, other)
+                };
+                match (res, partner.and_then(|p| own.get(p))) {
+                    (Ok(()), Some(p)) => format!(
+                        "{other_name} leaf {}: already bound to {own_name} leaf {}",
+                        other.index, p.index
+                    ),
+                    (Ok(()), None) => format!("{other_name} leaf {}: unbound", other.index),
+                    (Err(e), _) => format!("{other_name} leaf {}: {e}", other.index),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
 /// Cross-log binding of two different agents' dossiers, matching exactly
-/// what `witness-log bind` does: each Sent handoff against the Received
-/// handoffs naming it (both directions), each AuthorizationEvent of A
-/// naming B against those of B naming A. Returns `{a, b, bound, failed,
+/// what `witness-log bind` does, one to one: Sent handoffs against the
+/// Received handoffs naming them (both directions), AuthorizationEvents of
+/// A naming B against those of B naming A. Every such leaf on either side
+/// that binds to nothing is in `failed`. Returns `{a, b, bound, failed,
 /// exit}` with the CLI's exit codes (0 bound, 30 mismatch, 10 nothing).
 pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
     let a = Dossier::from_json(a_json).map_err(|e| format!("a: not a dossier: {e}"))?;
@@ -404,92 +507,59 @@ pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
             .into_iter()
             .filter(|l| l.handoff_direction == Some(HandoffDirection::Received))
             .collect();
-        for s in &sent {
-            let hit = recv
-                .iter()
-                .find(|r| verify_handoff_binding(sender_id, s, receiver_id, r).is_ok());
-            match hit {
-                Some(r) => bound.push(json!({
-                    "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
-                    "receiver": receiver_id, "receiver_leaf": r.index,
-                    "state_hash": s.handoff_state_hash,
-                })),
-                None => {
-                    let reasons: Vec<String> = recv
-                        .iter()
-                        .map(|r| {
-                            format!(
-                                "receiver leaf {}: {}",
-                                r.index,
-                                verify_handoff_binding(sender_id, s, receiver_id, r)
-                                    .err()
-                                    .unwrap_or_default()
-                            )
-                        })
-                        .collect();
-                    failed.push(json!({
-                        "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
-                        "receiver": receiver_id,
-                        "reason": if reasons.is_empty() {
-                            "receiver logged no HandoffAttestation naming this sender".to_string()
-                        } else { reasons.join("; ") },
-                    }));
-                }
-            }
+        let check = |s: &Leaf, r: &Leaf| verify_handoff_binding(sender_id, s, receiver_id, r);
+        let m = match_one_to_one(&sent, &recv, &check);
+        for (s, r) in m.pairs(&sent, &recv) {
+            bound.push(json!({
+                "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
+                "receiver": receiver_id, "receiver_leaf": r.index,
+                "state_hash": s.handoff_state_hash,
+            }));
+        }
+        let names = ("sender", "receiver");
+        for s in unbound(&sent, &m.left_partner) {
+            failed.push(json!({
+                "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
+                "receiver": receiver_id,
+                "reason": m.why(s, false, &sent, &recv, &check, names,
+                    "receiver logged no HandoffAttestation naming this sender"),
+            }));
+        }
+        for r in unbound(&recv, &m.right_partner) {
+            failed.push(json!({
+                "kind": "handoff", "sender": sender_id, "receiver": receiver_id,
+                "receiver_leaf": r.index,
+                "reason": m.why(r, true, &sent, &recv, &check, names,
+                    "sender logged no HandoffAttestation (Sent) naming this receiver"),
+            }));
         }
     }
 
     let t = LeafType::AuthorizationEvent.tag();
     let auth_a = names_other(&a.leaves, ib, t);
     let auth_b = names_other(&b.leaves, ia, t);
-    let failed_before = failed.len();
-    for la in &auth_a {
-        match auth_b
-            .iter()
-            .find(|lb| verify_authorization_binding(ia, la, ib, lb).is_ok())
-        {
-            Some(lb) => bound.push(json!({
-                "kind": "authorization", "a": ia, "a_leaf": la.index,
-                "a_event": event_name(la.authorization_event_kind),
-                "b": ib, "b_leaf": lb.index, "b_event": event_name(lb.authorization_event_kind),
-                "scope_hash": la.authorization_scope_hash,
-            })),
-            None => failed.push(json!({
-                "kind": "authorization", "a": ia, "a_leaf": la.index, "b": ib,
-                "reason": if auth_b.is_empty() {
-                    "the other log has no AuthorizationEvent naming this agent".to_string()
-                } else {
-                    auth_b.iter().map(|lb| format!(
-                        "b leaf {}: {}", lb.index,
-                        verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default()
-                    )).collect::<Vec<_>>().join("; ")
-                },
-            })),
-        }
+    let check = |la: &Leaf, lb: &Leaf| verify_authorization_binding(ia, la, ib, lb);
+    let m = match_one_to_one(&auth_a, &auth_b, &check);
+    for (la, lb) in m.pairs(&auth_a, &auth_b) {
+        bound.push(json!({
+            "kind": "authorization", "a": ia, "a_leaf": la.index,
+            "a_event": event_name(la.authorization_event_kind),
+            "b": ib, "b_leaf": lb.index, "b_event": event_name(lb.authorization_event_kind),
+            "scope_hash": la.authorization_scope_hash,
+        }));
     }
-    // A B leaf naming A that no A leaf binds to (a grant only B recorded) is
-    // a mismatch too, so the exit code does not depend on argument order.
-    // Skipped when an A leaf already failed: as in the CLI.
-    if failed.len() == failed_before {
-        for lb in &auth_b {
-            if auth_a
-                .iter()
-                .any(|la| verify_authorization_binding(ia, la, ib, lb).is_ok())
-            {
-                continue;
-            }
-            failed.push(json!({
-                "kind": "authorization", "a": ia, "b": ib, "b_leaf": lb.index,
-                "reason": if auth_a.is_empty() {
-                    "the other log has no AuthorizationEvent naming this agent".to_string()
-                } else {
-                    auth_a.iter().map(|la| format!(
-                        "a leaf {}: {}", la.index,
-                        verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default()
-                    )).collect::<Vec<_>>().join("; ")
-                },
-            }));
-        }
+    const NO_AUTH: &str = "the other log has no AuthorizationEvent naming this agent";
+    for la in unbound(&auth_a, &m.left_partner) {
+        failed.push(json!({
+            "kind": "authorization", "a": ia, "a_leaf": la.index, "b": ib,
+            "reason": m.why(la, false, &auth_a, &auth_b, &check, ("a", "b"), NO_AUTH),
+        }));
+    }
+    for lb in unbound(&auth_b, &m.right_partner) {
+        failed.push(json!({
+            "kind": "authorization", "a": ia, "b": ib, "b_leaf": lb.index,
+            "reason": m.why(lb, true, &auth_a, &auth_b, &check, ("a", "b"), NO_AUTH),
+        }));
     }
 
     let exit = if !failed.is_empty() {

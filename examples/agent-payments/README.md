@@ -27,10 +27,12 @@ keeps the journals, dossiers, witness state and evidence files.
 it on every push to main and every pull request
 (`.github/workflows/ci.yml`, the Python bindings job).
 
-With witness-log-cli 0.6.1 or earlier, `bind buyer.json seller-extra.json`
-exits 0, because `bind` did not check a grant that only the second log
-holds, and the run fails on that row. Use a CLI built from this checkout
-(`make payments` builds one).
+The CLI must be built from this repository at or after the change that
+made `bind` match leaves one to one (0.7.0 when released; a build from
+this checkout still reports 0.6.1). `make payments` builds one. With an
+older CLI, `bind buyer.json seller-extra.json` exits 0, because `bind` did
+not check a grant that only the second log holds. The run then fails on
+that row and prints why.
 
 ## What it does
 
@@ -54,18 +56,21 @@ holds, and the run fails on that row. Use a CLI built from this checkout
    --min 3`). `witness-log verify` with `--identity` and `--subject-org`
    gives WITNESSED for each. `--subject-org` stops the organisation that
    runs a log from counting as independent of it, so each log rests on
-   the other two organisations.
+   the other two organisations. Here the organisations are only labels on
+   processes the script runs, so this shows how the count works, not
+   independence.
 6. **Bound.** `witness-log bind buyer.json seller.json` finds three
-   bindings: the PaymentMandate, the x402 payment and the delivered bytes.
-   `x402.bind` in Python adds the profile checks: the same payment hash on
-   both sides, no scope one side holds alone, and a receipt that hashes
-   correctly and names this payment.
+   bindings: the PaymentMandate, the x402 payment and the delivered bytes,
+   with nothing left over. `x402.bind` in Python adds the profile checks:
+   the same payment hash on both sides, each grant on one side matched by
+   exactly one on the other, and a receipt that hashes correctly and names
+   this payment.
 
 Then the three disputes:
 
 | | what happens | command | exit |
 |---|---|---|---|
-| (a) | The seller writes a second log with its key: 10 test USDC for a 30-day report on all cities. The AP2 mandate still binds; the x402 payment and the delivered bytes do not. Nobody cosigned the claim. | `bind buyer.json seller-claim.json`<br>`verify seller-claim.json ...` | 30<br>10 |
+| (a) | The seller writes a second log with its key: 10 test USDC for a 30-day report on all cities. The AP2 mandate still binds; the x402 payment and the delivered bytes do not, and `bind` lists both sides' unmatched leaves. The x402 profile check fails. Nobody cosigned the claim. | `bind buyer.json seller-claim.json`<br>`x402.bind(...)` in Python<br>`verify seller-claim.json ...` | 30<br>`ok: false`<br>10 |
 | (a) | Or the seller keeps its real log and appends a second x402 grant, for 10 test USDC, that the buyer never made. That only extends the log, so the witnesses cosign it. `bind` reports the grant only the seller holds, in either argument order. | `verify seller-extra.json ...`<br>`bind buyer.json seller-extra.json`<br>`bind seller-extra.json buyer.json` | 0<br>30<br>30 |
 | (b) | The buyer copies its journal, cuts it back to before the delivery and writes "paid, nothing delivered". Same key, same size. All three witnesses refuse it, and each keeps a file proving the buyer's key signed two histories of size 6. A verifier holding the earlier head gets DIVERGED. The rewrite no longer matches the seller's delivery. With the proof file, even the buyer's original dossier is DIVERGED. | `witness submit buyer-rewritten.jsonl ...`<br>`verify ... --known-head 6:<root>`<br>`bind buyer-rewritten.json seller.json`<br>`witness verify-evidence <file>`<br>`verify buyer.json ... --evidence <file>` | 20<br>30<br>30<br>0<br>30 |
 | (c) | Someone edits the seller's witnessed dossier: the x402 grant leaf now commits to the 10 test USDC payment. The receipts are unchanged. The leaves no longer rebuild the signed root. | `verify seller-tampered.json ...` | 40 |
