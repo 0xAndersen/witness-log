@@ -654,6 +654,19 @@ fn cmd_add(args: &[String]) -> ExitCode {
         Ok(v) => v,
         Err(e) => return usage_err(&format!("directory add: bad vkey: {e}")),
     };
+    // Witness about pages (the public witness network's among them) give
+    // the full add-checkpoint URL; every witness-log client appends
+    // `/add-checkpoint` to the directory URL itself.
+    let url = match base_url(&url) {
+        Some(base) => {
+            eprintln!(
+                "note: --url is the witness's base URL; witness-log appends /add-checkpoint \
+                 itself, so the directory lists {base}"
+            );
+            base
+        }
+        None => url,
+    };
     if vk.sig_type != SIG_TYPE_COSIGNATURE_V1 {
         return usage_err(
             "directory add: this is a log (signature) key, not a witness cosignature key; a witness's vkey is what `witness init` prints and GET / serves",
@@ -715,6 +728,37 @@ fn cmd_add(args: &[String]) -> ExitCode {
         }
     );
     ExitCode::SUCCESS
+}
+
+/// `url` without a trailing `/add-checkpoint` (and slashes), when it has
+/// one: the base URL witness-log clients append the endpoint to.
+fn base_url(url: &str) -> Option<String> {
+    let trimmed = url.trim_end_matches('/');
+    let base = trimmed.strip_suffix("/add-checkpoint")?;
+    let base = base.trim_end_matches('/');
+    // Keep the scheme and host: "https://" alone is no URL.
+    (base.contains("://") && !base.ends_with(':') && !base.ends_with("//"))
+        .then(|| base.to_string())
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::base_url;
+
+    #[test]
+    fn a_full_add_checkpoint_url_becomes_the_base() {
+        assert_eq!(
+            base_url("https://w.example.org/add-checkpoint").as_deref(),
+            Some("https://w.example.org")
+        );
+        assert_eq!(
+            base_url("https://w.example.org/witness/add-checkpoint/").as_deref(),
+            Some("https://w.example.org/witness")
+        );
+        assert_eq!(base_url("https://w.example.org"), None);
+        assert_eq!(base_url("https://w.example.org/add-checkpoints"), None);
+        assert_eq!(base_url("https:///add-checkpoint"), None);
+    }
 }
 
 #[cfg(test)]

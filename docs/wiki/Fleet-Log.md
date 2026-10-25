@@ -21,8 +21,10 @@ signed checkpoint notes of that organisation's agents.
 
 - Each agent appends its checkpoint to the fleet log (`submit --fleet`).
 - Ordinary `c2sp.org/tlog-witness` witnesses cosign the fleet log's
-  checkpoint. Each enrolls it once, with `witness add-log`, exactly as it
-  would any log whose origin is not a witness-log identity.
+  checkpoint. Each enrolls it once, as it would any log whose origin is
+  not a witness-log identity: `witness add-log` for a witness-log witness,
+  a log list for an omniwitness or a public witness-network witness
+  ([Public witness network](Public-Witness-Network)).
 - The agent's dossier carries a `fleet_anchor`: its entry, an RFC 6962
   inclusion proof, and the fleet log's checkpoint with the cosignature
   lines.

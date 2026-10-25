@@ -1,0 +1,72 @@
+name: Interop (omniwitness)
+
+# witness-log logs cosigned by transparency-dev/witness's omniwitness, the
+# witness most public witness-network.org operators run, configured from a
+# logs/v0 log list exactly as they configure it. See
+# tests/interop/omniwitness.sh for what is checked and
+# docs/wiki/Public-Witness-Network.md for why.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/witness-log-core/**"
+      - "crates/witness-log-network/**"
+      - "crates/witness-log-cli/**"
+      - "tests/interop/**"
+      - ".github/workflows/interop.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/witness-log-core/**"
+      - "crates/witness-log-network/**"
+      - "crates/witness-log-cli/**"
+      - "tests/interop/**"
+      - ".github/workflows/interop.yml"
+  schedule:
+    - cron: "17 5 * * 1" # weekly, to notice a change on either side
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The transparency-dev/witness commit under test. Bump deliberately: a
+  # new omniwitness is a new interop claim. Fetched through the Go module
+  # proxy and checked against sum.golang.org.
+  WITNESS_COMMIT: ea1ba4f5759180607d4d58ac332e60bf439024db
+
+jobs:
+  omniwitness:
+    name: witness-log x omniwitness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Build omniwitness and generate_keys
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install \
+            "github.com/transparency-dev/witness/cmd/omniwitness@$WITNESS_COMMIT" \
+            "github.com/transparency-dev/witness/cmd/generate_keys@$WITNESS_COMMIT"
+          ls -l "$RUNNER_TEMP/bin"
+      - name: Build witness-log
+        run: cargo build --release -p witness-log-cli --locked
+      - name: Interop
+        env:
+          WL: ${{ github.workspace }}/target/release/witness-log
+          OMNIWITNESS: ${{ runner.temp }}/bin/omniwitness
+          GENERATE_KEYS: ${{ runner.temp }}/bin/generate_keys
+        run: tests/interop/omniwitness.sh
+      - name: Same checks against witness-log's own witness
+        env:
+          WL: ${{ github.workspace }}/target/release/witness-log
+          WITNESS_IMPL: witness-log
+        run: tests/interop/omniwitness.sh

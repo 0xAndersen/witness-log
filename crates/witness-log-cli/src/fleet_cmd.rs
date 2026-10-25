@@ -198,6 +198,31 @@ fn vkey_of(cfg: &FleetConfig, key: &SigningKey) -> String {
     VerifierKey::for_ed25519(&cfg.origin, &key.verifying_key()).encode()
 }
 
+/// A fleet log's public facts from `fleet.json` alone (no key needed):
+/// its origin, its operator organisation and its vkey. Used to describe
+/// the log to witnesses that have not enrolled it yet
+/// (`witness-network log-list` / `request`).
+pub(crate) fn fleet_public(dir: &Path) -> Result<(String, String, VerifierKey), String> {
+    let p = dir.join("fleet.json");
+    let raw = fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    let cfg: FleetConfig =
+        serde_json::from_str(&raw).map_err(|e| format!("{}: {e}", p.display()))?;
+    if !valid_fleet_origin(&cfg.origin) {
+        return Err(format!("{}: invalid origin {:?}", p.display(), cfg.origin));
+    }
+    let pk: [u8; 32] = hex::decode(cfg.pubkey_hex.trim())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| format!("{}: pubkey_hex is not 32 bytes of hex", p.display()))?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk)
+        .map_err(|_| format!("{}: pubkey_hex is not an Ed25519 key", p.display()))?;
+    Ok((
+        cfg.origin.clone(),
+        cfg.operator_org,
+        VerifierKey::for_ed25519(&cfg.origin, &vk),
+    ))
+}
+
 // ------------------------------------------------------------------ init
 
 fn cmd_init(args: &[String]) -> ExitCode {
@@ -965,7 +990,7 @@ fn witness_round(
                 }
                 let hint = if e.to_string().contains("HTTP 404") {
                     format!(
-                        " (the witness has not enrolled this fleet log: witness-log witness add-log <its dir> {} {})",
+                        "\n      a witness-log witness enrolls it with: witness-log witness add-log <its dir> {} {}",
                         cfg.origin,
                         vkey_of(cfg, key)
                     )

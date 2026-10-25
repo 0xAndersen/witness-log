@@ -35,12 +35,19 @@ vector's note and a freshly exported note (testnet, `submit`, `c2sp
 export`) with the reference libraries the ecosystem runs, `golang.org/x/mod`'s
 signed-note package and `transparency-dev/formats`' cosignature/v1
 verifier (the code behind OmniWitness, Tessera and witness-network.org),
-on every push that touches the Go client. What remains for a public
-witness to cosign a witness-log head is operational, not technical: its
-operator adds the log's origin and vkey to the witness's configuration,
-which is the same step every new log takes with those witnesses. Any
-operator who wants to try is the "run a witness" ask (#1) from the other
-side.
+on every push that touches the Go client.
+
+The live protocol is checked the same way:
+[`tests/interop/omniwitness.sh`](https://github.com/0xAndersen/witness-log/blob/main/tests/interop/omniwitness.sh)
+runs two `omniwitness` instances, built from a pinned transparency-dev/witness
+commit and configured from a `logs/v0` list as public witness-network
+witnesses are. It checks that agent logs and a fleet log are cosigned,
+that consistency proofs are accepted and forks refused, and that the
+cosignatures verify. CI runs it on every change to the Rust crates and
+weekly (`.github/workflows/interop.yml`). What remains for a public
+witness to cosign a witness-log head is operational: its log list must
+carry the log's origin and vkey
+([Public witness network](Public-Witness-Network)).
 
 ## Implementing in another language
 

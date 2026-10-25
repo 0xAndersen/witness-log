@@ -95,8 +95,8 @@ Resubmit after every batch of work (a cron job, the end of a session, or
 every N leaves). Each submission carries a consistency proof from the size
 the witness last cosigned; a `409` carries that size if you lost track,
 and `submit` handles it ([Witness protocol walkthrough](Witness-Protocol-Walkthrough)).
-A local `witness-log testnet up` that does the two-witness setup above in
-one command is planned for 0.4.0.
+`witness-log testnet up` does the two-witness setup above in one command
+([testnet](CLI-Reference#testnet)).
 
 ## Your side, against the public registry
 
@@ -138,23 +138,21 @@ witnesses. Three ways to grow it:
    every member's logs reach WITNESSED without anyone else
    ([Pilot: three organisations](Pilot-Three-Organisations)); two need a
    third party both trust.
-3. Public witnesses from the Certificate Transparency ecosystem can cosign
-   witness-log checkpoints without any witness-log-specific code (same
-   protocol and note format); see [Spec and interop](Spec-and-Interop).
-   One practical difference: those witnesses (OmniWitness, litewitness,
-   the witness-network.org lists) are configured one log origin at a time,
-   with the origin and its Ed25519 vkey added by the operator after an
-   application; witness-network.org's production list is "not available
-   yet" (checked 2026-10-12), only testing and staging. witness-log
-   origins are per agent (`witness-log/<identity hex>`), so they cosign
-   only the agent logs someone has added to their configuration. Open
-   enrollment, where the origin itself is the key and no configuration is
-   needed, exists only in witness-log's own witness; the quickest path for
-   such an operator is to run it beside their existing witness
-   ([Operator onboarding](Operator-Onboarding)). The longer-term path, one
-   aggregate log per organisation that existing witnesses can enroll once,
-   is [RFC-0001](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0001-fleet-checkpoint-log.md),
-   a proposal.
+3. Join the public witness network. Its witnesses (run on
+   transparency-dev's omniwitness and other C2SP witnesses) cosign
+   witness-log checkpoints with no witness-log-specific code, for every
+   log on the lists they configure. A log joins a list by email request:
+   `witness-log witness-network request` writes it, and CI checks the
+   whole path against omniwitness weekly
+   ([Public witness network](Public-Witness-Network)). Those witnesses
+   admit logs one origin at a time, and a witness-log origin is per agent
+   (`witness-log/<identity hex>`). The unit to enroll for an organisation
+   is therefore one fleet log
+   ([RFC-0001](https://github.com/0xAndersen/witness-log/blob/main/docs/rfcs/RFC-0001-fleet-checkpoint-log.md),
+   experimental), plus the agents worth a direct request. Open enrollment,
+   where the origin itself is the key and no configuration is needed,
+   exists only in witness-log's own witness
+   ([Operator onboarding](Operator-Onboarding)).
 
 ## What a verifier should demand
 

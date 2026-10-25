@@ -1494,7 +1494,7 @@ pub(crate) fn post_add_checkpoint(
                 std::thread::sleep(Duration::from_secs(retry_after.unwrap_or(1)));
             }
             422 => return Err(SubmitError::Refused(text.trim().to_string())),
-            other => return Err(format!("HTTP {other}: {}", text.trim()).into()),
+            other => return Err(status_error(other, path, &text).into()),
         }
     }
     Err(
@@ -1502,6 +1502,68 @@ pub(crate) fn post_add_checkpoint(
             .to_string()
             .into(),
     )
+}
+
+/// What an unexpected add-checkpoint status means, in the terms of
+/// `c2sp.org/tlog-witness`. Witnesses outside this project (omniwitness,
+/// litewitness) answer with the bare status, so the status is the message.
+fn status_error(status: u16, path: &str, body: &str) -> String {
+    let body = witness_log_core::echo::bounded(body.trim());
+    let detail = if body.is_empty() {
+        String::new()
+    } else {
+        format!(" ({body})")
+    };
+    match (status, path) {
+        (404, "/add-checkpoint") => format!(
+            "HTTP 404{detail}: this witness has not enrolled the log. A witness-log witness \
+             enrolls it with `witness add-log`; a public witness-network witness once a log \
+             list it configures carries it (`witness-log witness-network request`)"
+        ),
+        (403, "/add-checkpoint") => format!(
+            "HTTP 403{detail}: the witness could not verify the checkpoint's signature: it \
+             holds a different key for this origin"
+        ),
+        (429, _) => format!(
+            "HTTP 429{detail}: rate limited. A witness may limit a log that asks more often \
+             than the add-checkpoint rate it declared"
+        ),
+        (other, _) => format!("HTTP {other}{detail}"),
+    }
+}
+
+#[cfg(test)]
+mod status_error_tests {
+    use super::status_error;
+
+    #[test]
+    fn statuses_from_other_witnesses_are_explained() {
+        let e = status_error(404, "/add-checkpoint", "");
+        assert!(
+            e.starts_with("HTTP 404: this witness has not enrolled the log"),
+            "{e}"
+        );
+        assert!(
+            e.contains("witness add-log") && e.contains("witness-network request"),
+            "{e}"
+        );
+        let e = status_error(
+            403,
+            "/add-checkpoint",
+            "checkpoint signature not verified\n",
+        );
+        assert!(
+            e.starts_with("HTTP 403 (checkpoint signature not verified): "),
+            "{e}"
+        );
+        assert!(status_error(429, "/add-entry", "").contains("rate limited"));
+        // Not a witness endpoint: the status as it was.
+        assert_eq!(
+            status_error(404, "/add-entry", "not found\n"),
+            "HTTP 404 (not found)"
+        );
+        assert_eq!(status_error(500, "/add-checkpoint", ""), "HTTP 500");
+    }
 }
 
 #[cfg(test)]

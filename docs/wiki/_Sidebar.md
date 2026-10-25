@@ -37,6 +37,7 @@
 **Trust it**
 - [Verification and verdicts](Verification-and-Verdicts)
 - [Getting witnessed](Getting-Witnessed)
+  - [Public witness network](Public-Witness-Network)
 - [Pilot: three organisations](Pilot-Three-Organisations)
 - [Fleet log (experimental)](Fleet-Log)
 - [Operator onboarding](Operator-Onboarding)

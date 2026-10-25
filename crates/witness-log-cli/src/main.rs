@@ -127,6 +127,7 @@ mod log_cmd;
 mod testnet;
 mod witness_cmd;
 mod witness_store;
+mod wnet_cmd;
 
 const HELP: &str = "witness-log — verifiable audit trails for autonomous agents
 
@@ -229,6 +230,14 @@ USAGE:
       registry/build_directory.py produces; every entry must pass the
       offline checks of registry/validate.py), or add one witness by its
       C2SP verifier key.
+
+  witness-log witness-network log-list <logs> (--every SECS | --qpd N) --contact TEXT
+  witness-log witness-network request <logs> (--every SECS | --qpd N) --contact TEXT [--list testing|staging]
+      <logs>: --fleet <dir> | --identity <hex> | --vkey <log vkey>, each repeatable.
+      Describe your log to witnesses that have not enrolled it, in the public
+      witness network's formats (witness-network.org): a logs/v0 log list (what
+      omniwitness --public_witness_config_url reads), or the participation
+      request to email. Nothing is sent.
 
   witness-log diff <a.json> <b.json>
       Compare two dossiers claiming to be the same log. This is the
@@ -419,6 +428,7 @@ fn main() -> ExitCode {
         Some("fleet") => fleet_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("journal") => journal_serve::run(args.get(2..).unwrap_or(&[])),
         Some("directory") => directory_cmd::run(args.get(2..).unwrap_or(&[])),
+        Some("witness-network") => wnet_cmd::run(args.get(2..).unwrap_or(&[])),
         Some("doctor") => doctor::run(args.get(2..).unwrap_or(&[])),
         Some("testnet") => testnet::run(args.get(2..).unwrap_or(&[])),
         Some("explain") => {

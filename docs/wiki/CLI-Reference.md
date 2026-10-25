@@ -432,7 +432,37 @@ witness-log directory add <trusted.json> --vkey <c2sp vkey> --org ORG --url URL 
 Adds one witness by its C2SP cosignature verifier key (what `witness
 init` prints and `GET /` serves as `vkey`). Creates the file if needed;
 refuses a key already listed (exit 1), a log key instead of a witness
-key, a non-http URL, an empty org (exit 2).
+key, a non-http URL, an empty org (exit 2). A `--url` ending in
+`/add-checkpoint` (the form witness about pages give) is stored without
+it, since every client appends that path itself.
+
+## witness-network
+
+```
+witness-log witness-network log-list <logs> (--every SECS | --qpd N) --contact TEXT
+witness-log witness-network request  <logs> (--every SECS | --qpd N) --contact TEXT
+                                     [--list testing|staging] [--about TEXT]
+```
+
+`<logs>` is one or more of `--fleet <dir>` (a fleet log, from its
+`fleet.json`), `--identity <hex>` (an agent's own log, origin
+`witness-log/<hex>`) and `--vkey <log vkey>` (any C2SP checkpoint log with
+an Ed25519 key, type 0x01, named as its origin), each repeatable. See
+[Public witness network](Public-Witness-Network).
+
+- `log-list` prints a `logs/v0` log list naming those logs: what an
+  `omniwitness` reads with `--public_witness_config_url`, and the entry
+  the witness network's maintainers add for you.
+- `request` prints the participation request for witness-network.org:
+  origin line, vkey, add-checkpoint rate, list (default `testing`),
+  contact, and the `logs/v0` entries. Nothing is sent.
+
+`--every SECS` is how often the log asks each witness to cosign
+(`qpd = ceil(86400 / SECS)`); `--qpd N` states the requests per day
+directly, `1 <= N < 2^31`. `--contact` and `--about` are one line each.
+Exit 0, or 2 for a usage error, a witness (type 0x04) key given as a log
+key, an agent origin that names a different key, or an unreadable
+`fleet.json`.
 
 ---
 
