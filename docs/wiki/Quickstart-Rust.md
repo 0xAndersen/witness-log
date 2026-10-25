@@ -226,13 +226,14 @@ checkpoints' roots, do not contain the event, the receipt plus the
 checkpoints and leaves are evidence anyone can check (§9.4,
 `silence_proof_for_subject`, which also says why a result is
 inconclusive). `silence_proof_in_context` takes a `SilenceContext` that
-also carries the revocations you know of (a receipt signed by a revoked
-key proves nothing), and `silence_proof_over_dossiers` runs it over the
-log's dossiers, as `witness-log prove-silence` does, using only dossiers
-that verify, are witnessed and reproduce their own checkpoint. `Present`
-means the event is at index `receipt.tree_size` in leaves that reproduce
-every counted witnessed checkpoint; anywhere else, or in a copy no witness
-cosigned, it is `Inconclusive`.
+also carries the revocations you know of (a receipt whose key has a v2
+revocation in effect, its index reached by a witnessed checkpoint, proves
+nothing), and `silence_proof_over_dossiers` runs it over the log's
+dossiers, as `witness-log prove-silence` does, using only dossiers that
+verify, are witnessed and reproduce their own checkpoint. `Present` means
+the event is at index `receipt.tree_size` in leaves that reproduce every
+counted witnessed checkpoint; at another index of those leaves it is
+`Misplaced`; in a copy no witness cosigned it is `Inconclusive`.
 
 ---
 

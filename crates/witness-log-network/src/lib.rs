@@ -2469,11 +2469,29 @@ pub enum SilenceProofResult {
         /// without the event appearing.
         witnessed_checkpoints_after: usize,
     },
+    /// The log signed a receipt promising the event at index
+    /// `promised_index` (the receipt's `tree_size`), and its witnessed
+    /// history has it at `leaf_index` instead: the same bundle that would
+    /// prove `Censored` proves a broken signed promise, though the event
+    /// was not left out. Not an omission, so not `Censored`; not where the
+    /// log said it would be, so not `Present`. No minimum number of
+    /// checkpoints applies: one counted checkpoint whose root the caller's
+    /// leaves reproduce fixes what is at the promised index for good.
+    Misplaced {
+        /// The receipt's `tree_size`: where the log promised the event.
+        promised_index: u64,
+        /// Where the event is in the bound leaves.
+        leaf_index: u64,
+        /// Counted checkpoints no larger than `leaf_index`: witnessed
+        /// histories after the receipt that did not contain the event at
+        /// all.
+        witnessed_checkpoints_without: usize,
+    },
     /// Not enough to conclude either way: a receipt that does not verify or
-    /// whose key was revoked, too few witnessed checkpoints since the
-    /// receipt, leaves that do not reproduce them, witnessed checkpoints
-    /// that contradict each other, or the event at another index than the
-    /// one promised. [`SilenceProofReport::reason`] says which.
+    /// whose key has a revocation in effect, too few witnessed checkpoints
+    /// since the receipt, leaves that do not reproduce them, or witnessed
+    /// checkpoints that contradict each other.
+    /// [`SilenceProofReport::reason`] says which.
     Inconclusive {
         receipt_tree_size: u64,
         witnessed_checkpoints_seen: usize,
@@ -2488,17 +2506,17 @@ pub struct SilenceProofReport {
     pub result: SilenceProofResult,
     /// The largest counted witnessed checkpoint `(tree_size, root_hash)`;
     /// the caller's leaves reproduce its root and that of every smaller
-    /// counted checkpoint. Set for `Present` and `Censored`, and for an
-    /// `Inconclusive` reached after the leaves were bound (too few
-    /// checkpoints, or the event at another index).
+    /// counted checkpoint. Set for `Present`, `Censored` and `Misplaced`,
+    /// and for an `Inconclusive` reached after the leaves were bound (too
+    /// few checkpoints).
     pub bound_tree_size: Option<u64>,
     pub bound_root_hash: Option<String>,
-    /// The index of the event in the bound leaves when it is not the one
-    /// the receipt promised (`Inconclusive`). The log broke the position it
-    /// signed for, but the event is in its witnessed history, so it was
-    /// not left out.
-    pub misplaced_at: Option<u64>,
-    /// Why the result is `Inconclusive`; `None` otherwise.
+    /// Revocations of the receipt's key that verify but have not taken
+    /// effect on the witnessed history supplied, and so were not applied
+    /// (see [`SilenceContext::revocations`]).
+    pub revocations_not_in_effect: usize,
+    /// Why the result is `Inconclusive`, or how the event was misplaced;
+    /// `None` otherwise.
     pub reason: Option<String>,
 }
 
@@ -2526,11 +2544,23 @@ pub struct SilenceContext<'a> {
     /// The organisation that operates the log, as for
     /// [`VerifyContext::subject_org`]; its witnesses never count.
     pub subject_org: Option<&'a str>,
-    /// Revocation statements the checker knows of. One that verifies and
-    /// revokes the receipt's key makes the result `Inconclusive`, whatever
-    /// its `as_of_ms` or `as_of_index`: the receipt's `issued_at_ms` and
-    /// `tree_size` are its signer's own claims, so nothing shows it was
-    /// signed before the key was revoked (or stolen).
+    /// Revocation statements the checker knows of; those that do not verify
+    /// or name another key are ignored (a caller reading them from a user
+    /// should refuse those first, as the CLI does). A revocation of the
+    /// receipt's key makes the result `Inconclusive` once it has taken
+    /// effect on the witnessed history supplied: it is a v2 (RFC-0005)
+    /// statement and a counted checkpoint is at least `as_of_index` large
+    /// (SPEC §5's pairing rule). From then on every verifier holding the
+    /// statement rejects every checkpoint of the log past that index, so
+    /// the log's identity ends there; and the receipt cannot be trusted,
+    /// since its `issued_at_ms` and `tree_size` are its signer's own
+    /// claims and nothing shows it was signed before the key was revoked
+    /// (or stolen). A revocation not in effect is not applied: a v1
+    /// statement cuts off only by `as_of_ms`, which the key holder can stay
+    /// under by dating its own checkpoints, and a v2 statement whose index
+    /// the witnessed history has not reached costs the log nothing yet.
+    /// Applying either would let the accused log neutralise a receipt for
+    /// free.
     pub revocations: &'a [RevocationStatement],
 }
 
@@ -2617,8 +2647,8 @@ pub fn silence_proof_for_subject(
 /// for a leaf it holds, with `tree_size` = that leaf's index, and the
 /// payload hash itself commits to the index). Its signature is verified
 /// first; an unverifiable receipt proves nothing, and neither does one
-/// whose key `ctx.revocations` revokes. (Before 0.3.1 this took a plain
-/// checkpoint, which commits to no event.)
+/// whose key has a revocation in effect ([`SilenceContext::revocations`]).
+/// (Before 0.3.1 this took a plain checkpoint, which commits to no event.)
 ///
 /// `later_checkpoints`: checkpoints the caller observed, each with its
 /// witness receipts. One counts only if it is larger than the receipt's
@@ -2646,10 +2676,9 @@ pub fn silence_proof_for_subject(
 /// reported as such and is not a silence proof.
 ///
 /// Then: the event at index `tree_size` is `Present`; at another index it
-/// is `Inconclusive` (the position promised was broken, but the event is
-/// in the witnessed history, see [`SilenceProofReport::misplaced_at`]);
-/// absent, it is `Censored` once `ctx.min_witnessed_checkpoints` counted
-/// checkpoints follow the receipt.
+/// is `Misplaced` (the position promised was broken, but the event is in
+/// the witnessed history); absent, it is `Censored` once
+/// `ctx.min_witnessed_checkpoints` counted checkpoints follow the receipt.
 pub fn silence_proof_in_context(
     write_receipt: &WriteReceipt,
     latest_leaves: &[Leaf],
@@ -2657,47 +2686,21 @@ pub fn silence_proof_in_context(
     ctx: &SilenceContext<'_>,
 ) -> SilenceProofReport {
     let min = ctx.min_witnessed_checkpoints;
-    let inconclusive =
-        |seen: usize, bound: Option<(u64, String)>, misplaced_at: Option<u64>, reason: String| {
-            let (bound_tree_size, bound_root_hash) = bound.unzip();
-            SilenceProofReport {
-                result: SilenceProofResult::Inconclusive {
-                    receipt_tree_size: write_receipt.tree_size,
-                    witnessed_checkpoints_seen: seen,
-                    min_required: min,
-                },
-                bound_tree_size,
-                bound_root_hash,
-                misplaced_at,
-                reason: Some(reason),
-            }
-        };
     // An unverifiable write receipt proves nothing about acceptance.
     if write_receipt.verify().is_err() {
-        return inconclusive(0, None, None, "the write receipt does not verify".into());
+        return SilenceProofReport {
+            result: SilenceProofResult::Inconclusive {
+                receipt_tree_size: write_receipt.tree_size,
+                witnessed_checkpoints_seen: 0,
+                min_required: min,
+            },
+            bound_tree_size: None,
+            bound_root_hash: None,
+            revocations_not_in_effect: 0,
+            reason: Some("the write receipt does not verify".into()),
+        };
     }
-    // Neither does one signed by a key that has been revoked: its time and
-    // index are the signer's own claims, so it cannot be dated before the
-    // revocation, and whoever holds a stolen key can sign one for any hash.
     let signer = normalize_hex(&write_receipt.signer_pubkey);
-    if let Some(r) = ctx
-        .revocations
-        .iter()
-        .find(|r| normalize_hex(&r.identity_pubkey) == signer && r.verify().is_ok())
-    {
-        return inconclusive(
-            0,
-            None,
-            None,
-            format!(
-                "the receipt's key was revoked (as of {} ms, reason {}): a receipt's time and index \
-                 are its signer's own claims, so it cannot be shown to predate the revocation, and \
-                 whoever holds the key can sign one",
-                r.as_of_ms,
-                witness_log_core::echo::quoted(&r.reason)
-            ),
-        );
-    }
     let event_payload_hash = normalize_hex(&write_receipt.payload_hash);
 
     // 1. Distinct checkpoints after the receipt, of this log, cosigned by
@@ -2715,13 +2718,59 @@ pub fn silence_proof_in_context(
     }
     let seen = counted.len();
 
-    // 2. Two witnessed roots for one size: the log equivocated, and what
+    // 2. Revocations of the receipt's key. One in effect on this witnessed
+    // history (v2, and a counted checkpoint has reached its index) ends the
+    // identity there, and leaves the receipt unprovable: its time and
+    // index are the signer's own claims, so it cannot be dated before the
+    // revocation, and whoever holds a stolen key can sign one for any
+    // hash. One not in effect is not applied (see `SilenceContext`).
+    let largest_counted = counted.iter().next_back().map(|(n, _)| *n);
+    let revocations: Vec<&RevocationStatement> = ctx
+        .revocations
+        .iter()
+        .filter(|r| normalize_hex(&r.identity_pubkey) == signer && r.verify().is_ok())
+        .collect();
+    let in_effect = revocations.iter().find(|r| {
+        r.as_of_index
+            .zip(largest_counted)
+            .is_some_and(|(n, largest)| largest >= n)
+    });
+    let not_in_effect = revocations.len() - usize::from(in_effect.is_some());
+    let inconclusive = |seen: usize, bound: Option<(u64, String)>, reason: String| {
+        let (bound_tree_size, bound_root_hash) = bound.unzip();
+        SilenceProofReport {
+            result: SilenceProofResult::Inconclusive {
+                receipt_tree_size: write_receipt.tree_size,
+                witnessed_checkpoints_seen: seen,
+                min_required: min,
+            },
+            bound_tree_size,
+            bound_root_hash,
+            revocations_not_in_effect: not_in_effect,
+            reason: Some(reason),
+        }
+    };
+    if let Some(r) = in_effect {
+        return inconclusive(
+            seen,
+            None,
+            format!(
+                "the receipt's key was revoked as of index {} (reason {}), and a witnessed \
+                 checkpoint has reached that index: a receipt's time and index are its signer's \
+                 own claims, so it cannot be shown to predate the revocation, and whoever holds the \
+                 key can sign one",
+                r.as_of_index.unwrap_or_default(),
+                witness_log_core::echo::quoted(&r.reason)
+            ),
+        );
+    }
+
+    // 3. Two witnessed roots for one size: the log equivocated, and what
     // one history holds says nothing about the other.
     let mut sizes = HashSet::new();
     if let Some((n, _)) = counted.iter().find(|(n, _)| !sizes.insert(*n)) {
         return inconclusive(
             seen,
-            None,
             None,
             format!(
                 "two witnessed checkpoints of size {n} commit to different roots: the log showed \
@@ -2733,19 +2782,17 @@ pub fn silence_proof_in_context(
         return inconclusive(
             0,
             None,
-            None,
             "no checkpoint after the receipt was cosigned by two independent operators from the \
              trusted directory"
                 .into(),
         );
     };
 
-    // 3. Bind the leaves: they must be the log's leaves up to the largest
+    // 4. Bind the leaves: they must be the log's leaves up to the largest
     // witnessed checkpoint, and agree with every smaller one.
     if (latest_leaves.len() as u64) < largest {
         return inconclusive(
             seen,
-            None,
             None,
             format!(
                 "the leaves cover {} entries but the largest witnessed checkpoint has {largest}: \
@@ -2764,7 +2811,6 @@ pub fn silence_proof_in_context(
         return inconclusive(
             seen,
             None,
-            None,
             format!(
                 "the leaves do not reproduce the witnessed root at size {largest}: they are not \
                  the log's history, so they show nothing about the event"
@@ -2778,7 +2824,6 @@ pub fn silence_proof_in_context(
         return inconclusive(
             seen,
             None,
-            None,
             format!(
                 "the leaves reproduce the witnessed checkpoint of size {largest}, but their first \
                  {n} leaves do not reproduce the witnessed checkpoint of size {n}: the log showed \
@@ -2786,43 +2831,47 @@ pub fn silence_proof_in_context(
             ),
         );
     }
+    let (bound_tree_size, bound_root_hash) = (Some(largest), Some(largest_root.clone()));
     let bound = Some((largest, largest_root));
 
-    // 4. The event, looked for among the bound leaves only: at the index
+    // 5. The event, looked for among the bound leaves only: at the index
     // the receipt promised, elsewhere, or nowhere.
     let promised = write_receipt.tree_size;
     let is_event = |l: &Leaf| normalize_hex(&l.payload_hash) == event_payload_hash;
     if bound_leaves.get(promised as usize).is_some_and(is_event) {
-        let (bound_tree_size, bound_root_hash) = bound.unzip();
         return SilenceProofReport {
             result: SilenceProofResult::Present {
                 leaf_index: promised,
             },
             bound_tree_size,
             bound_root_hash,
-            misplaced_at: None,
+            revocations_not_in_effect: not_in_effect,
             reason: None,
         };
     }
     if let Some(found) = bound_leaves.iter().position(is_event) {
         let found = found as u64;
         let without = counted.iter().filter(|(n, _)| *n <= found).count();
-        return inconclusive(
-            seen,
-            bound,
-            Some(found),
-            format!(
-                "the event is leaf {found}, not leaf {promised} where the receipt promised it: it is \
-                 in the witnessed history, so it was not left out, but the log broke the position \
-                 it signed for ({without} witnessed checkpoint(s) after the receipt did not contain \
-                 it at all)"
-            ),
-        );
+        return SilenceProofReport {
+            result: SilenceProofResult::Misplaced {
+                promised_index: promised,
+                leaf_index: found,
+                witnessed_checkpoints_without: without,
+            },
+            bound_tree_size,
+            bound_root_hash,
+            revocations_not_in_effect: not_in_effect,
+            reason: Some(format!(
+                "the event is leaf {found}, not leaf {promised} where the receipt promised it: the \
+                 log broke the position it signed for, though the event is in its witnessed \
+                 history ({without} witnessed checkpoint(s) after the receipt did not contain it \
+                 at all)"
+            )),
+        };
     }
 
-    // 5. Absent from the witnessed history.
+    // 6. Absent from the witnessed history.
     if seen >= min {
-        let (bound_tree_size, bound_root_hash) = bound.unzip();
         SilenceProofReport {
             result: SilenceProofResult::Censored {
                 receipt_tree_size: write_receipt.tree_size,
@@ -2830,14 +2879,13 @@ pub fn silence_proof_in_context(
             },
             bound_tree_size,
             bound_root_hash,
-            misplaced_at: None,
+            revocations_not_in_effect: not_in_effect,
             reason: None,
         }
     } else {
         inconclusive(
             seen,
             bound,
-            None,
             format!("{seen} witnessed checkpoint(s) after the receipt; {min} required"),
         )
     }
@@ -2905,9 +2953,10 @@ pub struct DossierSilenceProof {
 /// the trusted directory, and its leaves reproduce that checkpoint
 /// ([`SilenceCheckpointUse`]); any other dossier is used for nothing, so
 /// adding a forged, unwitnessed, edited or foreign dossier never changes
-/// the result. The leaves come from the largest counted dossier. The
-/// revocations the dossiers carry are applied with `ctx.revocations`.
-/// What `witness-log prove-silence` runs.
+/// the result (not even through the revocations it carries). The leaves
+/// come from the largest counted dossier. The revocations counted dossiers
+/// carry are applied with `ctx.revocations`. What `witness-log
+/// prove-silence` runs.
 pub fn silence_proof_over_dossiers(
     write_receipt: &WriteReceipt,
     dossiers: &[Dossier],
@@ -2947,8 +2996,12 @@ pub fn silence_proof_over_dossiers(
     let leaves = leaves_from
         .map(|i| dossiers[i].leaves.as_slice())
         .unwrap_or(&[]);
+    // Revocations carried by counted dossiers only, so that a set-aside
+    // dossier changes nothing. A revocation is self-signed, so where it
+    // comes from adds nothing to it; one carried elsewhere can still be
+    // passed in `ctx.revocations`.
     let mut revocations = ctx.revocations.to_vec();
-    for d in dossiers {
+    for (_, d) in counted() {
         revocations.extend(d.revocations.iter().cloned());
     }
     let report = silence_proof_in_context(

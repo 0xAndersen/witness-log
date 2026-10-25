@@ -365,14 +365,16 @@ independent operators in *your* directory cosigned it, and its leaves
 reproduce it (`report["dossiers"][i]["status"]` says why one did not).
 `result` is `"present"` (the event is at the promised index in leaves that
 reproduce every counted checkpoint), `"inconclusive"` (`reason` says what
-is missing, including the event at another index or a key revoked through
-`revocations_json`; never an accusation) or `"censored"`: the receipt
+is missing, including a revocation of the key in effect through
+`revocations_json`; never an accusation), `"censored"`: the receipt
 verifies, at least `min_checkpoints` (default 2) counted checkpoints
 followed it, and their leaves, which must reproduce every one of their
-roots, do not contain the event. That bundle (receipt, dossiers, your
-directory) is evidence anyone can recheck. A receipt that does not verify
-raises `SignatureError`; one not signed by `expected_identity` raises
-`ValueError`. What it does and does not prove:
+roots, do not contain the event; or `"misplaced"`: the event is in those
+leaves at `leaf_index`, not at the promised index (a broken promise, not
+an omission). That bundle (receipt, dossiers, your directory) is evidence
+anyone can recheck. A receipt, or a revocation of its key, that does not
+verify raises `SignatureError`; one not signed by `expected_identity`
+raises `ValueError`. What it does and does not prove:
 [Threat model](Threat-Model#proving-an-omission).
 
 ---

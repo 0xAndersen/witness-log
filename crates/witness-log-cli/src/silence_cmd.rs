@@ -19,7 +19,8 @@ use witness_log_network::{
 };
 
 /// The result is the exit status, spaced like `verify`'s: 0 is the only
-/// "proceed", 20 is "not enough to say", 30 is a finding against the log.
+/// "proceed", 20 is "not enough to say", 30 and up are findings against
+/// the log, so `-ge 30` reads "the log broke what it signed".
 mod code {
     /// The event is in the log's witnessed history.
     pub const PRESENT: u8 = 0;
@@ -28,6 +29,10 @@ mod code {
     /// The log signed a receipt for an event its witnessed history
     /// provably omits.
     pub const CENSORED: u8 = 30;
+    /// The log signed a receipt promising the event at one index, and its
+    /// witnessed history has it at another: a broken signed promise, not an
+    /// omission.
+    pub const MISPLACED: u8 = 31;
 }
 
 /// The library's "conservative minimum" of witnessed checkpoints after the
@@ -59,13 +64,18 @@ pub(crate) const USAGE: &str =
   --min-checkpoints N  counted checkpoints after the receipt that CENSORED needs (default 2)
   --subject-org ORG    the organisation that operates the log; its witnesses never count
   --revocations <path> revocations you know of (one statement or a JSON array), applied with
-                       those the dossiers carry: a receipt whose key was revoked proves nothing
+                       those counted dossiers carry. A v2 revocation of the receipt's key whose
+                       as_of_index a counted checkpoint has reached leaves the receipt proving
+                       nothing; v1 statements, and v2 ones not yet reached, are not applied.
+                       A statement for the receipt's key that does not verify is exit 2
   --json               one JSON object instead of the verdict line
   Exit: 0 PRESENT: the event is in the log's witnessed history, at the promised index
         20 INCONCLUSIVE: not enough witnessed evidence either way (never an accusation)
         30 CENSORED: the log signed a receipt for an event its witnessed history omits
-        2 usage, unreadable or malformed input, a receipt that does not verify, or a
-          receipt not signed by --identity";
+        31 MISPLACED: the log signed a receipt for the event at one index, and its witnessed
+           history has it at another: a broken signed promise, not an omission
+        2 usage, unreadable or malformed input, a receipt or a --revocations statement for
+          its key that does not verify, or a receipt not signed by --identity";
 
 struct Options {
     receipt_path: String,
@@ -311,6 +321,27 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         },
         None => Vec::new(),
     };
+    // A statement for the receipt's key that does not verify is refused,
+    // not dropped: the checker supplied it believing the key revoked, and a
+    // silent CENSORED would hide that it proves nothing (`verify
+    // --revocations` reports such a dossier INVALID for the same reason).
+    // Statements for other keys are ignored, as `verify` ignores them.
+    if let Some((i, e)) = revocations.iter().enumerate().find_map(|(i, r)| {
+        let ours = r
+            .identity_pubkey
+            .trim()
+            .eq_ignore_ascii_case(receipt.signer_pubkey.trim());
+        match r.verify() {
+            Err(e) if ours => Some((i, e)),
+            _ => None,
+        }
+    }) {
+        return usage(format!(
+            "revocation {i} in {} names the receipt's key but does not verify ({e}): it was altered, \
+             or is not a revocation of this key",
+            opts.revocations_path.as_deref().unwrap_or_default()
+        ));
+    }
 
     let proof = silence_proof_over_dossiers(
         &receipt,
@@ -325,21 +356,32 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let report = &proof.report;
     let (result, exit) = match &report.result {
         SilenceProofResult::Censored { .. } => ("censored", code::CENSORED),
+        SilenceProofResult::Misplaced { .. } => ("misplaced", code::MISPLACED),
         SilenceProofResult::Present { .. } => ("present", code::PRESENT),
         SilenceProofResult::Inconclusive { .. } => ("inconclusive", code::INCONCLUSIVE),
     };
 
     if opts.json {
-        let (leaf_index, after, seen) = match &report.result {
-            SilenceProofResult::Present { leaf_index } => (Some(*leaf_index), None, None),
+        let (leaf_index, after, seen, without) = match &report.result {
+            SilenceProofResult::Present { leaf_index } => (Some(*leaf_index), None, None, None),
             SilenceProofResult::Censored {
                 witnessed_checkpoints_after,
                 ..
-            } => (None, Some(*witnessed_checkpoints_after), None),
+            } => (None, Some(*witnessed_checkpoints_after), None, None),
+            SilenceProofResult::Misplaced {
+                leaf_index,
+                witnessed_checkpoints_without,
+                ..
+            } => (
+                Some(*leaf_index),
+                None,
+                None,
+                Some(*witnessed_checkpoints_without),
+            ),
             SilenceProofResult::Inconclusive {
                 witnessed_checkpoints_seen,
                 ..
-            } => (report.misplaced_at, None, Some(*witnessed_checkpoints_seen)),
+            } => (None, None, Some(*witnessed_checkpoints_seen), None),
         };
         let inputs: Vec<serde_json::Value> = opts
             .dossier_paths
@@ -365,7 +407,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             "receipt_tree_size": receipt.tree_size,
             "witnessed_checkpoints_after": after,
             "witnessed_checkpoints_seen": seen,
+            "witnessed_checkpoints_without": without,
             "min_checkpoints": opts.min_checkpoints,
+            "revocations_not_in_effect": report.revocations_not_in_effect,
             "bound_tree_size": report.bound_tree_size,
             "bound_root_hash": report.bound_root_hash,
             "reason": report.reason,
@@ -398,6 +442,12 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     if !not_counted.is_empty() {
         println!("  note: not counted: {}", not_counted.join("; "));
     }
+    if report.revocations_not_in_effect > 0 {
+        println!(
+            "  note: {} revocation(s) of this key not applied: not in effect on the witnessed history you hold (a v1 statement never is; a v2 statement once a counted checkpoint reaches its as_of_index)",
+            report.revocations_not_in_effect
+        );
+    }
     if opts.identity.is_none() && result != "inconclusive" {
         println!(
             "\u{26A0} --identity was not supplied: this is about the log whose key signed the receipt, {}. Pass --identity <the log's key, obtained out of band> to tie it to the log you dealt with.",
@@ -426,6 +476,14 @@ fn verdict_line(receipt: &WriteReceipt, report: &SilenceProofReport) -> String {
         } => format!(
             "CENSORED: the log signed a write receipt for this event (payload_hash {}) at tree size {}, and {witnessed_checkpoints_after} later checkpoints of the same log, each cosigned by at least {min} independent operators from your directory, do not contain it, up to {bound}. The receipt, these dossiers and your directory are the evidence: anyone who checks them reaches this result.",
             receipt.payload_hash, receipt.tree_size
+        ),
+        SilenceProofResult::Misplaced {
+            promised_index,
+            leaf_index,
+            witnessed_checkpoints_without,
+        } => format!(
+            "MISPLACED: the log signed a write receipt for this event (payload_hash {}) at index {promised_index}, and its witnessed history has it at leaf {leaf_index} instead, up to {bound}; {witnessed_checkpoints_without} witnessed checkpoint(s) after the receipt did not contain it at all. The log broke the position it signed for; the event was not left out.",
+            receipt.payload_hash
         ),
         SilenceProofResult::Inconclusive { .. } => {
             let reason = report

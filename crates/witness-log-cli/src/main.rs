@@ -213,7 +213,8 @@ USAGE:
       receipt promised, or provably left out of it? Exit 0 PRESENT,
       20 INCONCLUSIVE (never an accusation), 30 CENSORED: --min-checkpoints
       (default 2) later checkpoints, each cosigned by two independent
-      operators, whose leaves omit the entry.
+      operators, whose leaves omit the entry; 31 MISPLACED: the entry is in
+      that history, but not at the index the receipt promised.
 
   witness-log submit <journal> --directory <trusted.json> [--out dossier.json] [--min N] [--allow-partial]
       Same as `witness submit`: get the journal's head cosigned and write
@@ -316,8 +317,8 @@ EXIT CODES — the verdict IS the exit status, so gating needs no JSON parsing:
   11  WITNESSED by fewer than a            witness evidence, or (diff) a second copy
       directory majority (split view   40  INVALID: a check failed; the file proves nothing
       possible; strict is the default)  2  usage / unreadable input
-  prove-silence: 0 PRESENT, 20 INCONCLUSIVE, 30 CENSORED, 2 usage or a receipt that
-      does not verify or is not signed by --identity
+  prove-silence: 0 PRESENT, 20 INCONCLUSIVE, 30 CENSORED, 31 MISPLACED, 2 usage or a
+      receipt (or a revocation of its key) that does not verify, or one not signed by --identity
 ";
 
 /// First value following `flag`, if present. Values that look like

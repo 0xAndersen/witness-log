@@ -619,10 +619,11 @@ fn a_fork_across_sizes_is_inconclusive_not_present() {
     assert_eq!(code(&prove(&[&b12])), 0);
 }
 
-/// Review finding 3: the receipt promises an index. An event left out of
-/// witnessed checkpoints 5 and 9 and appended at index 9 is not PRESENT.
+/// Review finding 3 (first review), 2 (second): the receipt promises an
+/// index. An event left out of witnessed checkpoints 5 and 9 and appended
+/// at index 9 is MISPLACED (exit 31): not PRESENT, and not CENSORED.
 #[test]
-fn an_event_appended_at_another_index_than_promised_is_not_present() {
+fn an_event_appended_at_another_index_than_promised_is_misplaced() {
     let s = Setup::new("misplaced");
     let mut log = WitnessLog::resume(IdentityKeypair::from_bytes(&SEED), 0);
     let mut dossiers = Vec::new();
@@ -652,73 +653,138 @@ fn an_event_appended_at_another_index_than_promised_is_not_present() {
     );
     let receipt =
         s.t.write("late.json", &serde_json::to_string(&receipt).unwrap());
-    let prove = |dossiers: &[String]| {
+    let prove = |dossiers: &[String], json: bool| {
         let mut args = vec!["prove-silence", &receipt, "--directory", &s.directory];
         for d in dossiers {
             args.extend(["--dossier", d.as_str()]);
         }
-        args.push("--json");
+        if json {
+            args.push("--json");
+        }
         wl(&s.t.0, &args)
     };
-    let o = prove(&dossiers);
-    assert_eq!(code(&o), 20, "{}", out(&o));
+    let o = prove(&dossiers, true);
+    assert_eq!(code(&o), 31, "{}", out(&o));
     let v = json(&o);
-    assert_eq!(v["result"], "inconclusive");
+    assert_eq!(v["result"], "misplaced");
+    assert_eq!(v["exit_code"], 31);
     assert_eq!(v["leaf_index"], 9);
     assert_eq!(v["promised_index"], 0);
+    assert_eq!(v["witnessed_checkpoints_without"], 2);
     assert_eq!(v["bound_tree_size"], 10);
     assert!(v["reason"].as_str().unwrap().contains("not leaf 0"), "{v}");
+    let o = prove(&dossiers, false);
+    assert_eq!(code(&o), 31);
+    assert!(out(&o).starts_with("MISPLACED:"), "{}", out(&o));
+    assert!(
+        out(&o).contains("2 witnessed checkpoint(s) after the receipt did not contain it"),
+        "{}",
+        out(&o)
+    );
     // Without the size-10 checkpoint the event is beyond the witnessed
     // history: left out of both checkpoints.
-    let o = prove(&dossiers[..2]);
+    let o = prove(&dossiers[..2], false);
     assert_eq!(code(&o), 30, "{}", out(&o));
 }
 
-/// Review finding 4: a receipt signed by a revoked key proves nothing.
+/// Review finding 4 (first review), 1 and 3 (second): only a revocation in
+/// effect on the witnessed history neutralises a receipt; one the accused
+/// log signs for free changes nothing; a statement for the receipt's key
+/// that does not verify is refused.
 #[test]
-fn a_receipt_whose_key_was_revoked_is_inconclusive() {
+fn only_a_revocation_in_effect_makes_a_receipt_inconclusive() {
     let s = Setup::new("revoked");
     let (c5, c9, _) = s.censoring();
-    let revocation = s.t.path("revocation.json");
-    let r = wl(
-        &s.t.0,
-        &[
+    let revoke = |name: &str, extra: &[&str]| {
+        let path = s.t.path(name);
+        let mut args = vec![
             "log",
             "revoke",
             &s.journal,
             "--reason",
             "key stolen",
             "--out",
-            &revocation,
-        ],
-    );
-    assert_eq!(code(&r), 0, "{}", err(&r));
-    let o = s.prove(&[
-        "--dossier",
-        &c5,
-        "--dossier",
-        &c9,
-        "--revocations",
-        &revocation,
-        "--json",
-    ]);
+            &path,
+        ];
+        args.extend_from_slice(extra);
+        let r = wl(&s.t.0, &args);
+        assert_eq!(code(&r), 0, "{}", err(&r));
+        path
+    };
+    let v1_now = revoke("v1-now.json", &[]);
+    let v1_noop = revoke("v1-noop.json", &["--as-of-ms", "18446744073709551615"]);
+    let v2_unreached = revoke("v2-100.json", &["--experimental", "--as-of-index", "100"]);
+    let v2_in_effect = revoke("v2-9.json", &["--experimental", "--as-of-index", "9"]);
+    let prove = |extra: &[&str]| {
+        let mut args = vec!["--dossier", c5.as_str(), "--dossier", c9.as_str()];
+        args.extend_from_slice(extra);
+        s.prove(&args)
+    };
+
+    // Not in effect, so not applied (before the second review: exit 20).
+    for r in [&v1_now, &v1_noop, &v2_unreached] {
+        let o = prove(&["--revocations", r, "--json"]);
+        assert_eq!(code(&o), 30, "{r}: {}", out(&o));
+        assert_eq!(json(&o)["revocations_not_in_effect"], 1);
+        let o = prove(&["--revocations", r]);
+        assert!(
+            out(&o).contains("1 revocation(s) of this key not applied"),
+            "{}",
+            out(&o)
+        );
+    }
+    // In effect: a witnessed checkpoint of size 9 has reached its index.
+    let o = prove(&["--revocations", &v2_in_effect, "--json"]);
     assert_eq!(code(&o), 20, "{}", out(&o));
     let v = json(&o);
     assert!(v["reason"].as_str().unwrap().contains("revoked"), "{v}");
-    assert_eq!(v["revocations"], revocation.as_str());
+    assert_eq!(v["revocations"], v2_in_effect.as_str());
 
-    // Carried by a dossier instead: the same.
-    let mut d9: Dossier = Dossier::from_json(&std::fs::read_to_string(&c9).unwrap()).unwrap();
-    d9.revocations
-        .push(serde_json::from_str(&std::fs::read_to_string(&revocation).unwrap()).unwrap());
-    let d9 = write_dossier(&s.t, "c9-revoked.json", &d9);
-    let o = s.prove(&["--dossier", &c5, "--dossier", &d9]);
+    // Carried by a counted dossier: the same. Carried by a dossier that is
+    // set aside (here, a forged checkpoint): nothing, even in effect.
+    let genuine: Dossier = Dossier::from_json(&std::fs::read_to_string(&c9).unwrap()).unwrap();
+    let statement = |p: &str| -> witness_log_core::identity::RevocationStatement {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    };
+    let mut carrying = genuine.clone();
+    carrying.revocations.push(statement(&v2_in_effect));
+    let carrying = write_dossier(&s.t, "c9-revoked.json", &carrying);
+    let o = s.prove(&["--dossier", &c5, "--dossier", &carrying]);
     assert_eq!(code(&o), 20, "{}", out(&o));
     assert!(out(&o).contains("revoked"), "{}", out(&o));
+    for r in [&v1_noop, &v2_in_effect] {
+        let mut junk = genuine.clone();
+        junk.checkpoint.tree_size = 10;
+        junk.revocations.push(statement(r));
+        let junk = write_dossier(&s.t, "junk.json", &junk);
+        let o = s.prove(&["--dossier", &c5, "--dossier", &c9, "--dossier", &junk]);
+        assert_eq!(code(&o), 30, "{r}: {}", out(&o));
+    }
+
+    // A statement for the receipt's key that does not verify: refused.
+    let mut altered: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&v2_in_effect).unwrap()).unwrap();
+    altered["reason"] = serde_json::json!("edited");
+    let altered = s.t.write("altered-revocation.json", &altered.to_string());
+    let o = prove(&["--revocations", &altered]);
+    assert_eq!(code(&o), 2, "{}", out(&o));
+    assert!(out(&o).is_empty());
+    assert!(err(&o).contains("does not verify"), "{}", err(&o));
+    // One for another key is ignored, as `verify --revocations` ignores it.
+    let other = WitnessLog::resume(IdentityKeypair::from_bytes(&[9u8; 32]), 0).revoke(
+        None,
+        Some(0),
+        "another log",
+    );
+    let other = s.t.write(
+        "other-revocation.json",
+        &serde_json::to_string(&other).unwrap(),
+    );
+    assert_eq!(code(&prove(&["--revocations", &other])), 30);
 
     // A revocations file that is not one is a usage error.
     let bad = s.t.write("bad-revocations.json", "[1, 2]");
-    let o = s.prove(&["--dossier", &c5, "--dossier", &c9, "--revocations", &bad]);
+    let o = prove(&["--revocations", &bad]);
     assert_eq!(code(&o), 2, "{}", err(&o));
 }
 
@@ -1022,13 +1088,16 @@ fn help_names_both_commands_and_the_exit_codes() {
     let top = wl(&t.0, &["--help"]);
     assert!(out(&top).contains("witness-log log receipt <journal> <index>"));
     assert!(out(&top).contains("witness-log prove-silence <receipt.json>"));
-    assert!(out(&top).contains("prove-silence: 0 PRESENT, 20 INCONCLUSIVE, 30 CENSORED"));
+    assert!(
+        out(&top).contains("prove-silence: 0 PRESENT, 20 INCONCLUSIVE, 30 CENSORED, 31 MISPLACED")
+    );
     let help = wl(&t.0, &["prove-silence", "--help"]);
     assert_eq!(code(&help), 0);
     for needle in [
         "0 PRESENT",
         "20 INCONCLUSIVE",
         "30 CENSORED",
+        "31 MISPLACED",
         "2 usage",
         "--min-checkpoints",
         "--revocations",

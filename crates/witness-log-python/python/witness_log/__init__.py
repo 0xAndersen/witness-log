@@ -376,22 +376,29 @@ def prove_silence(
     (``dossiers[i]["status"]`` says why). The leaves come from the largest
     counted dossier and must reproduce every counted checkpoint. Inputs are
     JSON strings or the parsed objects. ``revocations_json`` (one statement
-    or a list) is applied with the revocations the dossiers carry: a receipt
-    whose key was revoked proves nothing.
+    or a list) is applied with the revocations counted dossiers carry: a v2
+    revocation of the receipt's key (``revoke_json(..., as_of_index=N,
+    experimental=True)``) whose index a counted checkpoint has reached
+    leaves the receipt proving nothing. v1 statements, and v2 ones no
+    witnessed checkpoint has reached, are not applied
+    (``revocations_not_in_effect`` counts them): the accused log could sign
+    one for free.
 
     ``result`` is ``"present"`` (the event is leaf ``leaf_index`` =
     ``promised_index`` of the witnessed history, bound to
     ``bound_tree_size``/``bound_root_hash``), ``"inconclusive"``
-    (``reason`` says what is missing; never an accusation; ``leaf_index`` is
-    set when the event is in the witnessed history at another index than
-    promised) or ``"censored"`` (at least ``min_checkpoints`` witnessed
-    checkpoints after the receipt, whose leaves omit the event).
+    (``reason`` says what is missing; never an accusation), ``"censored"``
+    (at least ``min_checkpoints`` witnessed checkpoints after the receipt,
+    whose leaves omit the event) or ``"misplaced"`` (the event is leaf
+    ``leaf_index`` of the witnessed history, not ``promised_index``: the log
+    broke the position it signed for; ``witnessed_checkpoints_without``
+    counts the witnessed checkpoints that lacked it entirely).
 
     Raises ``MalformedError`` for input that does not parse,
-    ``SignatureError`` for a receipt that does not verify, and
-    ``ValueError`` for a receipt not signed by ``expected_identity``, an
-    empty ``dossiers_json``, ``min_checkpoints`` below 1 or another bad
-    argument."""
+    ``SignatureError`` for a receipt, or a revocation of its key, that does
+    not verify, and ``ValueError`` for a receipt not signed by
+    ``expected_identity``, an empty ``dossiers_json``, ``min_checkpoints``
+    below 1 or another bad argument."""
 
     def text(v: Any) -> str:
         return v if isinstance(v, str) else json.dumps(v)

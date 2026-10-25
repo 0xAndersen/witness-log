@@ -185,7 +185,7 @@ fn present_is_the_event_at_the_promised_index_in_leaves_bound_to_every_witnessed
         r.bound_root_hash.as_deref(),
         Some(hex::encode(root_of(&leaves)).as_str())
     );
-    assert!(r.reason.is_none() && r.misplaced_at.is_none());
+    assert!(r.reason.is_none());
 
     // One witnessed checkpoint covering the event is enough to be present.
     let r = check(&receipt, &leaves, &later[..1], &dir);
@@ -269,12 +269,13 @@ fn a_fork_across_sizes_is_equivocation_not_presence() {
     assert!(p.report.reason.as_deref().unwrap().contains("fork"));
 }
 
-/// Finding 3: the receipt promises index `tree_size`. An event the log
-/// left out of witnessed checkpoints 5 and 9 and then appended at index 9
-/// is in its history, but not where it was promised: not PRESENT, and not
-/// CENSORED either (it was not left out).
+/// Finding 3 (first review) and 2 (second): the receipt promises index
+/// `tree_size`. An event the log left out of witnessed checkpoints 5 and 9
+/// and then appended at index 9 is in its history, but not where it was
+/// promised: MISPLACED, a broken signed promise, neither PRESENT nor
+/// CENSORED (it was not left out).
 #[test]
-fn the_event_at_another_index_than_promised_is_not_present() {
+fn the_event_at_another_index_than_promised_is_misplaced() {
     let (dir, ws) = network();
     let mut log = new_log();
     for i in 0..9 {
@@ -290,12 +291,33 @@ fn the_event_at_another_index_than_promised_is_not_present() {
         witnessed(&leaves, &ws[..2]),
     ];
     let r = check(&receipt, &leaves, &later, &dir);
-    assert!(is_inconclusive(&r), "{r:?}");
-    assert_eq!(r.misplaced_at, Some(9));
+    assert!(
+        matches!(
+            r.result,
+            SilenceProofResult::Misplaced {
+                promised_index: 0,
+                leaf_index: 9,
+                witnessed_checkpoints_without: 2
+            }
+        ),
+        "{r:?}"
+    );
     assert_eq!(r.bound_tree_size, Some(10));
     let why = r.reason.unwrap();
     assert!(why.contains("leaf 9, not leaf 0"), "{why}");
     assert!(why.contains("2 witnessed checkpoint(s)"), "{why}");
+    // No minimum applies: the size-10 checkpoint alone fixes leaf 0.
+    let r = silence_proof_in_context(&receipt, &leaves, &later[2..], &ctx(&dir, 5, &[]));
+    assert!(
+        matches!(
+            r.result,
+            SilenceProofResult::Misplaced {
+                witnessed_checkpoints_without: 0,
+                ..
+            }
+        ),
+        "{r:?}"
+    );
 
     // Mutation guard: the event is looked for only among the leaves the
     // witnessed checkpoints cover. With checkpoints 5 and 9 alone, the
@@ -307,50 +329,142 @@ fn the_event_at_another_index_than_promised_is_not_present() {
     // An event before the promised index is misplaced too.
     let early = WriteReceipt::sign(&key(), &leaves[3].payload_hash, 5, NOW);
     let r = check(&early, &leaves, &later[1..], &dir);
-    assert!(is_inconclusive(&r), "{r:?}");
-    assert_eq!(r.misplaced_at, Some(3));
+    assert!(
+        matches!(
+            r.result,
+            SilenceProofResult::Misplaced {
+                promised_index: 5,
+                leaf_index: 3,
+                witnessed_checkpoints_without: 0
+            }
+        ),
+        "{r:?}"
+    );
 }
 
-/// Finding 4: a receipt signed by a revoked key proves nothing, whatever it
-/// claims about when it was issued: whoever stole the key can sign one for
-/// any hash and "prove" an honest log censored it.
+/// Finding 4 (first review) and 1 (second): a receipt signed by a key whose
+/// revocation has taken effect proves nothing, whatever it claims about
+/// when it was issued, since whoever stole the key can sign one for any
+/// hash. But a revocation that has not taken effect on the witnessed
+/// history is not applied: otherwise the accused log escapes for free by
+/// signing one that never cuts anything off.
 #[test]
-fn a_receipt_whose_key_was_revoked_proves_nothing() {
+fn only_a_revocation_in_effect_neutralises_a_receipt() {
     let (dir, ws) = network();
     let c = censoring(&ws);
     let later = [
         cosigned(c.d5.checkpoint.clone(), &ws[..2]),
         cosigned(c.d9.checkpoint.clone(), &ws[..2]),
     ];
-    assert!(is_censored(&check(&c.receipt, &c.leaves, &later, &dir)));
+    let with = |rs: &[RevocationStatement]| {
+        silence_proof_in_context(&c.receipt, &c.leaves, &later, &ctx(&dir, 2, rs))
+    };
+    assert!(is_censored(&with(&[])));
 
-    // Revoked after the receipt's self-asserted time, by index too: still
-    // nothing, since neither the time nor the index can be trusted.
-    let revocation = new_log().revoke(Some(NOW + 1_000_000), Some(100), "key stolen");
+    // Not in effect, so not applied: v1 statements, whatever their time
+    // (the log dates its own checkpoints), and v2 statements whose index
+    // no witnessed checkpoint has reached. Before the second review each
+    // of these made the result Inconclusive.
+    let log = new_log();
+    for r in [
+        log.revoke(Some(u64::MAX), None, "noop"),
+        log.revoke(Some(0), None, "everything, by time"),
+        log.revoke(Some(NOW), None, "now"),
+        log.revoke(Some(u64::MAX), Some(u64::MAX), "noop"),
+        log.revoke(Some(0), Some(10), "one past the witnessed history"),
+    ] {
+        let rep = with(std::slice::from_ref(&r));
+        assert!(is_censored(&rep), "{r:?}: {rep:?}");
+        assert_eq!(rep.revocations_not_in_effect, 1, "{r:?}");
+    }
+
+    // In effect: a v2 index at or below a counted checkpoint. Every
+    // verifier holding it rejects every checkpoint of this log past that
+    // index, so the identity ends there.
+    for index in [9, 5, 0] {
+        let r = log.revoke(Some(u64::MAX), Some(index), "key stolen");
+        let rep = with(&[r]);
+        assert!(is_inconclusive(&rep), "{index}: {rep:?}");
+        assert!(
+            rep.reason.as_deref().unwrap().contains("revoked"),
+            "{rep:?}"
+        );
+        assert_eq!(rep.revocations_not_in_effect, 0);
+    }
+    // One in effect among others: inconclusive; the rest are counted as
+    // not in effect.
+    let rep = with(&[
+        log.revoke(Some(u64::MAX), None, "noop"),
+        log.revoke(None, Some(9), "key stolen"),
+    ]);
+    assert!(is_inconclusive(&rep));
+    assert_eq!(rep.revocations_not_in_effect, 1);
+
+    // A revocation of another key, or one that does not verify, changes
+    // nothing and is not counted.
+    let other =
+        WitnessLog::resume(IdentityKeypair::from_bytes(&[9u8; 32]), 0).revoke(None, Some(0), "x");
+    let mut forged = log.revoke(None, Some(9), "key stolen");
+    forged.reason = "edited".into();
+    for rs in [vec![other], vec![forged]] {
+        let rep = with(&rs);
+        assert!(is_censored(&rep), "{rep:?}");
+        assert_eq!(rep.revocations_not_in_effect, 0);
+    }
+}
+
+/// The case revocations exist for: someone holding a stolen key signs a
+/// backdated receipt for a hash the honest log never saw, and "proves" its
+/// public witnessed dossiers omit it. Once the operator's v2 revocation at
+/// its witnessed size is known, the receipt proves nothing.
+#[test]
+fn a_receipt_forged_with_a_stolen_key_proves_nothing_once_the_key_is_revoked() {
+    let (dir, ws) = network();
+    let (_, leaves, later) = honest(&ws);
+    let forged = WriteReceipt::sign(&key(), &"ef".repeat(32), 0, NOW - 1);
+    assert!(is_censored(&check(&forged, &leaves, &later, &dir)));
+    let revocation = new_log().revoke(None, Some(9), "key stolen");
     let r = silence_proof_in_context(
-        &c.receipt,
-        &c.leaves,
+        &forged,
+        &leaves,
         &later,
         &ctx(&dir, 2, std::slice::from_ref(&revocation)),
     );
     assert!(is_inconclusive(&r), "{r:?}");
-    assert!(r.reason.as_deref().unwrap().contains("revoked"), "{r:?}");
+}
 
-    // A revocation of another key, or one that does not verify, changes
-    // nothing.
-    let other =
-        WitnessLog::resume(IdentityKeypair::from_bytes(&[9u8; 32]), 0).revoke(None, None, "other");
-    let mut forged = revocation.clone();
-    forged.reason = "edited".into();
-    for rs in [vec![other], vec![forged]] {
-        let r = silence_proof_in_context(&c.receipt, &c.leaves, &later, &ctx(&dir, 2, &rs));
-        assert!(is_censored(&r), "{r:?}");
+/// Second review, finding 1: revocations a dossier carries apply only when
+/// that dossier counts. The reviewer's repro: a junk dossier (broken
+/// signature) carrying a no-op revocation turned 30 into 20.
+#[test]
+fn a_set_aside_dossier_cannot_bring_a_revocation() {
+    let (dir, ws) = network();
+    let c = censoring(&ws);
+    let log = new_log();
+    let in_effect = log.revoke(None, Some(9), "key stolen");
+    for r in [log.revoke(Some(u64::MAX), None, "noop"), in_effect.clone()] {
+        let mut junk = c.d9.clone();
+        junk.checkpoint.tree_size = 10;
+        junk.revocations.push(r.clone());
+        let p = silence_proof_over_dossiers(
+            &c.receipt,
+            &[c.d5.clone(), c.d9.clone(), junk],
+            &ctx(&dir, 2, &[]),
+        );
+        assert_eq!(p.dossiers[2], SilenceCheckpointUse::BadSignature);
+        assert!(is_censored(&p.report), "{r:?}: {p:?}");
     }
-
-    // Over dossiers: a revocation carried by any dossier applies.
+    // Carried by a counted dossier, a revocation in effect applies.
     let mut d9 = c.d9.clone();
-    d9.revocations.push(revocation);
+    d9.revocations.push(in_effect.clone());
     let p = silence_proof_over_dossiers(&c.receipt, &[c.d5.clone(), d9], &ctx(&dir, 2, &[]));
+    assert!(is_inconclusive(&p.report), "{p:?}");
+    // And so does one passed in directly, whatever carries the dossiers.
+    let p = silence_proof_over_dossiers(
+        &c.receipt,
+        &[c.d5.clone(), c.d9.clone()],
+        &ctx(&dir, 2, std::slice::from_ref(&in_effect)),
+    );
     assert!(is_inconclusive(&p.report), "{p:?}");
 }
 

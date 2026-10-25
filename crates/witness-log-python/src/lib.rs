@@ -511,14 +511,17 @@ fn verify_dossier_json_detached(
 /// `witness-log prove-silence` runs, and the same JSON object as its
 /// `--json` with dossier indices where the CLI has paths and no
 /// `exit_code`. `result` is "present", "inconclusive" (never an
-/// accusation) or "censored". `revocations_json` is one revocation
-/// statement or an array of them, applied with those the dossiers carry: a
-/// receipt whose key was revoked proves nothing.
+/// accusation), "censored" or "misplaced" (in the witnessed history, at
+/// another index than the receipt promised). `revocations_json` is one
+/// revocation statement or an array of them, applied with those counted
+/// dossiers carry: a v2 revocation of the receipt's key whose index a
+/// counted checkpoint has reached leaves the receipt proving nothing.
 ///
 /// Errors: `MalformedError` for an input that does not parse,
-/// `SignatureError` for a receipt that does not verify, `ValueError` for a
-/// receipt not signed by `expected_identity`, no dossiers, or a bad
-/// argument (`min_checkpoints` below 1 included).
+/// `SignatureError` for a receipt, or a revocation of its key, that does
+/// not verify, `ValueError` for a receipt not signed by
+/// `expected_identity`, no dossiers, or a bad argument (`min_checkpoints`
+/// below 1 included).
 #[pyfunction]
 #[pyo3(signature = (receipt_json, dossiers_json, directory_json, min_checkpoints=2, subject_org=None, expected_identity=None, revocations_json=None))]
 #[allow(clippy::too_many_arguments)]
@@ -610,11 +613,23 @@ fn prove_silence_detached(
     let revocations: Vec<witness_log_core::identity::RevocationStatement> = match &revocations_json
     {
         None => Vec::new(),
-        Some(s) if s.trim_start().starts_with('{') => {
-            vec![serde_json::from_str(s).map_err(malformed_err)?]
-        }
-        Some(s) => serde_json::from_str(s).map_err(malformed_err)?,
+        Some(s) => witness_log_network::revocations_from_json(s).map_err(malformed_err)?,
     };
+    // A statement for the receipt's key that does not verify is refused,
+    // not silently dropped: the caller believed the key revoked. One for
+    // another key is ignored, as `verify_dossier_json` ignores it.
+    for (i, r) in revocations.iter().enumerate() {
+        if r.identity_pubkey
+            .trim()
+            .eq_ignore_ascii_case(receipt.signer_pubkey.trim())
+        {
+            if let Err(e) = r.verify() {
+                return Err(SignatureError::new_err(format!(
+                    "revocation {i} names the receipt's key but does not verify ({e})"
+                )));
+            }
+        }
+    }
 
     let proof = witness_log_network::silence_proof_over_dossiers(
         &receipt,
@@ -627,20 +642,40 @@ fn prove_silence_detached(
         },
     );
     let report = &proof.report;
-    let (result, leaf_index, after, seen) = match &report.result {
-        SilenceProofResult::Present { leaf_index } => ("present", Some(*leaf_index), None, None),
+    let (result, leaf_index, after, seen, without) = match &report.result {
+        SilenceProofResult::Present { leaf_index } => {
+            ("present", Some(*leaf_index), None, None, None)
+        }
         SilenceProofResult::Censored {
             witnessed_checkpoints_after,
             ..
-        } => ("censored", None, Some(*witnessed_checkpoints_after), None),
+        } => (
+            "censored",
+            None,
+            Some(*witnessed_checkpoints_after),
+            None,
+            None,
+        ),
+        SilenceProofResult::Misplaced {
+            leaf_index,
+            witnessed_checkpoints_without,
+            ..
+        } => (
+            "misplaced",
+            Some(*leaf_index),
+            None,
+            None,
+            Some(*witnessed_checkpoints_without),
+        ),
         SilenceProofResult::Inconclusive {
             witnessed_checkpoints_seen,
             ..
         } => (
             "inconclusive",
-            report.misplaced_at,
+            None,
             None,
             Some(*witnessed_checkpoints_seen),
+            None,
         ),
     };
     let inputs: Vec<serde_json::Value> = dossiers
@@ -663,7 +698,9 @@ fn prove_silence_detached(
         "receipt_tree_size": receipt.tree_size,
         "witnessed_checkpoints_after": after,
         "witnessed_checkpoints_seen": seen,
+        "witnessed_checkpoints_without": without,
         "min_checkpoints": min_checkpoints,
+        "revocations_not_in_effect": report.revocations_not_in_effect,
         "bound_tree_size": report.bound_tree_size,
         "bound_root_hash": report.bound_root_hash,
         "reason": report.reason,

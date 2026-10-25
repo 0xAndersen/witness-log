@@ -293,9 +293,10 @@ reproduce it count; anything else is listed in a note and ignored. Exit 0
 PRESENT: the event is at the promised index in leaves that reproduce every
 counted checkpoint. Exit 30 CENSORED: the shop signed the receipt, at
 least two later checkpoints (`--min-checkpoints`) count, their leaves
-reproduce every one of those roots, and the event is not there. Anything
-less, including the event at another index or a receipt whose key was
-revoked (`--revocations`), is exit 20 INCONCLUSIVE, never an accusation.
+reproduce every one of those roots, and the event is not there. Exit 31
+MISPLACED: the event is in that history, but at another index than
+promised. Anything less, including a receipt whose key has a revocation in
+effect (`--revocations`), is exit 20 INCONCLUSIVE, never an accusation.
 What CENSORED does and does not prove:
 [Threat model](Threat-Model#proving-an-omission).
 

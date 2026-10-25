@@ -138,9 +138,20 @@ def test_a_log_that_omits_an_event_it_signed_for_is_censored(accepted, tmp_path)
     rep = witness_log.prove_silence(receipt, [c5, c9], directory, subject_org="org 1")
     assert rep["result"] == "inconclusive" and rep["witnessed_checkpoints_seen"] == 0, rep
 
-    # The log's key revoked (stolen, say): a receipt proves nothing, whether
-    # the revocation is passed in or carried by a dossier.
-    revocation = log.revoke_json("key stolen")
+    # Revocations the accused log could sign for free are not applied: a v1
+    # statement (it dates its own checkpoints) or a v2 one past anything
+    # witnessed.
+    for free in (
+        log.revoke_json("noop"),
+        log.revoke_json("noop", as_of_ms=2**64 - 1),
+        log.revoke_json("noop", as_of_index=100, experimental=True),
+    ):
+        rep = witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=free)
+        assert rep["result"] == "censored" and rep["revocations_not_in_effect"] == 1, rep
+    # The log's key revoked (stolen, say) at an index the witnessed history
+    # has reached: the identity ends there, and a receipt proves nothing,
+    # whether the revocation is passed in or carried by a counted dossier.
+    revocation = log.revoke_json("key stolen", as_of_index=9, experimental=True)
     rep = witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=revocation)
     assert rep["result"] == "inconclusive" and "revoked" in rep["reason"], rep
     rep = witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=[json.loads(revocation)])
@@ -148,6 +159,17 @@ def test_a_log_that_omits_an_event_it_signed_for_is_censored(accepted, tmp_path)
     carried = json.loads(c9)
     carried["revocations"] = [json.loads(revocation)]
     assert witness_log.prove_silence(receipt, [c5, carried], directory)["result"] == "inconclusive"
+    # Carried by a dossier that is set aside, it changes nothing.
+    junk = json.loads(c9)
+    junk["checkpoint"]["tree_size"] = 10
+    junk["revocations"] = [json.loads(revocation)]
+    rep = witness_log.prove_silence(receipt, [c5, c9, junk], directory)
+    assert rep["result"] == "censored" and rep["dossiers"][2]["status"] == "bad_signature", rep
+    # A revocation of the receipt's key that does not verify is refused.
+    altered = json.loads(revocation)
+    altered["reason"] = "edited"
+    with pytest.raises(witness_log.SignatureError):
+        witness_log.prove_silence(receipt, [c5, c9], directory, revocations_json=altered)
     fork.close()
 
 

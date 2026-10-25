@@ -1248,12 +1248,35 @@ witness receipts, and the log's leaves. A checkpoint *counts* when its
 receipt's key, and it was cosigned by witnesses in the verifier's trusted
 directory from at least two distinct independent operators (the bar of
 `Witnessed`, §9.2: project-operated witnesses and the log's own operator
-never count). A verifier concludes *censored* only when all of these hold:
+never count).
 
-1. the write receipt verifies under the log's key, and the verifier knows
-   of no revocation of that key (§5): a receipt's `issued_at_ms` and
-   `tree_size` are its signer's own claims, so nothing shows it was signed
-   before the key was revoked, or by whoever stole it;
+A revocation of the receipt's key (§5) is *in effect* on that evidence
+when it is a v2 statement and a counted checkpoint has `tree_size` at
+least its `as_of_index`: the operator's pairing of the statement with a
+witnessed checkpoint of that size (§5) has happened, and from then on
+every verifier holding the statement rejects every checkpoint of the log
+larger than `as_of_index`, so the identity ends there. A receipt whose key
+has a revocation in effect proves nothing: its `issued_at_ms` and
+`tree_size` are its signer's own claims, so nothing shows it was signed
+before the key was revoked, or not by whoever stole the key. A revocation
+not in effect is not applied. A v1 statement is never in effect for this
+purpose: its only cut-off is `as_of_ms`, compared with timestamps the key
+holder writes itself, so the log can keep dating its checkpoints before it
+and the statement costs it nothing; nor is a v2 statement whose index no
+counted checkpoint has reached. Applying either would let the accused log
+neutralise any receipt for free. (A v1 alternative, comparing `as_of_ms`
+with a trusted witness's `witnessed_at_ms` on a counted checkpoint, was
+rejected for the same reason: the log can still keep signing checkpoints
+dated before the revocation, so the statement would not end anything.)
+A verifier applies the revocations it knows of and those carried by
+counted dossiers; a revocation carried by a dossier that does not count
+is not applied, so that a dossier set aside changes nothing (a revocation
+is self-signed, so where it comes from adds nothing to it).
+
+A verifier concludes *censored* only when all of these hold:
+
+1. the write receipt verifies under the log's key, and no revocation of
+   that key is in effect;
 2. at least the required number of distinct checkpoints count;
 3. no two of them commit to different roots for one size (that is
    equivocation, a different finding);
@@ -1268,19 +1291,24 @@ never count). A verifier concludes *censored* only when all of these hold:
 
 The event is *present* when 1, 3 and 4 hold for at least one counted
 checkpoint and the leaf at index `tree_size` carries its `payload_hash`.
-The `payload_hash` at another index among those leaves is neither: the log
-broke the position it signed for, but did not leave the event out.
-Anything less is inconclusive, never an accusation, and an unwitnessed
-copy of the leaves can neither accuse nor acquit. A third party holding
-the same bundle reaches the same conclusion. A plain checkpoint is not a
-write receipt: it commits to no event, so it proves nothing about one (an
-earlier draft of the reference implementation made that mistake). Before
-0.6.1 the reference implementation checked 1, 2 with a single trusted
-receipt, and 5 against the caller's leaf list without 3 and 4, so a list
-with the event removed produced an accusation against an honest log
-(review III, H1 and M1). Until the review of `witness-log prove-silence`
-it also called an event present wherever it was in the supplied leaves,
-witnessed or not and at any index, and applied no revocations.
+It is *misplaced* when 1, 3 and 4 hold and the `payload_hash` is among
+those leaves at another index: the log signed a promise of position and
+its witnessed history breaks it. That is a finding against the log, proven
+by the same bundle as *censored*, but not an omission, and one counted
+checkpoint is enough to prove it (the leaf at `tree_size` can never change
+once witnessed). Anything else is inconclusive, never an accusation, and
+an unwitnessed copy of the leaves can neither accuse nor acquit. A third
+party holding the same bundle reaches the same conclusion. A plain
+checkpoint is not a write receipt: it commits to no event, so it proves
+nothing about one (an earlier draft of the reference implementation made
+that mistake). Before 0.6.1 the reference implementation checked 1, 2 with
+a single trusted receipt, and 5 against the caller's leaf list without 3
+and 4, so a list with the event removed produced an accusation against an
+honest log (review III, H1 and M1). Until the reviews of `witness-log
+prove-silence` it also called an event present wherever it was in the
+supplied leaves, witnessed or not and at any index, applied no revocations
+at first, and then applied any revocation of the key, which the accused
+log could sign without ending anything.
 
 ## 10. Open questions for v1.0
 

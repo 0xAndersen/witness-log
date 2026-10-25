@@ -26,8 +26,9 @@ never parses output.
 | `11` | WITNESSED, but the cosigning witnesses are not a strict majority of the trusted directory: a conflicting history could have been cosigned by the rest (split view). The default since 0.5.0; `--allow-sub-majority` accepts it as 0 | `verify` |
 | `20` | UNANCHORED: internally consistent, no trusted directory supplied (verify); a witness refused the history with 422, or fewer than `--min` cosigned (submit); INCONCLUSIVE: not enough witnessed evidence either way (`prove-silence`) | `verify`, `submit`, `prove-silence` |
 | `30` | DIVERGED: the dossier is valid but contradicts a `--known-head` its leaves do not reproduce, or an `--evidence` equivocation proof that verifies for this identity (verify); two valid, conflicting copies of one log (`diff`); mismatch (`bind`); CENSORED: the log signed a write receipt for an event its witnessed history omits (`prove-silence`) | `verify`, `diff`, `bind`, `prove-silence` |
+| `31` | MISPLACED: the log signed a write receipt promising an event at one index, and its witnessed history has the event at another: a broken signed promise, not an omission | `prove-silence` |
 | `40` | INVALID: a check failed: checkpoint signature, identity (including a wrong `--identity`), leaf structure, key bindings or revocations, or Merkle continuity, as for tampered, reordered, dropped or appended leaves (verify); either copy is invalid or tampered (`diff`); a supplied key did not verify or none did (`c2sp verify`); nothing to export (`c2sp export`); the file does not prove equivocation (`witness verify-evidence`) | `verify`, `diff`, `c2sp verify`, `c2sp export`, `witness verify-evidence`, `submit --allow-partial` |
-| `2` | usage error: unknown flag, missing argument, unreadable or unparseable input; a write receipt that does not verify or is not signed by `--identity` (`prove-silence`); an index the journal does not hold (`log receipt`) | all commands |
+| `2` | usage error: unknown flag, missing argument, unreadable or unparseable input; a write receipt, or a `--revocations` statement for its key, that does not verify, or a receipt not signed by `--identity` (`prove-silence`); an index the journal does not hold (`log receipt`) | all commands |
 | `1` | the operation itself failed: a file could not be written, a journal is locked, a witness would not start, a lock is held | `log`, `witness init/serve/add-log/info`, `testnet`, `directory` |
 
 Codes 10/20/30/40 are spaced so `-ge 20` means "do not trust this"
@@ -162,7 +163,8 @@ two independent operators (the bar of WITNESSED; project-operated witnesses
 and the `--subject-org` never count), and its leaves reproduce its own
 checkpoint. Any other dossier (another log's, a forged or unwitnessed
 checkpoint, an edited copy) is listed in a note with the reason and used
-for nothing, so adding one never changes the result.
+for nothing, not even for the revocations it carries, so adding one never
+changes the result.
 
 **Where the leaves come from.** The largest counted dossier. They must
 reproduce the root of every counted checkpoint: leaves that reproduce the
@@ -181,30 +183,36 @@ revocation forms; the receipt is read from a JSON object only.
 | `--identity <hex>` | the log's identity key, obtained out of band; a receipt signed by any other key is refused (exit 2). Without it the result is about whatever key signed the receipt, and anyone can sign a receipt and then omit the event from their own log |
 | `--min-checkpoints N` | counted checkpoints after the receipt that CENSORED needs; default 2, the library's conservative minimum (5 is robust) |
 | `--subject-org <org>` | the organisation that operates the log; its witnesses never count, as for `verify` |
-| `--revocations <path>` | revocations you know of (one statement, as `log revoke` prints it, or an array), applied together with those the dossiers carry. A receipt whose key was revoked is INCONCLUSIVE, whatever its `issued_at_ms` says |
+| `--revocations <path>` | revocations you know of (one statement, as `log revoke` prints it, or an array), applied together with those counted dossiers carry. A v2 revocation of the receipt's key (`log revoke --experimental --as-of-index N`) is in effect once a counted checkpoint is at least `N` large, and then the receipt proves nothing (INCONCLUSIVE), whatever its `issued_at_ms` says. v1 statements, and v2 ones no counted checkpoint has reached, are not applied: the accused log could sign them at no cost (see [Threat model](Threat-Model#proving-an-omission)). A statement naming the receipt's key that does not verify is exit 2; one for another key is ignored, as `verify` ignores it |
 | `--json` | one JSON object instead of the verdict line |
 
 | result | exit | means |
 |---|---|---|
 | PRESENT | `0` | the leaf at the promised index carries the event, in leaves that reproduce every counted checkpoint (`bound_tree_size`, `bound_root_hash` is the largest): it is in a history two independent operators cosigned, where the log said it would be |
-| INCONCLUSIVE | `20` | not enough witnessed evidence either way, and never an accusation: `reason` says what is missing (no or too few counted checkpoints, leaves that do not cover or reproduce them, a fork or two roots for one size, a revoked key, or the event in the witnessed history at another index than promised, given as `leaf_index`) |
-| CENSORED | `30` | the receipt verifies and its key is not known to be revoked, at least `--min-checkpoints` counted checkpoints follow it, the leaves reproduce all of them, and the event is not among those leaves. Bound to the largest of them |
-| | `2` | usage error, unreadable or malformed input, a receipt that does not verify, or a receipt not signed by `--identity` |
+| INCONCLUSIVE | `20` | not enough witnessed evidence either way, and never an accusation: `reason` says what is missing (no or too few counted checkpoints, leaves that do not cover or reproduce them, a fork or two roots for one size, or a revocation of the key in effect) |
+| CENSORED | `30` | the receipt verifies and no revocation of its key is in effect, at least `--min-checkpoints` counted checkpoints follow it, the leaves reproduce all of them, and the event is not among those leaves. Bound to the largest of them |
+| MISPLACED | `31` | the same bundle, with the event among those leaves at `leaf_index` instead of the promised index: the log broke the position it signed for (appended the event late, say), but did not leave it out. One counted checkpoint is enough; `witnessed_checkpoints_without` counts those that lacked the event entirely |
+| | `2` | usage error, unreadable or malformed input, a receipt or a `--revocations` statement for its key that does not verify, or a receipt not signed by `--identity` |
 
-`--json` prints `result` (`"present"`, `"inconclusive"`, `"censored"`),
-`exit_code`, `leaf_index` (where the event is in the bound leaves: the
-promised index for present, another one for an inconclusive misplaced
-event, otherwise `null`), `promised_index` and `receipt_tree_size` (the
-same number), `witnessed_checkpoints_after` (censored) or
-`witnessed_checkpoints_seen` (inconclusive), `min_checkpoints`,
-`bound_tree_size`, `bound_root_hash`, `reason`, `subject_org`, `identity`
-(the receipt's signer), `identity_pinned`, and the inputs: `receipt`
-(`path`, `payload_hash`, `tree_size`, `issued_at_ms`, `signer_pubkey`),
-`directory`, `revocations`, `dossiers` (`path`, `tree_size`, `root_hash`,
-`leaves`, `witness_receipts`, `status`: `counted`, `other_log`,
-`bad_signature`, `not_after_receipt`, `not_witnessed` or
-`leaves_do_not_reproduce`) and `leaves_from`. The wording of `reason` is
-not part of the contract.
+A script that gates on `-ge 30` treats CENSORED and MISPLACED alike: the
+log broke something it signed.
+
+`--json` prints `result` (`"present"`, `"inconclusive"`, `"censored"`,
+`"misplaced"`), `exit_code`, `leaf_index` (where the event is in the
+bound leaves: the promised index for present, another one for misplaced,
+otherwise `null`), `promised_index` and `receipt_tree_size` (the same
+number), `witnessed_checkpoints_after` (censored),
+`witnessed_checkpoints_seen` (inconclusive) or
+`witnessed_checkpoints_without` (misplaced), `min_checkpoints`,
+`revocations_not_in_effect` (revocations of the key that verify but were
+not applied), `bound_tree_size`, `bound_root_hash`, `reason`,
+`subject_org`, `identity` (the receipt's signer), `identity_pinned`, and
+the inputs: `receipt` (`path`, `payload_hash`, `tree_size`,
+`issued_at_ms`, `signer_pubkey`), `directory`, `revocations`, `dossiers`
+(`path`, `tree_size`, `root_hash`, `leaves`, `witness_receipts`,
+`status`: `counted`, `other_log`, `bad_signature`, `not_after_receipt`,
+`not_witnessed` or `leaves_do_not_reproduce`) and `leaves_from`. The
+wording of `reason` is not part of the contract.
 
 ---
 
