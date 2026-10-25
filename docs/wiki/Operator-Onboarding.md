@@ -5,17 +5,34 @@
 These paths run a witness for **your** organisation on **your** account
 at Render or Fly.io. Both build
 [`deploy/witness/Dockerfile`](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/Dockerfile)
-from this repository (they do not pull the published image), keep the
-state on a persistent disk, put the platform's HTTPS in front, and check
-`GET /health`. The witnesses this project runs are labelled
+from source (they do not pull the published image), keep the state on a
+persistent disk, put the platform's HTTPS in front, and check
+`GET /health`. After the first start you pin the witness's key with
+`WITNESS_PUBKEY`, so a new or replaced disk is refused instead of
+quietly becoming a different witness. The witnesses this project runs are labelled
 `is_project_operated` and never count as independent; these buttons are
 for other organisations.
 
 ### Render
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
+A Render service builds the repository and branch it is linked to, so
+first decide what code your witness runs:
 
-1. Click the button and sign in. Render shows the Blueprint from
+- **From your fork (recommended).** Fork this repository, make a branch
+  in your fork at the release you want to run (the newest release that
+  has `render.yaml`; `main` until one does), and open
+  `https://render.com/deploy?repo=https://github.com/<you>/witness-log/tree/<branch>`
+  (the form Render documents for deploying a branch). Render then only
+  ever builds what you put on that branch.
+- **From this repository.** The button builds this repository's `main`
+  as it is when you click, and again whenever you later choose Manual
+  Deploy > Deploy latest commit:
+
+  [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
+
+Then:
+
+1. Sign in. Render shows the Blueprint from
    [`render.yaml`](https://github.com/0xAndersen/witness-log/blob/main/render.yaml):
    one web service with a 1 GB disk at `/state`.
 2. Fill in `WITNESS_ORG`: the organisation that controls this Render
@@ -26,14 +43,20 @@ for other organisations.
    witness from source and takes several minutes.
 4. Open `https://<your service>.onrender.com/health`: it says `ok`. The
    service's Logs show the directory entry at every start.
-5. On the Blueprint's Settings page, set **Auto Sync** to **No**. Then
-   neither a push to this repository nor a change to `render.yaml` reaches
-   your witness; you update it with Manual Deploy when you choose.
+5. Pin the key: copy `pubkey_hex` from `https://<your service>.onrender.com/`
+   and add `WITNESS_PUBKEY` with that value on the service's Environment
+   page (Render restarts it once). From then on a new, replaced or missing
+   disk is refused instead of quietly becoming a different witness under
+   the same name.
+6. On the Blueprint's Settings page, set **Auto Sync** to **No**, so a
+   change to `render.yaml` in the linked repository does not redeploy
+   your witness. `render.yaml` already turns off deploys on push.
 
 The witness takes its URL and key name from the service:
-`https://<service>.onrender.com` and `<service>.onrender.com/w1`. To use
-your own domain, add `WITNESS_URL=https://witness.example.org` before the
-first start.
+`https://<service>.onrender.com` and `<service>.onrender.com/w1`. The
+first start follows Apply at once, so for your own domain deploy from
+your fork with `WITNESS_URL` added to `render.yaml`
+(`- key: WITNESS_URL` / `value: https://witness.example.org`).
 
 ### Fly.io
 
@@ -43,17 +66,24 @@ From a clone of this repository, with
 explains each step):
 
 ```sh
+git checkout <release tag>     # the newest release that has deploy/fly/; main until one does
 cp deploy/fly/fly.toml fly.toml
 fly launch --copy-config --no-deploy --name yourorg-witness --region fra
 fly volumes create witness_state --size 1 --region fra
 fly secrets set --stage WITNESS_ORG="Your Organisation"
 fly deploy --ha=false
 curl -s https://yourorg-witness.fly.dev/health     # ok
+fly volumes list                                   # exactly one witness_state
+fly secrets set WITNESS_PUBKEY="$(curl -fsS https://yourorg-witness.fly.dev/ | jq -r .pubkey_hex)"
 ```
 
-One Machine, one volume: never `fly scale count 2` or `fly machine
-clone`, because a second Machine is a second witness with its own key
-behind the same URL.
+The last line pins the key: from then on a new, replaced or missing
+volume is refused instead of quietly becoming a different witness under
+the same name. One Machine, one volume: never `fly scale count 2` or
+`fly machine clone`, because a second Machine is a second witness with
+its own key behind the same URL. Moving the witness to another region
+has its own order of steps (stop, snapshot, destroy the old Machine,
+then start the new one), in the README.
 
 ### Your registry entry, in one command
 
@@ -86,7 +116,8 @@ a disk.
 The same as anywhere ([`OPERATORS.md` §3 and §6](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md#6-what-you-are-promising)):
 
 1. **Never cosign two histories of one log.** The software refuses as long
-   as it keeps its disk, so run exactly one instance on one disk.
+   as it keeps its disk, so run exactly one instance on one disk, and set
+   `WITNESS_PUBKEY` so that the witness refuses any other disk.
 2. **The disk is the witness.** `witness.key`, `witness.json` and `logs/`
    are one unit; back them up and restore them together. Render keeps
    daily disk snapshots for 7 days and Fly.io keeps daily volume
@@ -187,7 +218,9 @@ Optional: `-e WITNESS_URL=https://witness.example.org` (the key name then
 becomes `witness.example.org/w1`), `-e WITNESS_COMPUTE=hetzner`, and
 `-e WITNESS_BEHIND_PROXY=1` if a TLS proxy or tunnel sits in front.
 linux/amd64 and linux/arm64. The named volume `witness-log` is the whole
-witness: snapshot it as one unit. Details: [OPERATORS.md, Docker](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md#docker).
+witness: snapshot it as one unit. After the first start, add
+`-e WITNESS_PUBKEY=<pubkey_hex from GET />` when you recreate the
+container, and a different or empty volume is refused. Details: [OPERATORS.md, Docker](https://github.com/0xAndersen/witness-log/blob/main/deploy/witness/OPERATORS.md#docker).
 
 If `docker pull` is refused, the published image is not public yet. Build
 the same entrypoint from source in a clone of this repository and use

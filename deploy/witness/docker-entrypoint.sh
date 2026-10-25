@@ -21,20 +21,67 @@
 #                     shares the proxy's address); leave unset when clients
 #                     reach port 7380 directly
 #   WITNESS_LISTEN    default 0.0.0.0:7380
+#   WITNESS_PUBKEY    the witness's public key (64 hex, `pubkey_hex` in GET /).
+#                     Set it after the first start: from then on this
+#                     entrypoint never creates a key, and refuses a state
+#                     directory that holds a different key or none (a new,
+#                     replaced or unmounted disk)
 #
-# Started as root (the Render and Fly.io configurations build the image that
-# way, with WITNESS_IMAGE_USER=0:0, because those platforms mount the state
-# disk owned by root; the published image and the default build start as
-# uid 10001): give /state to uid 10001, then run this script again as that
-# user. The witness never runs as root.
+# A new key is only ever created on a mounted volume. If /state were just a
+# directory in the container, the key would vanish with the container and
+# the next start would quietly be a different witness under the same name.
+#
+# Started as root in an image built with WITNESS_IMAGE_USER=0:0 (render.yaml
+# and deploy/fly/fly.toml build it that way, because those platforms mount
+# the state disk owned by root): take the volume's lock, give /state to uid
+# 10001, then run this script again as that user with no capabilities and
+# no supplementary groups. The witness never runs as root there. Such an
+# image, run as root with a bind mount, changes the owner of the mounted
+# directory to 10001. The published image and the default build start as
+# uid 10001 and skip this step; started as root (--user 0) they change no
+# ownership and run as root, as before.
 set -eu
 
 STATE=/state
 WITNESS_UID=10001
 log() { echo "[witness-log] $*" >&2; }
 
-if [ "$(id -u)" = 0 ]; then
+# One container per volume: an flock on $STATE/container.lock, held on fd 9
+# for the life of the server (fd 9 survives setpriv and exec).
+lock_state() {
+  if ! { true >&9; } 2>/dev/null; then
+    exec 9>>"$STATE/container.lock"
+  fi
+  if ! flock -n 9; then
+    log "error: another container is already serving this volume ($STATE). Two witnesses on one"
+    log "state directory could cosign two forks; stop the other container first."
+    exit 75
+  fi
+}
+
+# Whether $STATE is a mount point (a volume, a bind mount, a platform disk).
+is_mount() {
+  [ -r /proc/self/mountinfo ] || return 1
+  while read -r _ _ _ _ mp _; do
+    if [ "$mp" = "$STATE" ]; then return 0; fi
+  done < /proc/self/mountinfo
+  return 1
+}
+
+# The public key of the witness in $STATE, as `witness init` recorded it.
+state_pubkey() {
+  k=$(sed -n 's/.*"pubkey_hex"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$STATE/witness.json" 2>/dev/null | head -n 1)
+  if [ -z "$k" ]; then
+    k=$(sed -n 's/.*"pubkey"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$STATE/entry.json" 2>/dev/null | head -n 1)
+  fi
+  printf '%s' "$k"
+}
+
+if [ "$(id -u)" = 0 ] && [ "${WITNESS_IMAGE_USER:-}" = "0:0" ]; then
   if [ -d "$STATE" ]; then
+    # Lock first: a second container on this volume stops here, before it
+    # changes anything.
+    lock_state
     # Everything in the state directory belongs to the witness user. Symlinks
     # are changed, not followed; the platform's lost+found is left alone.
     find "$STATE" -xdev \( ! -user "$WITNESS_UID" -o ! -group "$WITNESS_UID" \) \
@@ -43,7 +90,13 @@ if [ "$(id -u)" = 0 ]; then
     chmod 0700 "$STATE"
   fi
   export HOME="$STATE"
-  exec setpriv --reuid="$WITNESS_UID" --regid="$WITNESS_UID" --clear-groups --no-new-privs -- "$0" "$@"
+  # Empty the bounding set too where the runtime allows it (that needs
+  # CAP_SETPCAP); without it the change of uid still leaves no capabilities.
+  bounding=
+  if setpriv --bounding-set=-all -- true 2>/dev/null; then bounding=--bounding-set=-all; fi
+  # shellcheck disable=SC2086  # $bounding is one flag or nothing
+  exec setpriv --reuid="$WITNESS_UID" --regid="$WITNESS_UID" --clear-groups \
+    --inh-caps=-all $bounding --no-new-privs -- "$0" "$@"
 fi
 
 if [ "$#" -gt 0 ]; then
@@ -55,7 +108,43 @@ if [ ! -w "$STATE" ]; then
   exit 73
 fi
 
-if [ ! -f "$STATE/witness.key" ]; then
+lock_state
+
+want_key=$(printf '%s' "${WITNESS_PUBKEY:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+if [ -n "$want_key" ] && { [ "${#want_key}" -ne 64 ] || [ -n "$(printf '%s' "$want_key" | tr -d '0-9a-f')" ]; }; then
+  log "error: WITNESS_PUBKEY must be the witness's 64-hex public key (pubkey_hex in GET /), got \"$want_key\""
+  exit 64
+fi
+
+if [ -f "$STATE/witness.key" ]; then
+  have_key=$(state_pubkey)
+  if [ -n "$want_key" ] && [ "$have_key" != "$want_key" ]; then
+    log "error: $STATE holds the witness with public key ${have_key:-(unreadable)}, but WITNESS_PUBKEY"
+    log "says $want_key. This is not that witness's disk; refusing to serve it under the same name."
+    log "Attach the disk that holds $want_key, or, if it is lost for good, retire that key"
+    log "(OPERATORS.md section 3), unset WITNESS_PUBKEY and register this witness as a new one."
+    exit 78
+  fi
+  if ! is_mount; then
+    log "warning: $STATE is not a separate mount, so this witness's key and memory live in the"
+    log "container and go with it. Move the whole directory onto a volume (OPERATORS.md section 3)."
+  fi
+  [ -z "$want_key" ] && log "note: set WITNESS_PUBKEY=$have_key so that a new or replaced disk is refused instead of becoming a new witness"
+else
+  if [ -n "$want_key" ]; then
+    log "error: WITNESS_PUBKEY is $want_key, but $STATE holds no witness: this is a new, replaced"
+    log "or unmounted disk, not the one that key lives on. Refusing to create a different key behind"
+    log "the same name. Attach the original disk; if it is lost for good, retire the key"
+    log "(OPERATORS.md section 3), unset WITNESS_PUBKEY and register the new witness."
+    exit 78
+  fi
+  if ! is_mount; then
+    log "error: $STATE is not a mounted volume, so a key created here would vanish with the container"
+    log "and the next start would be a different witness under the same name. Mount persistent"
+    log "storage at $STATE: docker run -v witness-log:/state ..., the disk in render.yaml, or the"
+    log "[[mounts]] section of fly.toml (check that fly launch kept it)."
+    exit 78
+  fi
   if [ -e "$STATE/witness.json" ] || [ -d "$STATE/logs" ]; then
     log "error: $STATE has witness.json or logs/ but no witness.key. Refusing to create a new key over"
     log "partial state; restore the whole state directory from one snapshot (OPERATORS.md section 3)."
@@ -96,23 +185,17 @@ if [ ! -f "$STATE/witness.key" ]; then
   witness-log "$@" > "$STATE/entry.json.tmp"
   mv "$STATE/entry.json.tmp" "$STATE/entry.json"
   log "initialised a new witness in $STATE (key name $name, org \"$org\")"
+  log "next: set WITNESS_PUBKEY=$(state_pubkey) so that a new or replaced disk is refused instead of becoming a new witness"
   [ -z "$url" ] && log "note: WITNESS_URL is unset, so the entry's url is a placeholder; registration takes the URL you give it."
   set --
 fi
 
-# One container per volume. witness.lock names a PID, and in a container the
-# witness is always PID 1, so after `docker kill`, an OOM kill or a power cut
-# the next container would see "held by pid 1" (itself) and refuse forever.
-# An flock on the volume, held for the life of the server (fd 9 survives
-# exec), tells a stale lock from a live one: if we get the flock, no other
-# container on this host is serving the volume, so a lock naming PID 1 is
-# left over from a previous container and is removed.
-exec 9>>"$STATE/container.lock"
-if ! flock -n 9; then
-  log "error: another container is already serving this volume ($STATE). Two witnesses on one"
-  log "state directory could cosign two forks; stop the other container first."
-  exit 75
-fi
+# witness.lock names a PID, and in a container the witness is always PID 1,
+# so after `docker kill`, an OOM kill or a power cut the next container would
+# see "held by pid 1" (itself) and refuse forever. The flock taken above
+# tells a stale lock from a live one: we hold it, so no other container on
+# this host is serving the volume, and a lock naming PID 1 is left over from
+# a previous container and is removed.
 if [ -f "$STATE/witness.lock" ] && [ "$(tr -dc '0-9' < "$STATE/witness.lock")" = "1" ]; then
   log "removing a stale witness.lock left by a previous container (it named PID 1)"
   rm -f "$STATE/witness.lock"

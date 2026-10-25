@@ -155,6 +155,19 @@ front (raises the per-address limits). The volume `witness-log` is the
 whole witness: back it up as one unit (section 3). Arguments replace the
 default and go to the binary: `docker run --rm IMAGE witness info URL`.
 
+Two guards against a witness that quietly becomes a different one:
+
+- A key is created only when `/state` is a mount point (a named volume,
+  a bind mount, a platform disk). The from-source `Dockerfile` declares
+  no `VOLUME`, so running it without `-v ...:/state` is refused (exit 78)
+  rather than keeping the key in the container. The published image
+  still declares one, so without `-v` it uses an anonymous volume, which
+  `docker rm -v` deletes.
+- `WITNESS_PUBKEY` (the `pubkey_hex` of `GET /`): set it after the first
+  start, and the entrypoint never creates a key again. Started on a
+  volume that holds a different key, or none, it refuses to run (exit 78)
+  instead of serving a new key under the same name and URL.
+
 The witness is always PID 1 inside a container, so its PID lock file
 cannot tell a killed container's lock from a live one. The entrypoint
 holds an `flock` on `/state/container.lock` for the life of the server: a
@@ -182,11 +195,18 @@ operator to fill in. The platform terminates TLS, so both set
 the platform (`RENDER_EXTERNAL_URL`, or `https://$FLY_APP_NAME.fly.dev`)
 unless `WITNESS_URL` is set. Both platforms mount the disk owned by root,
 so both build with `WITNESS_IMAGE_USER=0:0`: the entrypoint starts as
-root, gives `/state` to uid 10001, and runs the witness as uid 10001.
-Their daily disk snapshots fall under section 3: restoring one after
-the witness has cosigned anything newer is a stale restore.
-`.github/workflows/deploy-configs.yml` checks both files and runs the
-image the way they configure it.
+root, takes the volume's lock, gives `/state` to uid 10001, and runs the
+witness as uid 10001 with no capabilities and no supplementary groups.
+(Only an image built that way changes ownership when started as root;
+run as root with a bind mount, it gives the mounted directory to 10001.)
+After the first start, operators set `WITNESS_PUBKEY` on both platforms,
+so a new or replaced disk is refused rather than initialised. The
+service builds whatever repository and branch it is linked to, so the
+guides recommend deploying a release: a branch of your own fork on
+Render, a checked-out release tag on Fly.io. Their daily disk snapshots
+fall under section 3: restoring one after the witness has cosigned
+anything newer is a stale restore. `.github/workflows/deploy-configs.yml`
+checks both files and runs the image the way they configure it.
 
 ### cloud-init (paste into a new VM)
 
@@ -235,6 +255,15 @@ So:
 
 - Back up `witness.key`, `witness.json` and `logs/` **together, atomically**
   (filesystem snapshot, or stop the service, copy, start).
+- When you **move** a witness (snapshot, then start the copy somewhere
+  else), the old copy must never serve again after the snapshot: stop it
+  and remove it before the new one starts. "Stopped" must mean stopped: on
+  Fly.io keep `auto_start_machines = false` (as `deploy/fly/fly.toml`
+  does), because a Machine that the proxy may start on the next request
+  would cosign after the snapshot, and the two copies of one key would
+  then remember different heads. `deploy/fly/README.md` ("Moving it") has
+  the order of commands, which destroys the old Machine before the new
+  one starts.
 - Restore all three from the **same** snapshot, or none.
 - A consistent snapshot can still be **stale**: if the witness cosigned
   anything after the snapshot was taken, the restored copy has forgotten

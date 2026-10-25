@@ -194,9 +194,10 @@ docker run -d --name witness-log --restart unless-stopped -p 7380:7380 -v witnes
   -e WITNESS_ORG="Your Org" ghcr.io/0xandersen/witness-log:latest
 ```
 
-Or deploy one on your own account with one click, built from this repository with its state on a persistent
+Or deploy one on your own account with one click, built from source with its state on a persistent
 disk: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log)
-or Fly.io ([`deploy/fly`](deploy/fly/README.md), five commands). Then
+(or the same from your fork, pinned to a release: [Operator onboarding](docs/wiki/Operator-Onboarding.md#deploy-in-one-click))
+or Fly.io ([`deploy/fly`](deploy/fly/README.md)). Then
 `curl -fsS https://<your witness>/ | jq .directory_entry` is your registry entry.
 Or paste [`deploy/witness/cloud-init.yaml`](deploy/witness/cloud-init.yaml) into a new VM and it comes up with
 TLS and registers itself; the `deploy-fleet` workflow does that for N servers from one cloud token. A witness

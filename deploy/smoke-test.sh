@@ -15,13 +15,19 @@
 # entrypoint. Checks:
 #   - GET /health is ok; GET / serves a vkey and a directory_entry with the
 #     platform's URL, the operator's org and the configured compute provider
-#   - the witness runs as uid 10001 and owns its state, never root
+#   - the witness runs as uid 10001 and owns its state, never root, with no
+#     capabilities and no supplementary groups
 #   - the directory entry passes registry/validate.py --offline
 #   - a journal submitted from the host gets a cosignature
 #   - same key and the log still remembered after stop/start, after a kill,
 #     and in a new container on the same state (a redeploy)
 #   - a second container on the same state is refused (exit 75)
 #   - a first start without WITNESS_ORG is refused (exit 64)
+#   - a first start without a volume mounted at /state is refused (exit 78)
+#   - with WITNESS_PUBKEY set: the pinned witness starts; a different key, an
+#     empty volume and a malformed value are refused (78, 78, 64)
+#   - default only: started with --user 0, the default image leaves the
+#     owner of a bind-mounted directory alone
 #
 # Needs docker, curl, jq, python3 with PyYAML, and root or sudo (the state
 # directory is root-owned, as on the platforms). DOCKER overrides the docker
@@ -39,7 +45,9 @@ as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
 fail() { echo "::error::$which: $*"; "${docker[@]}" logs "$name" 2>&1 | tail -40 || true; exit 1; }
 cleanup() {
   "${docker[@]}" rm -f "$name" "$name-2" >/dev/null 2>&1 || true
-  if [ "$which" = default ]; then "${docker[@]}" volume rm -f "$name-state" >/dev/null 2>&1 || true; fi
+  if [ "$which" = default ]; then
+    "${docker[@]}" volume rm -f "$name-state" "$name-no-org" "$name-pinned" >/dev/null 2>&1 || true
+  fi
   as_root rm -rf "$work"
 }
 trap cleanup EXIT
@@ -76,7 +84,15 @@ case "$which" in
   *) echo "usage: deploy/smoke-test.sh render|fly|default IMAGE" >&2; exit 2 ;;
 esac
 want_name="${want_url#https://}/w1"
-run() { "${docker[@]}" run -d --name "$name" -p "127.0.0.1:$hostport:$port" -v "$vol" "${env_args[@]}" -e "WITNESS_ORG=$org" "$image" >/dev/null; }
+# run [extra docker run args]: the witness as the platform starts it.
+run() { "${docker[@]}" run -d --name "$name" -p "127.0.0.1:$hostport:$port" -v "$vol" "${env_args[@]}" -e "WITNESS_ORG=$org" "$@" "$image" >/dev/null; }
+# refused WANT_RC WHAT [extra docker run args]: a one-off container must exit WANT_RC.
+refused() {
+  local want=$1 what=$2 rc=0 out; shift 2
+  out=$("${docker[@]}" run --rm --name "$name-2" "${env_args[@]}" "$@" "$image" 2>&1) || rc=$?
+  [ "$rc" = "$want" ] || { echo "$out" | tail -20; fail "$what: exited $rc, expected $want"; }
+  echo "refused, as it should be (exit $rc): $what"
+}
 info() { curl -fsS --max-time 5 "http://127.0.0.1:$hostport/"; }
 wait_health() {
   for _ in $(seq 1 60); do
@@ -85,7 +101,8 @@ wait_health() {
   done
   fail "no ok from GET /health within 60 s ($1)"
 }
-uid_of_pid1() { "${docker[@]}" exec "$name" sh -c 'grep "^Uid:" /proc/1/status' | awk '{print $2 $3 $4 $5}'; }
+status_of_pid1() { "${docker[@]}" exec "$name" cat /proc/1/status; }
+field() { awk -v f="$1:" '$1 == f { $1 = ""; sub(/^ +/, ""); print }' <<< "$2"; }
 
 echo "== $which: first start"
 run
@@ -100,13 +117,28 @@ jq -e --arg u "$want_url" --arg o "$org" --arg c "$compute" --arg n "$want_name"
   || fail "directory_entry is not {url: $want_url, operator_org: $org, compute_provider: $compute, name: $want_name}: $(jq -c .directory_entry <<< "$i")"
 echo "key $key, entry $(jq -c .directory_entry <<< "$i")"
 
-[ "$(uid_of_pid1)" = 10001100011000110001 ] || fail "the witness is not running as uid 10001: $(uid_of_pid1)"
+st=$(status_of_pid1)
+[ "$(field Uid "$st")" = "10001 10001 10001 10001" ] || fail "the witness is not running as uid 10001: Uid $(field Uid "$st")"
+[ "$(field Gid "$st")" = "10001 10001 10001 10001" ] || fail "the witness is not running as gid 10001: Gid $(field Gid "$st")"
+groups=$(field Groups "$st")
+# Docker itself lists the primary group 10001 when it starts the default
+# image as 10001:10001; the entrypoint's setpriv clears the list entirely.
+if [ -n "$groups" ] && { [ "$which" != default ] || [ "$groups" != 10001 ]; }; then
+  fail "the witness has supplementary groups: $groups"
+fi
+for c in CapInh CapPrm CapEff CapAmb; do
+  [ "$(field "$c" "$st")" = 0000000000000000 ] || fail "the witness has capabilities: $c $(field "$c" "$st")"
+done
+if [ "$which" != default ]; then
+  # Started as root, the entrypoint empties the bounding set as well.
+  [ "$(field CapBnd "$st")" = 0000000000000000 ] || fail "bounding set not emptied: CapBnd $(field CapBnd "$st")"
+fi
 if [ "$which" != default ]; then
   [ "$(as_root stat -c '%u:%g %a' "$state")" = "10001:10001 700" ] || fail "state dir is $(as_root stat -c '%u:%g %a' "$state")"
   [ "$(as_root stat -c '%u' "$state/witness.key")" = 10001 ] || fail "witness.key is not owned by 10001"
   [ "$(as_root stat -c '%u' "$state/lost+found")" = 0 ] || fail "lost+found was changed"
 fi
-echo "runs as uid 10001 and owns its state"
+echo "runs as uid 10001 with no capabilities or groups, and owns its state"
 
 mkdir -p "$work/registry"
 jq .directory_entry <<< "$i" > "$work/registry/smoke-w1.json"
@@ -142,13 +174,26 @@ same_state "kill and start"
 "${docker[@]}" rm -f "$name" >/dev/null && run
 same_state "new container on the same state"
 
-rc=0; "${docker[@]}" run --rm --name "$name-2" -v "$vol" "${env_args[@]}" -e "WITNESS_ORG=$org" "$image" >/dev/null 2>&1 || rc=$?
-[ "$rc" = 75 ] || fail "a second container on the same state exited $rc, expected 75 (refused)"
-echo "a second container on the same state is refused"
+refused 75 "a second container on the same state" -v "$vol" -e "WITNESS_ORG=$org"
+refused 64 "a first start without WITNESS_ORG" -v "$(fresh_vol no-org)"
+refused 78 "a first start with nothing mounted at $mount" -e "WITNESS_ORG=$org"
 
-rc=0; "${docker[@]}" run --rm --name "$name-2" -v "$(fresh_vol no-org)" "${env_args[@]}" "$image" >/dev/null 2>&1 || rc=$?
-if [ "$which" = default ]; then "${docker[@]}" volume rm -f "$name-no-org" >/dev/null 2>&1 || true; fi
-[ "$rc" = 64 ] || fail "a first start without WITNESS_ORG exited $rc, expected 64"
-echo "a first start without WITNESS_ORG is refused"
+# WITNESS_PUBKEY pins the key: the pinned witness starts, anything else is refused.
+"${docker[@]}" rm -f "$name" >/dev/null && run -e "WITNESS_PUBKEY=$key"
+same_state "restart with WITNESS_PUBKEY set"
+"${docker[@]}" rm -f "$name" >/dev/null
+refused 78 "WITNESS_PUBKEY naming another key than the state holds" -v "$vol" -e "WITNESS_ORG=$org" \
+  -e "WITNESS_PUBKEY=$(printf '%064d' 0)"
+refused 78 "WITNESS_PUBKEY set on an empty volume" -v "$(fresh_vol pinned)" -e "WITNESS_ORG=$org" -e "WITNESS_PUBKEY=$key"
+refused 64 "a malformed WITNESS_PUBKEY" -v "$vol" -e "WITNESS_ORG=$org" -e "WITNESS_PUBKEY=not-a-key"
+
+if [ "$which" = default ]; then
+  # Only an image built with WITNESS_IMAGE_USER=0:0 changes ownership when
+  # started as root; the default one, run with --user 0, must not.
+  as_root install -d -o 4242 -g 4242 -m 0755 "$work/foreign"
+  "${docker[@]}" run --rm --user 0 -v "$work/foreign:$mount" "$image" --version >/dev/null
+  [ "$(as_root stat -c '%u:%g' "$work/foreign")" = "4242:4242" ] || fail "--user 0 changed the owner of a bind mount"
+  echo "--user 0 leaves a bind mount's owner alone"
+fi
 
 echo "== $which: all checks passed"

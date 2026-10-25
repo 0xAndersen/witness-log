@@ -8,6 +8,7 @@ account with a payment method, and a clone of this repository.
 
 ```sh
 git clone https://github.com/0xAndersen/witness-log && cd witness-log
+git checkout <release tag>       # the newest release that has deploy/fly/; main until one does
 cp deploy/fly/fly.toml fly.toml
 
 fly launch --copy-config --no-deploy --name yourorg-witness --region fra
@@ -16,10 +17,15 @@ fly secrets set --stage WITNESS_ORG="Your Organisation"
 fly deploy --ha=false
 ```
 
+- `git checkout` a release tag so that you, not this repository's main
+  branch, decide what code runs: `fly deploy` builds exactly your
+  checkout.
 - `fly launch` creates the app and writes `app` and `primary_region` into
   `fly.toml`; nothing runs yet. Pick any region (`fly platform regions`)
   and use the same one for the volume. Afterwards `fly.toml` should still
-  say `internal_port = 7380` and have the `[[mounts]]` section.
+  say `internal_port = 7380`, `auto_start_machines = false`, and have the
+  `[[mounts]]` section. Without the mount the witness refuses to create a
+  key, so a dropped `[[mounts]]` shows up as a failed first start.
 - `fly volumes create` makes the one volume the witness keeps its key and
   memory on. Fly warns that a single volume is not highly available:
   that is intended. One witness has exactly one volume.
@@ -31,12 +37,24 @@ fly deploy --ha=false
   and serves. The witness's URL and key name come from the app name:
   `https://yourorg-witness.fly.dev` and `yourorg-witness.fly.dev/w1`.
 
-Check it:
+Check it, then pin the key:
 
 ```sh
 curl -s https://yourorg-witness.fly.dev/health      # ok
-curl -s https://yourorg-witness.fly.dev/ | jq '{vkey, directory_entry}'
+fly volumes list                                     # exactly one witness_state, attached to one Machine
+fly secrets set WITNESS_PUBKEY="$(curl -fsS https://yourorg-witness.fly.dev/ | jq -r .pubkey_hex)"
 ```
+
+With `WITNESS_PUBKEY` set, the witness never creates a key again: started
+on any other volume (a new one, a replaced one, none) it refuses to run
+instead of quietly becoming a different witness under the same name.
+Setting the secret restarts the Machine once.
+
+If `fly volumes list` shows two `witness_state` volumes, or `fly machine
+list` two Machines, something created a second witness. Keep the Machine
+and volume whose key is the one `GET /` served when you registered (with
+`WITNESS_PUBKEY` set, the other one refuses to start), then remove the
+extra: `fly machine destroy <id>` and `fly volumes destroy <id>`.
 
 ## Register
 
@@ -56,8 +74,8 @@ maintainer runs the `register-witness` workflow. Details:
 - **One Machine.** Never `fly scale count 2` or `fly machine clone`: each
   Machine gets its own volume, so a second one is a second witness with a
   different key behind the same URL. `fly.toml` keeps the one Machine
-  running (`auto_stop_machines = "off"`); a stopped witness cosigns
-  nothing.
+  running (`auto_stop_machines = "off"`) and never starts a stopped one
+  on a request (`auto_start_machines = false`).
 - **The volume is the witness.** `witness.key`, `witness.json` and `logs/`
   are one unit (`deploy/witness/OPERATORS.md` section 3). Fly takes daily
   snapshots of the volume and keeps them 5 days by default. Restoring one
@@ -65,9 +83,17 @@ maintainer runs the `register-witness` workflow. Details:
   two histories of one log. If the volume is lost, retire the key: create
   a new app and volume, register the new entry, and ask for the old one
   to be removed.
-- **Moving it.** Stop the Machine (`fly machine stop`), snapshot the
-  volume (`fly volumes snapshots create <volume id>`), restore that
-  snapshot as the new volume, and never start the old Machine again.
+- **Moving it** (another region or host). The old copy must never run
+  again once the snapshot is taken:
+  1. `fly machine stop <id>`; it stays stopped (`auto_start_machines = false`).
+  2. `fly volumes snapshots create <volume id>` and wait until
+     `fly volumes snapshots list <volume id>` shows it.
+  3. `fly machine destroy <id>`, before anything else starts.
+  4. `fly volumes create witness_state --snapshot-id <snapshot id> --size 1 --region <region>`
+     (see https://docs.fly.io/volumes/snapshots), set `primary_region` in
+     `fly.toml` to that region, and `fly deploy --ha=false`.
+     `WITNESS_PUBKEY` stays as it is, so only that snapshot's key can start.
+  5. When the new Machine serves the same key, `fly volumes destroy` the old volume.
 - **Your own domain.** `fly certs add witness.example.org`, and before the
   first deploy `fly secrets set --stage WITNESS_URL=https://witness.example.org`.
   The URL and key name are fixed at the first start.
@@ -75,7 +101,7 @@ maintainer runs the `register-witness` workflow. Details:
 ## Updating
 
 `fly deploy` builds whatever you have checked out, so you decide what
-runs: `git pull` (or `git checkout` a release tag), then
+runs: `git fetch --tags && git checkout <newer release tag>`, then
 `fly deploy --ha=false`. The volume and key stay; the Machine restarts
 in place.
 

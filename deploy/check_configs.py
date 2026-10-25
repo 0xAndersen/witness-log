@@ -5,7 +5,8 @@ render.yaml (repository root) and deploy/fly/fly.toml both build
 deploy/witness/Dockerfile and run its entrypoint. This script checks that
 they parse, that every file they name exists, and that they agree with the
 image on what keeps a witness a witness: the state on a persistent mount at
-/state, one instance, the health path, the port, the operator's
+/state (and no VOLUME in the image to fake one), one instance that never
+starts by itself once stopped, the health path, the port, the operator's
 organisation left for the operator to fill in, and the build argument that
 lets the entrypoint take ownership of a root-owned mount.
 
@@ -54,15 +55,22 @@ def image_facts(dockerfile, problems):
     final = text[text.rfind("\nFROM "):] if "\nFROM " in text else text
     facts = {
         "expose": [int(p) for p in re.findall(r"^EXPOSE\s+(\d+)", final, re.M)],
-        "volumes": re.findall(r'^VOLUME\s+\["([^"]+)"\]', final, re.M),
+        "volumes": re.findall(r"^VOLUME\s+(.+)$", final, re.M),
         "args": dict(re.findall(r"^ARG\s+([A-Za-z_][A-Za-z0-9_]*)(?:=(\S*))?", final, re.M)),
+        "env": dict(re.findall(r"^ENV\s+([A-Za-z_][A-Za-z0-9_]*)=(\S*)", final, re.M)),
         "entrypoint": re.findall(r"^ENTRYPOINT\s+(.+)$", final, re.M),
         "cmd": re.findall(r"^CMD\s+", final, re.M),
     }
-    if facts["volumes"] != [STATE]:
-        problems.append(f"{rel(dockerfile)}: final stage must declare VOLUME [\"{STATE}\"], has {facts['volumes']}")
+    if facts["volumes"]:
+        # With VOLUME, a run without a mount gets an anonymous volume that
+        # passes the entrypoint's mount check and is lost with the container.
+        problems.append(f"{rel(dockerfile)}: must not declare VOLUME; the state mount comes from the "
+                        f"platform's disk or `-v`, and the entrypoint refuses to create a key without one")
     if "WITNESS_IMAGE_USER" not in facts["args"]:
         problems.append(f"{rel(dockerfile)}: final stage has no ARG WITNESS_IMAGE_USER for the configs to set")
+    if facts["env"].get("WITNESS_IMAGE_USER") != "${WITNESS_IMAGE_USER}":
+        problems.append(f"{rel(dockerfile)}: final stage must pass the build argument on as "
+                        "ENV WITNESS_IMAGE_USER=${WITNESS_IMAGE_USER}; the entrypoint changes ownership only then")
     if not any("docker-entrypoint.sh" in e for e in facts["entrypoint"]):
         problems.append(f"{rel(dockerfile)}: ENTRYPOINT must be docker-entrypoint.sh (the configs rely on it)")
     if facts["cmd"]:
@@ -181,6 +189,9 @@ def check_fly(problems):
         p("[http_service] force_https must be true")
     if svc.get("auto_stop_machines") != "off":
         p("[http_service] auto_stop_machines must be \"off\": a stopped witness cosigns nothing")
+    if svc.get("auto_start_machines") is not False:
+        p("[http_service] auto_start_machines must be false: a Machine stopped for a snapshot or a move "
+          "must stay stopped, or it cosigns after the snapshot and two copies of one key diverge")
     if not isinstance(svc.get("min_machines_running"), int) or svc["min_machines_running"] < 1:
         p("[http_service] min_machines_running must be at least 1")
     checks = svc.get("checks") or []
@@ -190,6 +201,9 @@ def check_fly(problems):
         readme = open(FLY_README, encoding="utf-8").read()
         if f"fly volumes create {mounts[0].get('source')} " not in readme:
             p(f"deploy/fly/README.md must create the volume this file mounts ({mounts[0].get('source')})")
+        for needed in ("WITNESS_PUBKEY", "fly volumes list", "fly machine destroy"):
+            if needed not in readme:
+                p(f"deploy/fly/README.md must explain `{needed}`")
     return {
         "dockerfile": rel(dockerfile),
         "context": ".",
@@ -205,10 +219,13 @@ def check():
     problems = []
     port = listen_port(problems)
     runs = {"render": check_render(problems), "fly": check_fly(problems)}
+    seen = {}
     for name, run in runs.items():
         if run is None:
             continue
-        facts = image_facts(os.path.join(ROOT, run["dockerfile"]), problems)
+        if run["dockerfile"] not in seen:  # both configs build the same file: report it once
+            seen[run["dockerfile"]] = image_facts(os.path.join(ROOT, run["dockerfile"]), problems)
+        facts = seen[run["dockerfile"]]
         if run["port"] != port or port not in facts["expose"]:
             problems.append(f"{name}: routes to port {run['port']}; the image listens on {port} "
                             f"and exposes {facts['expose']}")
@@ -226,6 +243,8 @@ def check():
             problems.append(f"{rel(ONBOARDING)}: no Deploy to Render link ({RENDER_BUTTON})")
         if "deploy/fly" not in onboarding:
             problems.append(f"{rel(ONBOARDING)}: does not point to deploy/fly")
+        if "WITNESS_PUBKEY" not in onboarding:
+            problems.append(f"{rel(ONBOARDING)}: does not tell operators to set WITNESS_PUBKEY after the first start")
     except OSError as e:
         problems.append(str(e))
     return runs, problems

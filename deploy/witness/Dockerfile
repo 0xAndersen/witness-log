@@ -13,11 +13,15 @@
 #       witness init /state --name witness.example/w1 --org "Example Org" \
 #       --url https://witness.example --compute hetzner
 #
+# There is no VOLUME line on purpose: the entrypoint creates a key only on
+# a mounted volume, so `docker run` without `-v ...:/state` is refused
+# instead of putting the key in an anonymous volume or the container.
+#
 # render.yaml (repository root) and deploy/fly/fly.toml build this file.
 # Those platforms mount the state disk owned by root, so they build with
 # --build-arg WITNESS_IMAGE_USER=0:0: the entrypoint then starts as root,
-# gives /state to uid 10001 and runs everything else as that user. Leave the
-# default anywhere a Docker volume is used.
+# takes the volume's lock, gives /state to uid 10001 and runs everything
+# else as that user. Leave the default anywhere a Docker volume is used.
 #
 # The volume holds the key AND the memory of every head cosigned. Back it
 # up as one unit; see OPERATORS.md.
@@ -34,10 +38,12 @@ RUN groupadd --system --gid 10001 witness \
  && mkdir -p /state && chown 10001:10001 /state && chmod 0700 /state
 COPY --from=build /src/target/release/witness-log /usr/local/bin/witness-log
 COPY --chmod=0755 deploy/witness/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-# 10001 unless a platform config sets 0:0 (see the top of this file).
+# 10001 unless a platform config sets 0:0 (see the top of this file). The
+# entrypoint reads it too: only an image built with 0:0 changes ownership
+# of /state when started as root.
 ARG WITNESS_IMAGE_USER=10001:10001
+ENV WITNESS_IMAGE_USER=${WITNESS_IMAGE_USER}
 USER ${WITNESS_IMAGE_USER}
-VOLUME ["/state"]
 EXPOSE 7380
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD ["witness-log", "witness", "info", "http://127.0.0.1:7380"]
 # No CMD: with no arguments the entrypoint initialises (first start) and

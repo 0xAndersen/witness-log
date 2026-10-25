@@ -1,9 +1,11 @@
 # Render Blueprint: one witness-log witness for YOUR organisation, built
-# from this repository's deploy/witness/Dockerfile, with its state on a
-# persistent disk.
+# from deploy/witness/Dockerfile, with its state on a persistent disk.
 #
-#   Deploy: https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log
-#   Guide:  docs/wiki/Operator-Onboarding.md, "Deploy in one click"
+#   Deploy from your fork (recommended; you decide what code runs):
+#     https://render.com/deploy?repo=https://github.com/<you>/witness-log/tree/<branch>
+#   Deploy from this repository's main branch as it is when you click:
+#     https://render.com/deploy?repo=https://github.com/0xAndersen/witness-log
+#   Guide: docs/wiki/Operator-Onboarding.md, "Deploy in one click"
 #
 # Field names follow the Blueprint YAML reference,
 # https://render.com/docs/blueprint-spec (read 2026-10-25), and
@@ -13,7 +15,10 @@
 #
 # Render asks for one value when you create the Blueprint: WITNESS_ORG, the
 # organisation that controls this Render account and so the witness's key.
-# It is the independence label verifiers count. Everything else is set here:
+# It is the independence label verifiers count. After the first start, add
+# WITNESS_PUBKEY (the pubkey_hex that GET / serves) on the service's
+# Environment page: from then on the witness refuses any disk that does not
+# hold that key, instead of creating a new one. Everything else is set here:
 #
 # - plan: a paid instance (0.5c-512mb, formerly "starter"). Free instances
 #   cannot attach a disk, and a witness that loses its disk forgets what it
@@ -26,24 +31,29 @@
 # - numInstances 1: a service with a disk cannot scale, and a second copy
 #   of one witness must never run. With a disk, Render stops the old
 #   instance before it starts the new one on every deploy.
-# - autoDeployTrigger off: pushes to this repository do not redeploy your
-#   witness. After the first deploy, also set Auto Sync to No on the
-#   Blueprint's Settings page, so changes to this file do not either. You
-#   update by choosing Manual Deploy.
+# - What code runs: the service builds the linked repository and branch.
+#   Deployed from this repository, that is upstream main: once when you
+#   click, and again whenever you choose Manual Deploy > Deploy latest
+#   commit. Deployed from a branch of your fork that you keep at a release
+#   tag, only what you put on that branch. autoDeployTrigger off means no
+#   push redeploys by itself; also set Auto Sync to No on the Blueprint's
+#   Settings page after the first deploy, so a change to this file does not.
 # - WITNESS_IMAGE_USER=0:0: Render passes a service's environment variables
 #   to `docker build` as build arguments. This one makes the image start as
 #   root so the entrypoint can give the disk, which Render mounts owned by
-#   root, to uid 10001; the witness itself runs as uid 10001.
+#   root, to uid 10001; the witness itself runs as uid 10001 with no
+#   capabilities.
 # - PORT tells Render which port to route to; the witness listens on 7380.
 #   Render terminates TLS, so every request arrives from Render's proxy:
 #   WITNESS_BEHIND_PROXY=1 raises the per-address limits accordingly.
 # - The public URL (https://<service>.onrender.com) reaches the witness as
-#   RENDER_EXTERNAL_URL; the entrypoint uses it as the witness's URL and
-#   key name on first start. To use your own domain instead, add
-#   WITNESS_URL before the first start.
+#   RENDER_EXTERNAL_URL; the entrypoint uses it as the witness's URL and key
+#   name on the first start, which follows the button at once. To use your
+#   own domain instead, deploy from your fork with WITNESS_URL added below
+#   (- key: WITNESS_URL / value: https://witness.example.org).
 # - region is Render's default (oregon). It cannot change after creation; to
-#   run elsewhere, fork the repository and add `region: frankfurt` (or
-#   ohio, virginia, singapore) before deploying from your fork.
+#   run elsewhere, add `region: frankfurt` (or ohio, virginia, singapore) in
+#   your fork before deploying from it.
 
 services:
   - type: web

@@ -20,9 +20,9 @@
     WITNESS_IMAGE_USER = "0:0"
 
 [env]
-  # WITNESS_ORG is not here: set it with `fly secrets set` (README.md), so
-  # this file stays the same for every operator. WITNESS_URL defaults to
-  # https://<app>.fly.dev on first start.
+  # WITNESS_ORG and WITNESS_PUBKEY are not here: set them with
+  # `fly secrets set` (README.md), so this file stays the same for every
+  # operator. WITNESS_URL defaults to https://<app>.fly.dev on first start.
   WITNESS_COMPUTE = "fly.io"
   # Fly's proxy terminates TLS; every request arrives from its address.
   WITNESS_BEHIND_PROXY = "1"
@@ -40,7 +40,10 @@
   force_https = true
   # A stopped witness cosigns nothing; keep the one Machine running.
   auto_stop_machines = "off"
-  auto_start_machines = true
+  # And never start it on a request: a Machine stopped for a snapshot or a
+  # move must stay stopped, or it cosigns after the snapshot and two copies
+  # of one key end up with different memories.
+  auto_start_machines = false
   min_machines_running = 1
 
   [[http_service.checks]]

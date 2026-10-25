@@ -25,7 +25,7 @@ history first".
 **What it costs:**
 - a small always-on VM with a persistent disk: free on Google Cloud's
   e2-micro tier, about €6 a month on Hetzner, or a machine you have; or
-  no VM at all: one click on Render (about USD 7.25 a month) or five
+  no VM at all: one click on Render (about USD 7.25 a month) or a few
   commands on Fly.io (about USD 2.35 a month), prices as checked in
   October 2026;
 - about two minutes to start by hand, three to five minutes with the

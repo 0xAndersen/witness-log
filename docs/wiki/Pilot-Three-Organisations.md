@@ -28,7 +28,7 @@ Any always-on machine with a persistent disk and an inbound HTTPS port: a
 free Google Cloud e2-micro, a Hetzner CX23, a VM you already have. Pick
 one path from [Operator onboarding](Operator-Onboarding):
 
-- **one click** (no VM): the Render button or the five Fly.io commands
+- **one click** (no VM): the Render button or the Fly.io commands
   under [Deploy in one click](Operator-Onboarding#deploy-in-one-click);
   a paid instance with a persistent disk on your own account.
 - **cloud-init** (no terminal): paste `deploy/witness/cloud-init.yaml`

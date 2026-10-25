@@ -12,10 +12,12 @@ name: deploy-configs
 #            configuration's environment plus WITNESS_ORG and the platform's
 #            URL variable, a root-owned directory at /state, as a fresh disk
 #            is mounted (deploy/smoke-test.sh: /health, GET / with the vkey
-#            and the platform URL, uid 10001, a cosignature, the same key
-#            and memory after a stop, a kill and a new container, a second
-#            container refused, a missing WITNESS_ORG refused). Then the
-#            default build, as `docker run` users get it.
+#            and the platform URL, uid 10001 with no capabilities or groups,
+#            a cosignature, the same key and memory after a stop, a kill and
+#            a new container; refused: a second container, a missing
+#            WITNESS_ORG, no volume at /state, and with WITNESS_PUBKEY set a
+#            different key or an empty volume). Then the default build, as
+#            `docker run` users get it.
 #
 # Not tested here: Render's and Fly's own builders, proxies, TLS and disks,
 # and the public URL.
@@ -28,6 +30,9 @@ on:
       - "deploy/**"
       - .dockerignore
       - registry/validate.py
+      - "crates/**"
+      - Cargo.lock
+      - Cargo.toml
       - .github/workflows/deploy-configs.yml
   pull_request:
     paths:
@@ -35,6 +40,9 @@ on:
       - "deploy/**"
       - .dockerignore
       - registry/validate.py
+      - "crates/**"
+      - Cargo.lock
+      - Cargo.toml
       - .github/workflows/deploy-configs.yml
   workflow_dispatch:
   schedule:
