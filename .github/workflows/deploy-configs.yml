@@ -60,6 +60,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # check_configs.py reads YAML; the runner's system Python is
+      # externally managed, so take a Python whose pip may install.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+      - run: python3 -m pip install pyyaml
       - name: render.yaml and deploy/fly/fly.toml parse and agree with the image
         run: |
           python3 deploy/check_configs.py
@@ -78,6 +84,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+      - run: python3 -m pip install pyyaml
       - name: build as render.yaml, fly.toml and plain docker build it
         shell: bash
         env:

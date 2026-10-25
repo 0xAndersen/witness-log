@@ -69,6 +69,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Literal, Optional, Union
 
@@ -116,13 +117,21 @@ _pin: Dict[str, Any] = {"loaded": False, "path": None, "directory": None}
 def _read_directory_file(path: str) -> Dict[str, Any]:
     """A witness directory file: ``{"witnesses": [...]}`` or a bare array of
     entries. Raises ValueError saying what is wrong with it."""
+    # The verifiers read a directory nested up to 1000 levels (SPEC §9);
+    # Python's json recurses per level, so give it room for that much.
+    limit = sys.getrecursionlimit()
     try:
+        sys.setrecursionlimit(max(limit, 4000))
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except OSError as e:
         raise ValueError(f"trusted directory {path}: {e.strerror or e}") from e
+    except RecursionError as e:
+        raise ValueError(f"trusted directory {path} is nested too deep to read") from e
     except ValueError as e:
         raise ValueError(f"trusted directory {path} is not JSON: {e}") from e
+    finally:
+        sys.setrecursionlimit(limit)
     witnesses = doc.get("witnesses") if isinstance(doc, dict) else doc
     if not isinstance(witnesses, list) or not all(isinstance(w, dict) for w in witnesses):
         raise ValueError(f'trusted directory {path} must be {{"witnesses": [...]}} or a JSON array of entries')
