@@ -20,6 +20,8 @@ Time: 10 minutes. Needs `pip install witness-log` and
 The output below is real, from a v0.3.6 checkout; hashes and keys differ on
 your run.
 
+The same flow with an x402 payment and three dispute scenarios, in one command: [`examples/agent-payments/`](https://github.com/0xAndersen/witness-log/tree/main/examples/agent-payments).
+
 ## What the mandates actually contain
 
 So that the claims below are precise, here is what the three common shapes

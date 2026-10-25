@@ -200,6 +200,9 @@ jobs:
           WITNESS_LOG_CLI=target/release/witness-log python docs/doctest.py
       - name: Three-organisation pilot (CLI only, --subject-org)
         run: WITNESS_LOG_BIN=target/release/witness-log python examples/pilot-triangle/run.py
+      - name: Agent payments (x402 + AP2 profiles, bind, three disputes)
+        # `make payments`: fails if any of its exit codes (0, 10, 20, 30, 40) changes.
+        run: WITNESS_LOG_BIN=target/release/witness-log python examples/agent-payments/run.py
       - name: Live witness network (10 scenarios, 10 witnesses)
         run: python examples/live-network/scenarios.py
       - name: Swarm (100 scenarios, 12 witnesses, 25 agents)

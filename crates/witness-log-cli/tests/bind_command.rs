@@ -84,3 +84,72 @@ fn bind_matches_handoffs_and_authorizations_and_reports_mismatch() {
     assert_eq!(code, 2);
     assert!(err.contains("same identity"), "{err}");
 }
+
+/// Regression: an AuthorizationEvent only B recorded (B claims a grant A
+/// never made) was invisible to `bind a b`, which exited 0 BOUND, while
+/// `bind b a` exited 30. Found with the agent-payments example: a seller
+/// that adds a wider grant next to the real one. The result must not
+/// depend on argument order.
+#[test]
+fn a_grant_only_one_side_recorded_is_a_mismatch_in_either_order() {
+    let mut buyer = WitnessLog::resume(IdentityKeypair::generate(), 0);
+    let mut seller = WitnessLog::resume(IdentityKeypair::generate(), 0);
+    let (ib, is) = (buyer.identity_pubkey_hex(), seller.identity_pubkey_hex());
+    buyer.append_authorization_event(AuthorizationEventKind::GrantedByMe, b"amount=0.01", &is);
+    seller.append_authorization_event(AuthorizationEventKind::GrantedToMe, b"amount=0.01", &ib);
+    let honest = dossier(&seller);
+    seller.append_authorization_event(AuthorizationEventKind::GrantedToMe, b"amount=10.00", &ib);
+    let (db, ds) = (dossier(&buyer), dossier(&seller));
+
+    // The two honest halves still bind, in either order.
+    for (x, y) in [(db.path(), honest.path()), (honest.path(), db.path())] {
+        let (code, out, err) = bind(x, y, &[]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    for (x, y, side) in [
+        (db.path(), ds.path(), "b_leaf"),
+        (ds.path(), db.path(), "a_leaf"),
+    ] {
+        let (code, out, _) = bind(x, y, &["--json"]);
+        assert_eq!(code, 30, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["bound"].as_array().unwrap().len(), 1, "{out}");
+        let failed = v["failed"].as_array().unwrap();
+        assert_eq!(failed.len(), 1, "{out}");
+        assert_eq!(failed[0]["kind"], "authorization");
+        assert_eq!(
+            failed[0][side], 1,
+            "the seller's extra grant is leaf 1: {out}"
+        );
+        assert!(
+            failed[0]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("scope hashes do not match"),
+            "{out}"
+        );
+    }
+    let (code, out, _) = bind(db.path(), ds.path(), &[]);
+    assert_eq!(code, 30);
+    assert!(out.contains("authorization NOT bound (B leaf 1)"), "{out}");
+
+    // A grant only B recorded, with nothing at all on A's side, is a
+    // mismatch too, not "nothing to bind".
+    let quiet = WitnessLog::resume(IdentityKeypair::generate(), 0);
+    let empty = dossier(&quiet);
+    let mut lone = WitnessLog::resume(IdentityKeypair::generate(), 0);
+    lone.append_authorization_event(
+        AuthorizationEventKind::GrantedToMe,
+        b"amount=10.00",
+        &quiet.identity_pubkey_hex(),
+    );
+    let dl = dossier(&lone);
+    for (x, y) in [(empty.path(), dl.path()), (dl.path(), empty.path())] {
+        let (code, out, _) = bind(x, y, &[]);
+        assert_eq!(code, 30, "{out}");
+        assert!(
+            out.contains("no AuthorizationEvent naming this agent"),
+            "{out}"
+        );
+    }
+}

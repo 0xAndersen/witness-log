@@ -7,7 +7,9 @@
 //!
 //! Exit 0 when at least one pair binds and no candidate pair fails; 30
 //! when a candidate pair exists but fails to bind (the two sides disagree
-//! on what was handed over, or on who the other party was); 10 when
+//! on what was handed over, or on who the other party was), or when either
+//! side holds an AuthorizationEvent naming the other that the other side
+//! never recorded (the result does not depend on argument order); 10 when
 //! neither dossier carries a cross-log leaf naming the other; 2 for
 //! unreadable input. The verdict of each dossier on its own is `verify`'s
 //! job; run that first.
@@ -123,6 +125,7 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
     let t = LeafType::AuthorizationEvent.tag();
     let auth_a = names_other(&a.leaves, ib, t);
     let auth_b = names_other(&b.leaves, ia, t);
+    let failed_before = failed.len();
     for la in &auth_a {
         match auth_b
             .iter()
@@ -138,6 +141,27 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
                 "reason": if auth_b.is_empty() { "the other log has no AuthorizationEvent naming this agent".to_string() }
                           else { auth_b.iter().map(|lb| format!("b leaf {}: {}", lb.index, verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default())).collect::<Vec<_>>().join("; ") },
             })),
+        }
+    }
+    // And a B leaf naming A that no A leaf binds to: a grant, revocation or
+    // scope change only B recorded. Without this the verdict depended on
+    // argument order: `bind a b` was BOUND while `bind b a` was a MISMATCH.
+    // When an A leaf already failed, its reason lists every B leaf it was
+    // compared with and the result is a mismatch either way, so the B leaves
+    // are not reported a second time.
+    if failed.len() == failed_before {
+        for lb in &auth_b {
+            if auth_a
+                .iter()
+                .any(|la| verify_authorization_binding(ia, la, ib, lb).is_ok())
+            {
+                continue;
+            }
+            failed.push(serde_json::json!({
+                "kind": "authorization", "a": ia, "b": ib, "b_leaf": lb.index,
+                "reason": if auth_a.is_empty() { "the other log has no AuthorizationEvent naming this agent".to_string() }
+                          else { auth_a.iter().map(|la| format!("a leaf {}: {}", la.index, verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default())).collect::<Vec<_>>().join("; ") },
+            }));
         }
     }
 
@@ -182,13 +206,14 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
             }
         }
         for v in &failed {
+            let leaf = match (v.get("sender_leaf").or(v.get("a_leaf")), v.get("b_leaf")) {
+                (Some(i), _) => format!("leaf {i}"),
+                (None, Some(i)) => format!("B leaf {i}"),
+                (None, None) => "leaf ?".to_string(),
+            };
             println!(
-                "\u{2717} {} NOT bound (leaf {}): {}",
+                "\u{2717} {} NOT bound ({leaf}): {}",
                 v["kind"].as_str().unwrap_or(""),
-                v.get("sender_leaf")
-                    .or(v.get("a_leaf"))
-                    .cloned()
-                    .unwrap_or_default(),
                 v["reason"].as_str().unwrap_or("")
             );
         }

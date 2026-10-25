@@ -442,6 +442,7 @@ pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
     let t = LeafType::AuthorizationEvent.tag();
     let auth_a = names_other(&a.leaves, ib, t);
     let auth_b = names_other(&b.leaves, ia, t);
+    let failed_before = failed.len();
     for la in &auth_a {
         match auth_b
             .iter()
@@ -464,6 +465,30 @@ pub fn bind_value(a_json: &str, b_json: &str) -> Result<Value, String> {
                     )).collect::<Vec<_>>().join("; ")
                 },
             })),
+        }
+    }
+    // A B leaf naming A that no A leaf binds to (a grant only B recorded) is
+    // a mismatch too, so the exit code does not depend on argument order.
+    // Skipped when an A leaf already failed: as in the CLI.
+    if failed.len() == failed_before {
+        for lb in &auth_b {
+            if auth_a
+                .iter()
+                .any(|la| verify_authorization_binding(ia, la, ib, lb).is_ok())
+            {
+                continue;
+            }
+            failed.push(json!({
+                "kind": "authorization", "a": ia, "b": ib, "b_leaf": lb.index,
+                "reason": if auth_a.is_empty() {
+                    "the other log has no AuthorizationEvent naming this agent".to_string()
+                } else {
+                    auth_a.iter().map(|la| format!(
+                        "a leaf {}: {}", la.index,
+                        verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default()
+                    )).collect::<Vec<_>>().join("; ")
+                },
+            }));
         }
     }
 

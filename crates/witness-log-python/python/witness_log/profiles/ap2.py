@@ -240,7 +240,10 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
     """``witness-log bind`` in Python: every HandoffAttestation and
     AuthorizationEvent in A naming B is matched against B's leaves naming
     A with the core's ``verify_handoff_binding`` /
-    ``verify_authorization_binding``. Returns ``{"a", "b", "bound",
+    ``verify_authorization_binding``; an AuthorizationEvent in B naming A
+    that nothing in A binds to fails too (its ``failed`` entry carries
+    ``"b_leaf"``), so the exit code does not depend on argument order.
+    Returns ``{"a", "b", "bound",
     "failed", "exit"}`` with the CLI's exit codes (0 bound, 30 mismatch,
     10 nothing to bind). Raises ``ValueError`` when both dossiers claim
     one identity (that is ``diff``'s job)."""
@@ -272,6 +275,7 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
 
     auth_a = _names_other(a["leaves"], ib, LEAF_AUTHORIZATION)
     auth_b = _names_other(b["leaves"], ia, LEAF_AUTHORIZATION)
+    failed_before = len(failed)
     for la in auth_a:
         hit = None
         reasons = []
@@ -287,6 +291,21 @@ def bind_dossiers(dossier_a: Any, dossier_b: Any) -> Dict[str, Any]:
                           "scope_hash": la.get("authorization_scope_hash")})
         else:
             failed.append({"kind": "authorization", "a": ia, "a_leaf": la["index"], "b": ib,
+                           "reason": "; ".join(reasons) or "the other log has no AuthorizationEvent naming this agent"})
+    # And a B leaf naming A that no A leaf binds to: a grant, revocation or
+    # scope change only B recorded. As in the CLI, so the result does not
+    # depend on which dossier is passed first; skipped when an A leaf already
+    # failed (its reason lists every B leaf, and the result is a mismatch).
+    a_side_failed = len(failed) > failed_before
+    for lb in [] if a_side_failed else auth_b:
+        reasons = []
+        for la in auth_a:
+            err = _core.authorization_binding_error(ia, json.dumps(la), ib, json.dumps(lb))
+            if err is None:
+                break
+            reasons.append(f"a leaf {la['index']}: {err}")
+        else:
+            failed.append({"kind": "authorization", "a": ia, "b": ib, "b_leaf": lb["index"],
                            "reason": "; ".join(reasons) or "the other log has no AuthorizationEvent naming this agent"})
 
     code = EXIT_MISMATCH if failed else (EXIT_NO_CROSS_LOG_LEAVES if not bound else EXIT_BOUND)

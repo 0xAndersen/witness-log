@@ -18,6 +18,8 @@ one side controls.
 Everything below is runnable; the [AP2 tutorial](Tutorial-AP2-Mandates) walks
 through it end to end with two agents and local witnesses.
 
+One command runs it for an x402 payment, with three disputes that must fail: [`examples/agent-payments/`](https://github.com/0xAndersen/witness-log/tree/main/examples/agent-payments).
+
 ## Mandate hash
 
 ```python

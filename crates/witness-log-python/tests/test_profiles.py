@@ -204,9 +204,15 @@ def test_bind_profile_ap2_unilateral_widening(tmp_path):
     ap2.record_grant(b, wider, counterparty=A, scope="scope_changed_to_me")
     rep = ap2.bind_profile_ap2(a.to_dossier_json(), b.to_dossier_json(), mandate=MANDATE)
     assert rep["ap2"]["mandate_hash_equal"] and not rep["ap2"]["scope_not_widened"] and not rep["ap2"]["ok"]
-    # From the honest side's point of view every one of its leaves binds, so
-    # the plain bind exit is 0; the ap2 block is what carries the finding.
-    assert rep["exit"] == 0
+    # The plain bind is a mismatch too, in either argument order: until the
+    # agent-payments example, the leaf only B holds was never looked at when
+    # B was passed second, so `bind(a, b)` exited 0 and `bind(b, a)` 30.
+    assert rep["exit"] == 30 and len(rep["bound"]) == 1
+    assert [(f["kind"], f.get("b_leaf")) for f in rep["failed"]] == [("authorization", 4)]
+    assert rep["failed"][0]["reason"].startswith("a leaf 0: mismatched event kinds")
+    rev = ap2.bind_profile_ap2(b.to_dossier_json(), a.to_dossier_json(), mandate=MANDATE)
+    assert rev["exit"] == 30 and [f.get("a_leaf") for f in rev["failed"]] == [4]
+    assert not rev["ap2"]["scope_not_widened"] and not rev["ap2"]["ok"]
 
 
 def test_bind_profile_ap2_swapped_anchor_proof_is_detected(tmp_path):

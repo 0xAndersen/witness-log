@@ -10,6 +10,7 @@
 #   make python    build the Python wheel into the active venv, run pytest
 #   make docs      run every doc block marked <!-- doctest --> (needs python)
 #   make pilot     the three-organisation pilot on localhost
+#   make payments  x402 + AP2 agent payments, bound and disputed (needs python)
 #   make demo      witness-log demo --tamper
 
 SHELL := bash
@@ -17,10 +18,10 @@ SHELL := bash
 .DEFAULT_GOAL := help
 CLI := target/debug/witness-log
 
-.PHONY: help check rust corpus cli go ts python docs pilot demo
+.PHONY: help check rust corpus cli go ts python docs pilot payments demo
 
 help:
-	@sed -n '1,13p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,14p' Makefile | sed 's/^# \{0,1\}//'
 
 check: rust corpus go ts python docs
 	@echo
@@ -70,6 +71,9 @@ docs: cli
 
 pilot: cli
 	WITNESS_LOG_BIN=$(CLI) python3 examples/pilot-triangle/run.py
+
+payments: cli
+	WITNESS_LOG_BIN=$(CLI) python3 examples/agent-payments/run.py
 
 demo: cli
 	$(CLI) demo --tamper || true

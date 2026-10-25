@@ -220,6 +220,7 @@ ten scenarios, 103 scenarios against the released CLI and wheel, and a 200-agent
 | [100,000 agents against 0.5.0](examples/swarm/reports/outside-100k-0.5.0.md) | 4,631,033 operations, 0 crashes; 3 defects found (GIL held across fsync, proxy export and crash-retry races), fixed in 0.5.0 |
 | [100,000 agents against the released 0.5.0](examples/swarm/reports/outside-100k-0.5.0-release.md) | 4,655,983 operations, 0 failures, 0 findings |
 | [same-key rewrite](examples/rewrite-attack/run.py) | refused with evidence (`422`), `diff` flags equivocation |
+| [agent payments, x402 + AP2](examples/agent-payments/) | both logs bound; a changed amount, a rewritten history and an edited leaf fail (30, 20/30, 40) |
 
 Two outside evaluations ran witness-log and its competitors on the same workloads; every defect they found is
 fixed with a regression test. [Testing and evidence](docs/wiki/Testing-and-Evidence.md).

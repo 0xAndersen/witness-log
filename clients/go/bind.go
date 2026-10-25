@@ -125,6 +125,7 @@ func Bind(a, b *Dossier) (*BindResult, error) {
 
 	authA := namesOther(a.Leaves, ib, LeafAuthorizationEvent)
 	authB := namesOther(b.Leaves, ia, LeafAuthorizationEvent)
+	failedBefore := len(res.Failed)
 	for _, la := range authA {
 		var hit *Leaf
 		for _, lb := range authB {
@@ -150,6 +151,33 @@ func Bind(a, b *Dossier) (*BindResult, error) {
 			reason = strings.Join(reasons, "; ")
 		}
 		res.Failed = append(res.Failed, FailedPair{Kind: "authorization", Side: "a", Leaf: la.Index, Reason: reason})
+	}
+	// And a b leaf naming a that no a leaf binds to: a grant, revocation or
+	// scope change only b recorded. Without this the result depended on
+	// argument order. When an a leaf already failed, its reason lists every
+	// b leaf and the result is a mismatch either way, so they are not
+	// reported twice. (Same rule as `witness-log bind`.)
+	if len(res.Failed) == failedBefore {
+		for _, lb := range authB {
+			var reasons []string
+			matched := false
+			for _, la := range authA {
+				err := VerifyAuthorizationBinding(ia, la, ib, lb)
+				if err == nil {
+					matched = true
+					break
+				}
+				reasons = append(reasons, fmt.Sprintf("a leaf %d: %v", la.Index, err))
+			}
+			if matched {
+				continue
+			}
+			reason := "the other log has no AuthorizationEvent naming this agent"
+			if len(reasons) > 0 {
+				reason = strings.Join(reasons, "; ")
+			}
+			res.Failed = append(res.Failed, FailedPair{Kind: "authorization", Side: "b", Leaf: lb.Index, Reason: reason})
+		}
 	}
 	return res, nil
 }

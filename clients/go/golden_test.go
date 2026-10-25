@@ -254,6 +254,26 @@ func TestGoldenBindMatchesRust(t *testing.T) {
 	if err != nil || mismatch.ExitCode() != ExitDiverged || len(mismatch.Failed) == 0 {
 		t.Errorf("a widened scope must fail to bind: %+v %v", mismatch, err)
 	}
+	// B alone holds a second, wider grant naming A next to the real one: a
+	// mismatch in either argument order. Bind(a, b) used to miss it (exit 0)
+	// while Bind(b, a) exited 30, as `witness-log bind` did.
+	extra := *b
+	extra.Leaves = append([]Leaf(nil), b.Leaves...)
+	for _, l := range b.Leaves {
+		if l.LeafType == LeafAuthorizationEvent {
+			l.AuthorizationScopeHash = &widerHash
+			l.Index = uint64(len(extra.Leaves))
+			extra.Leaves = append(extra.Leaves, l)
+			break
+		}
+	}
+	ab, errAB := Bind(a, &extra)
+	ba, errBA := Bind(&extra, a)
+	if errAB != nil || errBA != nil || ab.ExitCode() != ExitDiverged || ba.ExitCode() != ExitDiverged {
+		t.Errorf("a grant only b holds must fail to bind in either order: %+v %+v", ab, ba)
+	} else if len(ab.Failed) != 1 || ab.Failed[0].Side != "b" || ab.Failed[0].Leaf != uint64(len(b.Leaves)) {
+		t.Errorf("the extra grant must be reported as b's leaf %d: %+v", len(b.Leaves), ab.Failed)
+	}
 }
 
 func TestGoldenDisclosure(t *testing.T) {
