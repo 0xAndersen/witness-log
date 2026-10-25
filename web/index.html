@@ -78,6 +78,7 @@
   .options label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
   .options input[type=text] { width: 100%; min-width: 0; }
   .options .identity { flex: 1 1 420px; }
+  .options .hint { font-size: 12px; }
   input[type=text], input[type=number], textarea, select {
     background: var(--bg-deep); color: var(--text); border: 1px solid var(--rule-soft); border-radius: 4px;
     padding: 7px 9px; font-size: 13px;
@@ -189,6 +190,10 @@
     </label>
     <label>or minimum receipts
       <input type="number" id="min-receipts" min="0" step="1" placeholder="—" style="width:7ch">
+    </label>
+    <label class="identity">Who operates this log? (optional organisation name, as written in the directory)
+      <input type="text" id="subject-org" placeholder="e.g. Example Org" spellcheck="false" autocomplete="off" title="Its own witnesses still count as receipts but never as independent operators, so an organisation that runs both the agent and a witness cannot vouch for itself.">
+      <small class="hint">Its own witnesses then never count as independent: an organisation cannot vouch for its own agent.</small>
     </label>
     <label class="identity">Known heads (optional: &lt;size&gt;:&lt;root hex&gt; you already hold for this identity, separated by spaces)
       <input type="text" id="known-heads" placeholder="e.g. 4:9f86d081…" spellcheck="false" autocomplete="off">

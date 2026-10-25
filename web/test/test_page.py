@@ -90,6 +90,24 @@ def run_engine(browser, base, engine, failures):
         if got != want:
             failures.append(f"{engine} with directory: got {got}, want {want}")
 
+        # The log's operator (issue #18): "Golden Org One" runs one of the
+        # two witnesses, so with it as the subject only one independent
+        # operator is left: CONSISTENT-UNWITNESSED, as
+        # `witness-log verify --subject-org "golden org one"` (exit 10).
+        page.fill("#subject-org", "  golden   org one ")
+        page.click("#verify")
+        try:
+            wait_for(page, "document.getElementById('verdict-word').textContent === 'CONSISTENT-UNWITNESSED'", timeout=10000)
+        except Exception:
+            failures.append(f"{engine} subject org: got {page.text_content('#verdict-word')!r}, want CONSISTENT-UNWITNESSED")
+        checks = page.text_content("#checks") or ""
+        if "1 independent operator(s)" not in checks or "which operates this log, not counted as independent" not in checks:
+            failures.append(f"{engine} subject org: the quorum line does not say what was excluded: {checks[:400]!r}")
+        page.fill("#subject-org", "")
+        page.click("#verify")
+        wait_for(page, f"document.getElementById('verdict-word').textContent === {json.dumps(want)}", timeout=10000)
+        print("with directory and its operator as subject:", "CONSISTENT-UNWITNESSED", "-> cleared:", page.text_content("#verdict-word"))
+
         # Tampered dossier -> INVALID (DIVERGED before 0.5.0)
         tampered = json.loads((GOLD / "a.json").read_text())
         tampered["leaves"][0]["payload_hash"] = "00" * 32

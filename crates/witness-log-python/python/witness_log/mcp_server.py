@@ -91,6 +91,7 @@ MAX_PAYLOAD_BYTES = 1_000_000  # one leaf's payload; hashes are 32 bytes regardl
 DEFAULT_THRESHOLD = 0.66
 WITNESS_TIMEOUT_S = 10
 TRUSTED_DIRECTORY_ENV = "WITNESS_LOG_TRUSTED_DIRECTORY"
+SUBJECT_ORG_ENV = "WITNESS_LOG_SUBJECT_ORG"
 
 server = _Server(
     name="witness-log",
@@ -161,6 +162,53 @@ def _trust(given: Optional[Dict[str, Any]], arg: str) -> "tuple[Optional[Dict[st
                 "choose which keys count as witnesses."
             )
         return pinned, "pinned"
+    if given is not None:
+        return given, "caller"
+    return None, None
+
+
+# The organisation that operates the logs this server keeps
+# (WITNESS_LOG_SUBJECT_ORG or --subject-org). Its own witnesses never count
+# as independent of its logs: without it, an organisation that runs both
+# this agent and a witness in the trusted directory counts as one of the
+# two independent operators WITNESSED needs.
+_subject: Dict[str, Any] = {"loaded": False, "org": None}
+
+
+def set_subject_org(org: Optional[str]) -> None:
+    """The operator's own organisation (None or blank: not set)."""
+    org = " ".join(org.split()) if isinstance(org, str) else None
+    _subject.update(loaded=True, org=org or None)
+
+
+def _label(org: str) -> str:
+    # The verifier compares operator labels trimmed, with runs of
+    # whitespace collapsed and case-folded.
+    return " ".join(org.split()).casefold()
+
+
+def _subject_org(given: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
+    """The subject organisation a verdict is computed with, and where it
+    came from ("operator", "caller" or None).
+
+    It can only lower a verdict, so a caller may name one. But when the
+    operator configured it, a different value is refused: naming another
+    organisation would let the operator's own witnesses count as
+    independent again."""
+    if not _subject["loaded"]:
+        set_subject_org(os.environ.get(SUBJECT_ORG_ENV))
+    configured = _subject["org"]
+    if given is not None and not isinstance(given, str):
+        raise ValueError("subject_org must be a string")
+    given = " ".join(given.split()) if given else None
+    if configured is not None:
+        if given is not None and _label(given) != _label(configured):
+            raise ValueError(
+                f"`subject_org` refused: the operator configured this server's organisation as "
+                f"{configured!r} ({SUBJECT_ORG_ENV} / --subject-org). Call again without `subject_org`. "
+                "Naming another organisation would let the operator's own witnesses count as independent."
+            )
+        return configured, "operator"
     if given is not None:
         return given, "caller"
     return None, None
@@ -604,6 +652,7 @@ async def verify_chain_integrity(
     session_id: str,
     trusted_directory: Optional[Dict[str, Any]] = None,
     min_witnesses: Optional[int] = None,
+    subject_org: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Re-verify the whole chain and report any tampering.
 
@@ -630,6 +679,15 @@ async def verify_chain_integrity(
     instead of a fraction of the directory; use it when the directory is
     large.
 
+    `subject_org` is the organisation that operates this agent's log. Its
+    own witnesses still cosign but never count as independent operators,
+    so an organisation that runs both the agent and a witness cannot vouch
+    for itself. It can only lower a verdict. When the operator
+    configured it (WITNESS_LOG_SUBJECT_ORG or --subject-org), omit it: the
+    configured one is used and a different one is refused. `subject_org`
+    and `subject_org_source` ("operator", "caller" or null) in the result
+    say which was used.
+
     Every head witnesses cosigned for this session (the kept witnessed
     dossier, and the witnessing state next to the journal) is passed to
     the verifier as a known head, read from disk without first checking it
@@ -650,6 +708,7 @@ async def verify_chain_integrity(
     if min_witnesses is not None and min_witnesses < 1:
         raise ValueError("min_witnesses must be at least 1")
     trusted_directory, source = _trust(trusted_directory, "trusted_directory")
+    subject, subject_source = _subject_org(subject_org)
     log, lock = await _get(session_id)
     async with lock:
         dossier = json.loads(log.to_dossier_json())
@@ -666,7 +725,9 @@ async def verify_chain_integrity(
         dossier = witnessed
     td = json.dumps(trusted_directory) if trusted_directory is not None else None
     report = json.loads(
-        wl.verify_dossier_json(json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known or None)
+        wl.verify_dossier_json(
+            json.dumps(dossier), DEFAULT_THRESHOLD, ident, td, min_witnesses, None, known or None, subject_org=subject
+        )
     )
     alerts = (
         [
@@ -691,13 +752,17 @@ async def verify_chain_integrity(
     out: Dict[str, Any] = {
         "verdict": report.get("verdict"),
         "directory_source": source,
+        "subject_org": subject,
+        "subject_org_source": subject_source,
         "split_view_unsafe": bool(report.get("split_view_unsafe")),
         "tamper_alerts": alerts,
         "report": report,
     }
     if on_disk is not None:
         out["witnessed_size"] = on_disk["checkpoint"]["tree_size"]
-        wr = json.loads(wl.verify_dossier_json(json.dumps(on_disk), DEFAULT_THRESHOLD, ident, td, min_witnesses))
+        wr = json.loads(
+            wl.verify_dossier_json(json.dumps(on_disk), DEFAULT_THRESHOLD, ident, td, min_witnesses, subject_org=subject)
+        )
         out["witnessed_verdict"] = wr.get("verdict")
         out["witnessed_split_view_unsafe"] = bool(wr.get("split_view_unsafe"))
     return out
@@ -817,6 +882,7 @@ async def submit_to_witnesses(
     directory: Optional[Dict[str, Any]] = None,
     max_witnesses: int = 8,
     min_witnesses: int = 2,
+    subject_org: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Get the current head cosigned by independent witnesses.
 
@@ -853,6 +919,11 @@ async def submit_to_witnesses(
     cosigning witnesses are not a strict majority of `directory`: the rest
     could have cosigned a conflicting history (the CLI exits 11 for it).
 
+    `subject_org` is the organisation that operates this agent's log: its
+    own witnesses still cosign but never count as independent operators in
+    the verdict. When the operator configured it (WITNESS_LOG_SUBJECT_ORG or
+    --subject-org), omit it; a different one is refused.
+
     Only `max_witnesses` witnesses are contacted, chosen for operator
     diversity first (one per operator, then round-robin), so a directory
     the size of a registry does not mean a hundred requests per checkpoint.
@@ -861,6 +932,7 @@ async def submit_to_witnesses(
     head witnesses already cosigned for this identity.
     """
     directory, source = _trust(directory, "directory")
+    subject, subject_source = _subject_org(subject_org)
     if directory is None:
         p = HOME / "witnesses.json"
         if not p.exists():
@@ -898,7 +970,9 @@ async def submit_to_witnesses(
         raise ValueError("directory has no independent witnesses to contact")
     doc = json.loads(r.dossier_json or "{}")
     report = json.loads(
-        wl.verify_dossier_json(json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory), min_witnesses)
+        wl.verify_dossier_json(
+            json.dumps(doc), DEFAULT_THRESHOLD, ident, json.dumps(directory), min_witnesses, subject_org=subject
+        )
     )
     _last_verdict[session_id] = report.get("verdict")
     _last_source[session_id] = source
@@ -917,6 +991,8 @@ async def submit_to_witnesses(
         "outcomes": r.outcomes,
         "verdict": report.get("verdict"),
         "directory_source": source,
+        "subject_org": subject,
+        "subject_org_source": subject_source,
         "split_view_unsafe": bool(report.get("split_view_unsafe")),
         "dossier": doc,
     }
@@ -934,7 +1010,14 @@ def main(argv: Optional[list] = None) -> None:
         help=f"pin this witness directory file as the only one the tools use; a directory passed in a "
         f"tool call is then refused (overrides ${TRUSTED_DIRECTORY_ENV})",
     )
+    ap.add_argument(
+        "--subject-org",
+        metavar="ORG",
+        help=f"the organisation that operates this server's logs; its own witnesses never count as independent "
+        f"operators, and a different subject_org in a tool call is refused (overrides ${SUBJECT_ORG_ENV})",
+    )
     a = ap.parse_args(argv)
+    set_subject_org(a.subject_org if a.subject_org is not None else os.environ.get(SUBJECT_ORG_ENV))
     try:
         pin_directory(a.trusted_directory or os.environ.get(TRUSTED_DIRECTORY_ENV) or None)
     except ValueError as e:

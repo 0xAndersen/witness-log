@@ -15,6 +15,14 @@ sh web/build-go.sh                   # Go toolchain only
 python3 -m http.server -d web 8000   # open http://localhost:8000
 ```
 
+Optional inputs, the same as `witness-log verify`'s: the expected identity
+key (`--identity`), the quorum fraction or a minimum receipt count, known
+heads (`--known-head`), and **who operates this log** (`--subject-org`). Fill
+in the last one with the operator's name as it appears in the directory: its
+own witnesses then still count as receipts but never as independent
+operators, so an organisation cannot vouch for its own agent. Left empty, it
+changes nothing.
+
 What the page shows:
 
 - the verdict and the exit code `witness-log verify` would return, with

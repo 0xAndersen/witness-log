@@ -68,6 +68,7 @@ class WitnessLog:
         *,
         timeout: float = 10.0,
         state_path: Optional[str] = None,
+        subject_org: Optional[str] = None,
     ) -> dict[str, Any]: ...
     async def asubmit(
         self,
@@ -77,6 +78,7 @@ class WitnessLog:
         *,
         timeout: float = 10.0,
         state_path: Optional[str] = None,
+        subject_org: Optional[str] = None,
     ) -> dict[str, Any]: ...
 
 class JournaledLog:
@@ -153,6 +155,7 @@ class JournaledLog:
         *,
         timeout: float = 10.0,
         state_path: Optional[str] = None,
+        subject_org: Optional[str] = None,
     ) -> dict[str, Any]: ...
     async def asubmit(
         self,
@@ -162,6 +165,7 @@ class JournaledLog:
         *,
         timeout: float = 10.0,
         state_path: Optional[str] = None,
+        subject_org: Optional[str] = None,
     ) -> dict[str, Any]: ...
     def is_closed(self) -> bool: ...
     def __enter__(self) -> JournaledLog: ...

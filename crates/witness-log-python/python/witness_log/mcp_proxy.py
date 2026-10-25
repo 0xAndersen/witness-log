@@ -166,6 +166,7 @@ class Proxy:
         max_restarts: int = 3,
         directory: Optional[str] = None,
         submit_every: int = 0,
+        subject_org: Optional[str] = None,
         stdin: Any = None,
         stdout: Any = None,
     ) -> None:
@@ -177,6 +178,9 @@ class Proxy:
         self.max_restarts = max_restarts
         self.directory = directory
         self.submit_every = submit_every
+        # The organisation that operates the wrapped server's log: its own
+        # witnesses never count as independent of it.
+        self.subject_org = " ".join(subject_org.split()) if subject_org and subject_org.strip() else None
         self.log = open_journal(journal, store_payloads=False)
         self._in = stdin if stdin is not None else sys.stdin.buffer
         self._out = stdout if stdout is not None else sys.stdout.buffer
@@ -286,7 +290,7 @@ class Proxy:
 
     def _submit(self) -> None:
         try:
-            out = self.log.submit(self.directory)
+            out = self.log.submit(self.directory, subject_org=self.subject_org)
             with self._state:
                 self.last_verdict = out.get("verdict")
         except Exception as e:  # noqa: BLE001 -- witnessing must never take the proxy down
@@ -392,7 +396,14 @@ class Proxy:
         known = self._cosigned_head()
         report = json.loads(
             _core.verify_dossier_json(
-                dossier, 0.66, self.log.identity_pubkey_hex(), td, 2 if td else None, None, [known] if known else None
+                dossier,
+                0.66,
+                self.log.identity_pubkey_hex(),
+                td,
+                2 if td else None,
+                None,
+                [known] if known else None,
+                subject_org=self.subject_org,
             )
         )
         alerts = (
@@ -410,6 +421,7 @@ class Proxy:
             "bytes": len(data),
             "verdict": report.get("verdict"),
             "directory_source": "pinned" if td is not None else None,
+            "subject_org": self.subject_org,
             # Witnessed, but not by a strict majority of the directory (the
             # CLI's exit 11): the verdict string alone does not say so.
             "split_view_unsafe": bool(report.get("split_view_unsafe")),
@@ -734,6 +746,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--max-restarts", type=int, default=3, help="restart the server at most this often (default 3)")
     ap.add_argument("--directory", help="witness directory JSON file you trust; enables witnessing")
     ap.add_argument("--submit-every", type=int, default=0, help="submit to witnesses every N completed calls")
+    ap.add_argument(
+        "--subject-org",
+        default=os.environ.get("WITNESS_LOG_SUBJECT_ORG"),
+        help="the organisation that operates this log; its own witnesses never count as independent operators "
+        "(default: $WITNESS_LOG_SUBJECT_ORG)",
+    )
     ap.add_argument("command", nargs=argparse.REMAINDER, help="the server command (after --)")
     a = ap.parse_args(argv)
     command = a.command[1:] if a.command and a.command[0] == "--" else a.command
@@ -748,6 +766,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_restarts=a.max_restarts,
             directory=a.directory,
             submit_every=a.submit_every,
+            subject_org=a.subject_org,
         )
     except (OSError, ValueError) as e:
         sys.stderr.write(f"witness-log-mcp-proxy: {e}\n")

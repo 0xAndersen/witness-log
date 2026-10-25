@@ -111,6 +111,10 @@ carry.
 - `--directory trusted.json --submit-every N` submits the journal to those
   witnesses every `N` completed calls and once more when the host closes
   stdin; `audit__status.last_verdict` reports the outcome.
+- `--subject-org ORG` (default `$WITNESS_LOG_SUBJECT_ORG`) names the
+  organisation that operates this log: its own witnesses still cosign but
+  never count as independent operators in `last_verdict` or the
+  `audit__export` verdict, which reports it as `subject_org`.
   `witness_log.open` rules apply: `WITNESS_LOG_IDENTITY_SEED_ENV` seals
   the journal, one process per journal.
 - The wrapped server is the code being audited, often someone else's

@@ -103,6 +103,10 @@ function options() {
   if (!Number.isNaN(th)) o.threshold = th;
   const min = $("min-receipts").value.trim();
   if (min !== "") o.min_receipts = parseInt(min, 10);
+  // The log's operator (`witness-log verify --subject-org`): its own
+  // witnesses still count as receipts but never as independent operators.
+  const subject = $("subject-org").value.trim().replace(/\s+/g, " ");
+  if (subject) o.subject_org = subject;
   const heads = $("known-heads").value.split(/[\s,]+/).filter((h) => h !== "");
   if (heads.length) o.known_heads = heads;
   if ($("allow-sub-majority").checked) o.allow_sub_majority = true;
@@ -154,7 +158,7 @@ function render(r) {
     rep.externally_anchored
       ? rep.quorum
         ? ["witness quorum", rep.quorum.meets_count_threshold && rep.quorum.distinct_independent_operators >= 2,
-          `${rep.quorum.valid_receipts} valid receipt(s) from ${rep.quorum.total_directory_witnesses} trusted witness(es); gate ${rep.quorum.count_gate}; ${rep.quorum.distinct_independent_operators} independent operator(s) (need 2): ${rep.quorum.independent_operators_represented.join(", ") || "none"}; project-operated receipts ${rep.quorum.project_operated_receipts}; split-view resistant: ${rep.quorum.split_view_resistant ? "yes" : "no"}.`]
+          `${rep.quorum.valid_receipts} valid receipt(s) from ${rep.quorum.total_directory_witnesses} trusted witness(es); gate ${rep.quorum.count_gate}; ${rep.quorum.distinct_independent_operators} independent operator(s) (need 2): ${rep.quorum.independent_operators_represented.join(", ") || "none"}; project-operated receipts ${rep.quorum.project_operated_receipts}; split-view resistant: ${rep.quorum.split_view_resistant ? "yes" : "no"}${options().subject_org ? `; witnesses of ${options().subject_org}, which operates this log, not counted as independent` : ""}.`]
         : ["witness quorum", false, "the dossier carries no receipts to score against your directory."]
       : ["witness quorum", null, "not scored: no trusted directory supplied."],
   ];

@@ -389,6 +389,7 @@ def _submit(
     *,
     timeout: float = 10.0,
     state_path: Optional[str] = None,
+    subject_org: Optional[str] = None,
 ) -> Dict[str, Any]:
     """One synchronous witnessing round for the current head: contact up
     to ``want`` diversity-selected witnesses from ``directory`` (a dict,
@@ -398,7 +399,9 @@ def _submit(
     "contacted": n, "tree_size": n, "outcomes": [...]}``. The verdict is
     what a verifier holding ``directory`` reaches, with ``min`` as the
     minimum cosignature count (default 2; WITNESSED also needs two
-    independent operators). Blocks for up to roughly
+    independent operators; ``subject_org``, the organisation that operates
+    this log, keeps its own witnesses from counting as independent of it).
+    Blocks for up to roughly
     ``timeout * attempts``; use :class:`Witnesser` to witness in the
     background or ``await log.asubmit(...)`` from asyncio.
 
@@ -429,7 +432,12 @@ def _submit(
     doc = json.loads(r.dossier_json or "{}")
     report = json.loads(
         _core.verify_dossier_json(
-            json.dumps(doc), 0.66, self.identity_pubkey_hex(), json.dumps(doc.get("witness_directory")), min_cosigs
+            json.dumps(doc),
+            0.66,
+            self.identity_pubkey_hex(),
+            json.dumps(doc.get("witness_directory")),
+            min_cosigs,
+            subject_org=subject_org,
         )
     )
     return {

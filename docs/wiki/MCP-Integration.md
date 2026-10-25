@@ -16,12 +16,12 @@ launcher.
 | `append_audit_step(session_id, intent, tool_name, payload?, state_transition?)` | intent leaf (+ result leaf); returns a signed checkpoint and an inclusion proof |
 | `record_result(session_id, intent_index, tool_name, outcome="ok", value?)` | result leaf for an intent recorded earlier: intent before acting, result after (0.3.6+) |
 | `get_inclusion_proof(session_id, entry_index)` | proof a step is in the tree |
-| `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?)` | the full verifier; tamper alerts; includes the last cosignatures while the head is unchanged |
+| `verify_chain_integrity(session_id, trusted_directory?, min_witnesses?, subject_org?)` | the full verifier; tamper alerts; includes the last cosignatures while the head is unchanged |
 | `redact_audit_entry(session_id, entry_index)` | GDPR erasure of one payload |
 | `export_dossier(session_id)` | the portable proof (with cosignatures when the head is the witnessed one; `witnessed_dossier` otherwise); also written to `<session>/dossier.json`, returned as `path`, `sha256`, `bytes` |
 | `record_handoff(session_id, direction, counterparty_identity_pubkey, state)` | one side of an agent-to-agent handoff |
 | `record_authorization(session_id, kind, counterparty_identity_pubkey, scope)` | one side of a delegation or scope change; `kind` is an enum of the six SPEC §3.2 kinds, `scope` a JSON object (committed as RFC 8785 canonical JSON) or a string (its UTF-8 bytes) |
-| `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2)` | get the head cosigned by diversity-selected witnesses |
+| `submit_to_witnesses(session_id, directory?, max_witnesses=8, min_witnesses=2, subject_org?)` | get the head cosigned by diversity-selected witnesses |
 | `audit_this_session(session_id)` | `{leaf_count, root, identity, witnessed, last_verdict, directory_source, witnessed_size, journal}`: where the trail stands, with no side effects (0.4.0+) |
 
 Already running an MCP server you want audited rather than giving the
@@ -79,6 +79,25 @@ or `null` (no directory, so the verdict cannot be `witnessed`). It is on
 `verify_chain_integrity` (for `verdict` and `witnessed_verdict`), on
 `submit_to_witnesses`, and on `audit_this_session` for `last_verdict`.
 A host or reviewer that acts on a verdict should require `"pinned"`.
+
+### Who operates the log: `subject_org`
+
+An organisation that runs this agent and also a witness in the trusted
+directory must not count as independent of its own agent. Set its name once,
+as it appears in the directory's `operator_org`:
+
+```sh
+witness-log-mcp --subject-org "Example Org"     # or WITNESS_LOG_SUBJECT_ORG="Example Org"
+```
+
+Its witnesses then still cosign, but never count among the two independent
+operators WITNESSED needs (the same rule as `witness-log verify
+--subject-org`; labels compare trimmed and case-folded). It can only lower a
+verdict. A tool call may pass `subject_org` itself when none is configured;
+when one is, a call naming a different organisation is refused, since that
+would let the operator's own witnesses count again. Results carry
+`subject_org` and `subject_org_source` (`"operator"`, `"caller"` or `null`)
+on `verify_chain_integrity` and `submit_to_witnesses`.
 
 ## Claude Code
 
