@@ -94,6 +94,32 @@ pub struct VerifyOptions {
     pub accept_fleet_anchor: bool,
 }
 
+impl VerifyOptions {
+    /// The options JSON as [`verify_dossier_with_options`] reads it: a JSON
+    /// object, never an array of the field values, whose keys serde matches
+    /// exactly and at most once (other keys are ignored), with `null` only
+    /// for the optional fields; the whole text nested at most two levels
+    /// above `MAX_DOSSIER_DEPTH` (the options object and the evidence list
+    /// around an evidence item), each input in it then keeping its own
+    /// limit. Go's wasm build reads its options the same way.
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        witness_log_network::check_json_depth_within(
+            text,
+            witness_log_network::MAX_DOSSIER_DEPTH + 2,
+        )
+        .map_err(|e| format!("options: {e}"))?;
+        if !text.trim_start().starts_with('{') {
+            return Err("options: expected a JSON object".to_string());
+        }
+        serde_json::from_str(text).map_err(|e| {
+            format!(
+                "options: {}",
+                witness_log_core::echo::bounded(&e.to_string())
+            )
+        })
+    }
+}
+
 /// Exit code `witness-log verify` (strict, the default) returns for this
 /// report: the verdict's code, or 11 for a WITNESSED verdict whose
 /// cosigners are not a strict majority of the directory.
@@ -481,8 +507,7 @@ pub fn verify_dossier_with_options(
     directory_json: Option<String>,
     options_json: &str,
 ) -> Result<JsValue, JsValue> {
-    let options: VerifyOptions = serde_json::from_str(options_json)
-        .map_err(|e| JsValue::from_str(&format!("options: {e}")))?;
+    let options = VerifyOptions::from_json(options_json).map_err(|e| JsValue::from_str(&e))?;
     verify_dossier_value(json, directory_json.as_deref(), &options)
         .map_err(|e| JsValue::from_str(&e))
         .and_then(to_js)

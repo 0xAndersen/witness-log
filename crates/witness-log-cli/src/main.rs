@@ -1112,12 +1112,12 @@ pub(crate) fn read_evidence(
         .map_err(|e| e.to_string())
 }
 
-/// The dossier's own `identity_pubkey` as `verify --json` reports it: whole
-/// when it is at most 64 bytes (a key, in hex, is 64), otherwise its first
-/// 64 characters and "…". A longer one is never a key (the verdict is
-/// INVALID), and through 0.6.1 a hostile file's megabytes were copied into
-/// the report whole. The Go CLI reports it the same way.
-fn reported_identity(claimed: &str) -> String {
+/// An identity a dossier claims, as `verify --json` and `bind` report it:
+/// whole when it is at most 64 bytes (a key, in hex, is 64), otherwise its
+/// first 64 characters and "…". A longer one is never a key (`verify`'s
+/// verdict is INVALID), and through 0.6.1 a hostile file's megabytes were
+/// copied into the output whole. The Go CLI reports it the same way.
+pub(crate) fn reported_identity(claimed: &str) -> String {
     const KEY_HEX: usize = 64;
     if claimed.len() <= KEY_HEX {
         return claimed.to_string();

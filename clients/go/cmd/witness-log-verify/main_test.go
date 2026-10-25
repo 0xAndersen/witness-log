@@ -144,6 +144,45 @@ func TestJSONReportsABoundedIdentity(t *testing.T) {
 	}
 }
 
+// TestBindReportsBoundedIdentities: bind names each dossier's identity as
+// --json does, cut to 64 characters and "…" when longer than a key, in the
+// JSON, the text and the refusal of two equal claims, as the reference's
+// bind does. Through 0.6.1 both printed a hostile claim whole.
+func TestBindReportsBoundedIdentities(t *testing.T) {
+	dir := t.TempDir()
+	key := strings.Repeat("aa", 32)
+	write := func(name, identity string) string {
+		p := filepath.Join(dir, name)
+		text := `{"identity_pubkey":"` + identity + `","leaves":[],"checkpoint":{"sig_alg":"ed25519","tree_size":0,"root_hash":"","timestamp_ms":0,"signer_pubkey":"` + key + `","signature":""}}`
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	a, b := write("a.json", strings.Repeat("ab", 5_000_000)), write("b.json", key)
+	cut := strings.Repeat("ab", 32) + "…"
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"bind", a, b, "--json"}, &stdout, &stderr); code != 10 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var out struct {
+		A struct{ Identity string } `json:"a"`
+		B struct{ Identity string } `json:"b"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil || out.A.Identity != cut || out.B.Identity != key || stdout.Len() > 10_000 {
+		t.Errorf("%v %.80s %.80s (%d bytes)", err, out.A.Identity, out.B.Identity, stdout.Len())
+	}
+	stdout.Reset()
+	run([]string{"bind", a, b}, &stdout, &stderr)
+	if !strings.Contains(stdout.String(), cut) || stdout.Len() > 10_000 {
+		t.Errorf("text: %d bytes", stdout.Len())
+	}
+	stderr.Reset()
+	if code := run([]string{"bind", a, a}, &stdout, &stderr); code != 2 || stderr.Len() > 1_000 {
+		t.Errorf("exit %d, %d bytes on stderr", code, stderr.Len())
+	}
+}
+
 // TestDeepInputsAreUsageErrors: a directory, revocations or evidence file
 // nested deeper than 1000 is refused with exit 2, as a malformed one is;
 // 1000 deep it is read (corpus 17's inputs run every case).

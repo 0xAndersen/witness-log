@@ -79,6 +79,14 @@ long_fields="${TMPDIR:-/tmp}/wl-long-fields.json"
 python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["identity_pubkey"]="é"*40; d["fleet_anchor"]={"origin":"o"*256,"entry_index":0,"entry_bytes_b64":"","inclusion_proof":[],"fleet_checkpoint_note":""}; json.dump(d,open(sys.argv[2],"w"))' native/dossier.json "$long_fields"
 compare "a 256-byte fleet origin and an 80-byte identity_pubkey" "$long_fields" || fail=1
 compare "a 256-byte fleet origin, --accept-fleet-anchor" "$long_fields" --subject-org org --accept-fleet-anchor || fail=1
+# An evidence file is UTF-8 JSON (SPEC.md §9), which a corpus, itself JSON,
+# cannot hold otherwise: both refuse an invalid byte in an ignored member,
+# and both count the same item without it.
+utf8_dir="${TMPDIR:-/tmp}/wl-evidence-utf8"
+mkdir -p "$utf8_dir"
+python3 -I -c 'import json,os,sys; v=json.load(open(sys.argv[1],encoding="utf-8")); d=[c["dossier_json"] for c in v["cases"] if c["name"]=="valid"][0]; t=[c["text"] for c in v["inputs"] if c["name"]=="an evidence item with an ignored member holding 1e400"][0].encode(); open(os.path.join(sys.argv[2],"dossier.json"),"w").write(d); open(os.path.join(sys.argv[2],"good.json"),"wb").write(t); open(os.path.join(sys.argv[2],"bad.json"),"wb").write(t.replace(b"1e400",bytes([34,255,34])))' "$repo/corpus/17_dossier_parsing.json" "$utf8_dir"
+compare "evidence, an ignored member holding 1e400" "$utf8_dir/dossier.json" --evidence "$utf8_dir/good.json" || fail=1
+compare "evidence, an invalid UTF-8 byte in an ignored member" "$utf8_dir/dossier.json" --evidence "$utf8_dir/bad.json" || fail=1
 # RFC-0001 (experimental): corpus 14's fleet-anchored dossiers, with and
 # without --accept-fleet-anchor.
 fleet="${TMPDIR:-/tmp}/wl-fleet-corpus"

@@ -202,10 +202,52 @@ const MaxDossierDepth = 1000
 // ParseRevocations and ParseEvidence apply before reading anything, the
 // reference's check_json_depth. One pass, no allocation.
 func CheckJSONDepth(raw []byte) error {
-	if at, deep := nestingExceeds(raw, MaxDossierDepth); deep {
-		return fmt.Errorf("nested deeper than %d arrays and objects (at byte %d)", MaxDossierDepth, at)
+	return CheckJSONDepthWithin(raw, MaxDossierDepth)
+}
+
+// CheckJSONDepthWithin is CheckJSONDepth with another limit, for a JSON
+// text that carries inputs (the wasm build's options object, two levels
+// above an evidence item): the inputs keep MaxDossierDepth, and the text
+// may nest only the levels it adds. The reference's
+// check_json_depth_within.
+func CheckJSONDepthWithin(raw []byte, max int) error {
+	if at, deep := nestingExceeds(raw, max); deep {
+		return fmt.Errorf("nested deeper than %d arrays and objects (at byte %d)", max, at)
 	}
 	return nil
+}
+
+// Field says how ReadObject treats one key of a struct: Nullable for an
+// Option field (null reads as absent; otherwise null is an error), String
+// for a string field (a JSON string without an unpaired surrogate escape).
+type Field struct {
+	Nullable bool
+	String   bool
+}
+
+// ReadObject reads raw as the reference's serde reads a struct whose
+// fields are the keys of fields, every one optional: a JSON object, never
+// an array; no key with an unpaired surrogate escape; a key naming a field
+// at most once and matched exactly (encoding/json matches keys
+// case-insensitively); other keys ignored, their values only checked as
+// JSON syntax. It returns the members present, null ones dropped, for the
+// caller to decode. The wasm build reads its options with it.
+func ReadObject(raw []byte, what string, fields map[string]Field) (map[string]json.RawMessage, error) {
+	s := structSpec{what: what, fields: map[string]fieldRule{}}
+	for name, f := range fields {
+		var r fieldRule
+		if f.Nullable {
+			r |= fNullable
+		}
+		if f.String {
+			r |= fString
+		}
+		s.fields[name] = r
+	}
+	if !utf8.Valid(raw) || !json.Valid(raw) {
+		return nil, fmt.Errorf("%s: not valid JSON", what)
+	}
+	return readStruct(raw, s)
 }
 
 // nestingExceeds returns the byte offset of the first '[' or '{' outside a

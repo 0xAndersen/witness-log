@@ -933,13 +933,14 @@ witness_log_core::object_only_serde!(Dossier, DossierDef);
 /// limit never decides, and bounds what any verifier holds while reading.
 pub const MAX_DOSSIER_DEPTH: usize = 1000;
 
-/// A JSON text nested deeper than [`MAX_DOSSIER_DEPTH`] arrays and objects
-/// ([`check_json_depth`]); `offset` is the byte offset of the first `[` or
-/// `{` past the limit.
+/// A JSON text nested deeper than `max` arrays and objects
+/// ([`check_json_depth`], where `max` is [`MAX_DOSSIER_DEPTH`]); `offset` is
+/// the byte offset of the first `[` or `{` past the limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("nested deeper than {MAX_DOSSIER_DEPTH} arrays and objects (at byte {offset})")]
+#[error("nested deeper than {max} arrays and objects (at byte {offset})")]
 pub struct JsonTooDeep {
     pub offset: usize,
+    pub max: usize,
 }
 
 /// SPEC.md §9's nesting limit, the one check every verifier input passes
@@ -953,8 +954,16 @@ pub struct JsonTooDeep {
 /// [`EquivocationProof::from_evidence_json`](tlog_witness::EquivocationProof::from_evidence_json)
 /// apply it; anything else that reads a verifier input from text should.
 pub fn check_json_depth(text: &str) -> Result<(), JsonTooDeep> {
-    match json_nesting_exceeds(text.as_bytes(), MAX_DOSSIER_DEPTH) {
-        Some(offset) => Err(JsonTooDeep { offset }),
+    check_json_depth_within(text, MAX_DOSSIER_DEPTH)
+}
+
+/// [`check_json_depth`] with another limit, for a JSON text that carries
+/// inputs (the wasm build's options object, two levels above an evidence
+/// item): the inputs keep [`MAX_DOSSIER_DEPTH`], and the text may nest only
+/// the levels it adds. Go's `CheckJSONDepthWithin`.
+pub fn check_json_depth_within(text: &str, max: usize) -> Result<(), JsonTooDeep> {
+    match json_nesting_exceeds(text.as_bytes(), max) {
+        Some(offset) => Err(JsonTooDeep { offset, max }),
         None => Ok(()),
     }
 }
@@ -1051,7 +1060,7 @@ impl Dossier {
     /// checks. `serde_json::from_str::<Dossier>` alone skips the depth
     /// limit; read a dossier from anywhere else with this.
     pub fn from_json(text: &str) -> Result<Self, DossierParseError> {
-        if let Err(JsonTooDeep { offset }) = check_json_depth(text) {
+        if let Err(JsonTooDeep { offset, .. }) = check_json_depth(text) {
             return Err(DossierParseError::TooDeep { offset });
         }
         serde_json::from_str(text).map_err(DossierParseError::Json)

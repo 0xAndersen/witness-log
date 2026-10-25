@@ -71,7 +71,7 @@ func namesOther(leaves []Leaf, other string, tag uint8) []*Leaf {
 func Bind(a, b *Dossier) (*BindResult, error) {
 	ia, ib := a.IdentityPubkey, b.IdentityPubkey
 	if ia == ib {
-		return nil, fmt.Errorf("both dossiers claim the same identity %s; bind is for two different agents", ia)
+		return nil, fmt.Errorf("both dossiers claim the same identity %s; bind is for two different agents", echo(ia))
 	}
 	res := &BindResult{Bound: []BoundPair{}, Failed: []FailedPair{}}
 

@@ -845,11 +845,32 @@ included. A deeper one is refused exactly as a malformed one is: the CLI
 exits `2`, a library returns an error or raises, and no verdict is given.
 Where one JSON text carries several inputs (a binding's array of evidence
 items, the wasm build's options object), the limit applies to each input
-in it. `/corpus/17_dossier_parsing.json`'s `inputs` pin the limit for each
-input at 1000, 1001 and 100,000 levels and with brackets inside strings.
+in it, and the carrying text may nest only the levels it adds (the wasm
+options object at most 1002: itself and the evidence list around an
+item); the options object is read as a struct, its keys matched exactly.
+`/corpus/17_dossier_parsing.json`'s `inputs` pin the limit for each input
+at 1000, 1001 and 100,000 levels and with brackets inside strings.
 (Before this rule, Go refused these inputs 10,000 levels deep while the
 reference read a directory or revocations of any depth and an evidence
 item only to serde_json's 128 levels.)
+
+**Reading the other inputs (normative).** Each is UTF-8 JSON, read as the
+dossier is. A trusted directory is `{"witnesses": [...]}` (a struct) or a
+bare array of entries, and revocations are one statement or an array of
+them; anything else, `null` included, is refused. An evidence item is an
+object: the proof itself, or one that carries the proof, an object, under
+`"proof"`. Unlike a dossier's structs, of a key given twice the last
+counts, and only it is read: every other member (an earlier copy of a key,
+and beside `"proof"` every member of the item, an `"origin"` included) is
+ignored, its value only checked as JSON syntax, so it may hold `1e400` or
+an unpaired surrogate escape. The proof's `origin`, `log_vkey`,
+`earlier_note` and `conflicting_note` are strings, and they and every key
+of the item and of the proof contain no unpaired surrogate escape, as a
+dossier's field strings and struct keys. A verifier given an input as an
+already-parsed value (TypeScript's options) checks the value as it is: a
+parser such as `JSON.parse` has already kept only the last copy of a
+repeated key and dropped whatever was nested under the others, so such a
+verifier also takes the text. Corpus 17's `inputs` pin each case.
 
 **JSON Schema.** `spec/dossier.schema.json` (JSON Schema 2020-12) states
 the exact shape of a dossier and of every object in it: field names,

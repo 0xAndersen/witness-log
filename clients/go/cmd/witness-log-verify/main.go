@@ -525,10 +525,20 @@ func runBind(args []string, stdout, stderr io.Writer) int {
 		return witnesslog.ExitUsage
 	}
 	if hasFlag(args, "--json") {
+		// Identities as the reference's bind reports them: each dossier's
+		// claim, cut when it is longer than a key (reportedIdentity).
+		bound := make([]witnesslog.BoundPair, len(result.Bound))
+		for i, p := range result.Bound {
+			p.A, p.B = reportedIdentity(p.A), reportedIdentity(p.B)
+			if p.Sender != "" {
+				p.Sender, p.Receiver = reportedIdentity(p.Sender), reportedIdentity(p.Receiver)
+			}
+			bound[i] = p
+		}
 		out := map[string]any{
-			"a":      map[string]string{"path": pos[0], "identity": a.IdentityPubkey},
-			"b":      map[string]string{"path": pos[1], "identity": b.IdentityPubkey},
-			"bound":  result.Bound,
+			"a":      map[string]string{"path": pos[0], "identity": reportedIdentity(a.IdentityPubkey)},
+			"b":      map[string]string{"path": pos[1], "identity": reportedIdentity(b.IdentityPubkey)},
+			"bound":  bound,
 			"failed": result.Failed,
 			"exit":   result.ExitCode(),
 		}
@@ -537,7 +547,7 @@ func runBind(args []string, stdout, stderr io.Writer) int {
 		_ = enc.Encode(out)
 		return result.ExitCode()
 	}
-	fmt.Fprintf(stdout, "witness-log-verify bind\n  A: %s\n  B: %s\n\n", a.IdentityPubkey, b.IdentityPubkey)
+	fmt.Fprintf(stdout, "witness-log-verify bind\n  A: %s\n  B: %s\n\n", reportedIdentity(a.IdentityPubkey), reportedIdentity(b.IdentityPubkey))
 	for _, p := range result.Bound {
 		fmt.Fprintf(stdout, "✓ %s bound: A#%d ↔ B#%d  %s\n", p.Kind, p.ALeaf, p.BLeaf, p.Hash)
 	}

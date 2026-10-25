@@ -549,9 +549,14 @@ impl EquivocationProof {
     /// or, as `witness serve` writes it, carries the proof under `"proof"`
     /// (`{"observed_unix", "kind": "equivocation", "proof": {...}}`). The
     /// proof must be an object whose `origin`, `log_vkey`, `earlier_note`
-    /// and `conflicting_note` are strings; other keys are ignored.
+    /// and `conflicting_note` are strings without an unpaired surrogate
+    /// escape. Of a key given twice the last counts, and only it is read;
+    /// every other member (an earlier copy, and with `"proof"` present every
+    /// member of the item but `"proof"`) is ignored, its value only checked
+    /// as JSON syntax. The keys of the item and of the proof have no
+    /// unpaired surrogate escape (SPEC.md §9, as for a dossier's structs).
     /// Anything else is the caller's error, never a proof that silently
-    /// fails to verify. Of a key given twice, the last counts.
+    /// fails to verify.
     pub fn from_evidence(item: &serde_json::Value) -> Result<Self, String> {
         use serde::Deserialize;
         evidence::Item::deserialize(item)
@@ -587,7 +592,9 @@ impl EquivocationProof {
             text.as_bytes(),
             crate::MAX_DOSSIER_DEPTH + usize::from(array),
         ) {
-            return Err(crate::JsonTooDeep { offset }.into());
+            // The limit each item keeps, which an array adds one level to.
+            let max = crate::MAX_DOSSIER_DEPTH;
+            return Err(crate::JsonTooDeep { offset, max }.into());
         }
         let items = if array {
             serde_json::from_str::<Vec<evidence::Item>>(text)
@@ -667,103 +674,42 @@ impl EquivocationProof {
 }
 
 /// Reading an evidence item without building what the rule ignores
-/// ([`EquivocationProof::from_evidence`]). Values are read with
-/// `deserialize_any` at most three levels down (the item, its `proof`, a
-/// proof field's value) and everything below with `IgnoredAny`, which
-/// serde_json skips without recursion: an item reads the same at any depth,
-/// and the depth limit is the caller's ([`crate::check_json_depth`]).
+/// ([`EquivocationProof::from_evidence`]). The item, and then its `proof`,
+/// are read as objects whose keys are decoded (an unpaired surrogate escape
+/// in one refuses the item, as in a dossier's structs); the value of each
+/// key the rule names (`proof` and the four proof fields) is kept as its
+/// JSON text, the last of a repeated key replacing the earlier, and every
+/// other value is skipped with `IgnoredAny`, which serde_json checks as
+/// JSON syntax only and without recursion. Only the copies that count are
+/// decoded afterwards, so an ignored member (an earlier copy of a field,
+/// or an `"origin"` beside `"proof"`) holding `1e400` or `"\ud800"` refuses
+/// nothing, as in Go and TypeScript. The depth limit is the caller's
+/// ([`crate::check_json_depth`]).
 mod evidence {
     use super::EquivocationProof;
     use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    use serde_json::value::RawValue;
     use std::fmt;
 
     const NOT_AN_OBJECT: &str = "an evidence item must be a JSON object: a proof, or {\"proof\": {...}} as `witness serve` writes it";
     const PROOF_NOT_AN_OBJECT: &str = "the evidence item's \"proof\" must be a JSON object";
 
-    /// The visitor methods for every JSON value but an object: each gives
-    /// `$other`, an array's items consumed unread.
-    macro_rules! not_an_object {
-        ($other:expr) => {
-            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok($other)
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                while seq.next_element::<IgnoredAny>()?.is_some() {}
-                Ok($other)
-            }
-        };
-    }
-
     /// One evidence item: the proof, or why the value is not one.
     pub(super) struct Item(pub(super) Result<EquivocationProof, String>);
 
-    /// A proof field's value: a string, or anything else (read, not built).
-    enum Member {
-        Str(String),
-        Other,
-    }
-
-    /// The value of an item's `proof` key.
-    enum Proof {
-        Object(Fields),
-        Other,
-    }
-
-    /// The proof fields an object has; of a repeated key the last counts,
-    /// as when the object was read into a map.
+    /// The members of one object that the rule reads, each the JSON text of
+    /// the last copy of its key.
     #[derive(Default)]
-    struct Fields {
-        origin: Option<Member>,
-        log_vkey: Option<Member>,
-        earlier_note: Option<Member>,
-        conflicting_note: Option<Member>,
+    struct Members {
+        proof: Option<Box<RawValue>>,
+        origin: Option<Box<RawValue>>,
+        log_vkey: Option<Box<RawValue>>,
+        earlier_note: Option<Box<RawValue>>,
+        conflicting_note: Option<Box<RawValue>>,
     }
 
-    impl Fields {
-        fn slot(&mut self, key: &str) -> Option<&mut Option<Member>> {
-            match key {
-                "origin" => Some(&mut self.origin),
-                "log_vkey" => Some(&mut self.log_vkey),
-                "earlier_note" => Some(&mut self.earlier_note),
-                "conflicting_note" => Some(&mut self.conflicting_note),
-                _ => None,
-            }
-        }
-
-        /// Read one member of an object into its slot, or past it.
-        fn read<'de, A: MapAccess<'de>>(&mut self, key: &str, map: &mut A) -> Result<(), A::Error> {
-            match self.slot(key) {
-                Some(slot) => *slot = Some(map.next_value::<Member>()?),
-                None => {
-                    map.next_value::<IgnoredAny>()?;
-                }
-            }
-            Ok(())
-        }
-
+    impl Members {
         fn into_proof(self) -> Result<EquivocationProof, String> {
-            let field = |k: &str, m: Option<Member>| match m {
-                Some(Member::Str(s)) => Ok(s),
-                Some(Member::Other) => {
-                    Err(format!("equivocation proof field {k} must be a string"))
-                }
-                None => Err(format!("equivocation proof is missing field {k}")),
-            };
             Ok(EquivocationProof {
                 origin: field("origin", self.origin)?,
                 log_vkey: field("log_vkey", self.log_vkey)?,
@@ -773,48 +719,74 @@ mod evidence {
         }
     }
 
-    impl<'de> Deserialize<'de> for Member {
-        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-            struct V;
-            impl<'de> Visitor<'de> for V {
-                type Value = Member;
-                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    f.write_str("a JSON value")
-                }
-                not_an_object!(Member::Other);
-                fn visit_str<E>(self, s: &str) -> Result<Member, E> {
-                    Ok(Member::Str(s.to_owned()))
-                }
-                fn visit_string<E>(self, s: String) -> Result<Member, E> {
-                    Ok(Member::Str(s))
-                }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Member, A::Error> {
-                    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-                    Ok(Member::Other)
-                }
-            }
-            d.deserialize_any(V)
+    /// A proof field from the JSON text of its last copy: a string with no
+    /// unpaired surrogate escape. serde_json has already checked the text
+    /// as JSON, so decoding a string fails only on such an escape.
+    fn field(k: &str, raw: Option<Box<RawValue>>) -> Result<String, String> {
+        let raw = raw.ok_or_else(|| format!("equivocation proof is missing field {k}"))?;
+        if !raw.get().starts_with('"') {
+            return Err(format!("equivocation proof field {k} must be a string"));
         }
+        serde_json::from_str(raw.get())
+            .map_err(|_| format!("equivocation proof field {k} has an unpaired surrogate"))
     }
 
-    impl<'de> Deserialize<'de> for Proof {
+    /// A JSON value read as an object's members, or as not an object.
+    enum Object {
+        Members(Members),
+        Other,
+    }
+
+    impl<'de> Deserialize<'de> for Object {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
             struct V;
             impl<'de> Visitor<'de> for V {
-                type Value = Proof;
+                type Value = Object;
                 fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                     f.write_str("a JSON value")
                 }
-                not_an_object!(Proof::Other);
-                fn visit_str<E>(self, _: &str) -> Result<Proof, E> {
-                    Ok(Proof::Other)
+                fn visit_bool<E>(self, _: bool) -> Result<Object, E> {
+                    Ok(Object::Other)
                 }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Proof, A::Error> {
-                    let mut fields = Fields::default();
+                fn visit_i64<E>(self, _: i64) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_u64<E>(self, _: u64) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_f64<E>(self, _: f64) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_str<E>(self, _: &str) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_unit<E>(self) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_none<E>(self) -> Result<Object, E> {
+                    Ok(Object::Other)
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Object, A::Error> {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {}
+                    Ok(Object::Other)
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Object, A::Error> {
+                    let mut m = Members::default();
                     while let Some(key) = map.next_key::<String>()? {
-                        fields.read(&key, &mut map)?;
+                        let slot = match key.as_str() {
+                            "proof" => &mut m.proof,
+                            "origin" => &mut m.origin,
+                            "log_vkey" => &mut m.log_vkey,
+                            "earlier_note" => &mut m.earlier_note,
+                            "conflicting_note" => &mut m.conflicting_note,
+                            _ => {
+                                map.next_value::<IgnoredAny>()?;
+                                continue;
+                            }
+                        };
+                        *slot = Some(map.next_value()?);
                     }
-                    Ok(Proof::Object(fields))
+                    Ok(Object::Members(m))
                 }
             }
             d.deserialize_any(V)
@@ -823,35 +795,26 @@ mod evidence {
 
     impl<'de> Deserialize<'de> for Item {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-            struct V;
-            impl<'de> Visitor<'de> for V {
-                type Value = Item;
-                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    f.write_str("a JSON value")
-                }
-                not_an_object!(Item(Err(NOT_AN_OBJECT.to_string())));
-                fn visit_str<E>(self, _: &str) -> Result<Item, E> {
-                    Ok(Item(Err(NOT_AN_OBJECT.to_string())))
-                }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Item, A::Error> {
-                    // The item is the proof, unless it has a "proof" key.
-                    let mut fields = Fields::default();
-                    let mut proof = None;
-                    while let Some(key) = map.next_key::<String>()? {
-                        if key == "proof" {
-                            proof = Some(map.next_value::<Proof>()?);
-                        } else {
-                            fields.read(&key, &mut map)?;
-                        }
-                    }
-                    Ok(Item(match proof {
-                        None => fields.into_proof(),
-                        Some(Proof::Object(inner)) => inner.into_proof(),
-                        Some(Proof::Other) => Err(PROOF_NOT_AN_OBJECT.to_string()),
-                    }))
-                }
+            let Object::Members(item) = Object::deserialize(d)? else {
+                return Ok(Item(Err(NOT_AN_OBJECT.to_string())));
+            };
+            // The item is the proof, unless it has a "proof" key.
+            let Some(proof) = item.proof else {
+                return Ok(Item(item.into_proof()));
+            };
+            if !proof.get().starts_with('{') {
+                return Ok(Item(Err(PROOF_NOT_AN_OBJECT.to_string())));
             }
-            d.deserialize_any(V)
+            Ok(Item(match serde_json::from_str::<Object>(proof.get()) {
+                Ok(Object::Members(p)) => p.into_proof(),
+                Ok(Object::Other) => Err(PROOF_NOT_AN_OBJECT.to_string()),
+                // An object already checked as JSON: a key with an unpaired
+                // surrogate.
+                Err(e) => Err(format!(
+                    "the evidence item's \"proof\" has a key with an unpaired surrogate ({})",
+                    witness_log_core::echo::bounded(&e.to_string())
+                )),
+            }))
         }
     }
 }

@@ -432,42 +432,52 @@ describe("corpus 16 and 17: strict Ed25519 and reading a dossier, both verifiers
     }
   });
 
-  it("17 inputs: a directory, revocations or evidence item nested deeper than 1000 is refused by both, as a malformed one", { skip: !existsSync(join(dir, "17_dossier_parsing.json")) }, () => {
-    // Before, both read a directory or revocations of any depth, and the
-    // native evidence list stopped at serde_json's 128 levels.
+  it("17 inputs: every directory, revocations and evidence text, read alike by both, as text and as a value", { skip: !existsSync(join(dir, "17_dossier_parsing.json")) }, () => {
+    // Before, both read a directory or revocations of any depth, the native
+    // evidence list stopped at serde_json's 128 levels, and the evidence,
+    // null and repeated-key cases were read differently.
     const v = JSON.parse(readFileSync(join(dir, "17_dossier_parsing.json"), "utf8"));
     const valid: string = v.cases.find((c: { name: string }) => c.name === "valid").dossier_json;
     for (const c of v.inputs) {
-      const value = JSON.parse(c.text);
-      const opts =
+      const optsOf = (input: unknown) =>
         c.input === "directory"
-          ? { directory: value, minWitnesses: c.min_witnesses }
+          ? { directory: input as never, minWitnesses: c.min_witnesses }
           : c.input === "revocations"
-            ? { revocations: value }
-            : { evidence: [value] };
-      // The native call takes the text itself: V8's JSON.stringify cannot
-      // write a value 100,000 deep, which verifyDossierNative would do.
-      const nativeOpts =
+            ? { revocations: input as never }
+            : { evidence: input as never };
+      // Through both verifiers: the text, and the value JSON.parse builds
+      // (which has lost an earlier copy of a repeated key, so that one case
+      // is text only). verifyDossierNative writes a value back with
+      // JSON.stringify, which cannot write one 100,000 deep: those go to the
+      // native call as text only.
+      const deep = c.text.length >= 100_000;
+      const runs: Array<[string, unknown]> = [["text", c.text]];
+      if (!c.name.includes("given twice, the first copy nested")) runs.push(["value", JSON.parse(c.text)]);
+      const nativeText =
         c.input === "directory"
           ? { directoryJson: c.text, minWitnesses: c.min_witnesses }
           : c.input === "revocations"
             ? { revocationsJson: c.text }
             : { evidenceJson: `[${c.text}]` };
-      const viaWrapper = c.text.length < 100_000;
+      const why = (e: Error) => !c.name.includes("nested") || /nested deeper than 1000/.test(e.message);
       if (c.expect.refused) {
-        assert.throws(() => verifyDossier(valid, opts), (e: Error) => e instanceof TypeError && /nested deeper than 1000/.test(e.message), c.name);
-        assert.throws(() => native.verifyDossierJson(valid, nativeOpts), /nested deeper than 1000/, c.name);
-        if (viaWrapper) assert.throws(() => verifyDossierNative(valid, opts), WitnessLogError, c.name);
+        assert.throws(() => native.verifyDossierJson(valid, nativeText), why, c.name);
+        for (const [how, input] of runs) {
+          assert.throws(() => verifyDossier(valid, optsOf(input)), (e: Error) => e instanceof TypeError && why(e), `${c.name} (${how})`);
+          if (how === "text" || !deep) assert.throws(() => verifyDossierNative(valid, optsOf(input)), WitnessLogError, `${c.name} (${how})`);
+        }
         continue;
       }
-      const rs = JSON.parse(native.verifyDossierJson(valid, nativeOpts));
+      const rs = JSON.parse(native.verifyDossierJson(valid, nativeText));
       assert.equal(rs.verdict, c.expect.verdict, c.name);
       assert.equal(rs.failures.length > 0, c.expect.has_failures, c.name);
       assert.equal(rs.quorum?.valid_receipts ?? null, c.expect.valid_receipts, c.name);
-      for (const r of [verifyDossier(valid, opts), verifyDossierNative(valid, opts)]) {
-        assert.equal(r.report.verdict, c.expect.verdict, c.name);
-        assert.equal(r.exitCode, c.expect.exit_code, c.name);
-        assert.equal(r.report.contradictions.length, c.expect.contradictions, c.name);
+      for (const [how, input] of runs) {
+        for (const r of [verifyDossier(valid, optsOf(input)), verifyDossierNative(valid, optsOf(input))]) {
+          assert.equal(r.report.verdict, c.expect.verdict, `${c.name} (${how})`);
+          assert.equal(r.exitCode, c.expect.exit_code, `${c.name} (${how})`);
+          assert.equal(r.report.contradictions.length, c.expect.contradictions, `${c.name} (${how})`);
+        }
       }
     }
   });

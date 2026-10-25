@@ -495,35 +495,47 @@ describe("corpus 17: reading a dossier (outside review III, H2 and P3)", () => {
     }
   });
 
-  it("inputs: a directory, revocations or evidence item nested deeper than 1000 throws, as a malformed one does", () => {
-    // Before, an option of any depth was read here (the options are values,
-    // so nothing stopped them), while Go refused 10,000 levels.
+  it("inputs: every directory, revocations and evidence text, given as text and as a value", () => {
+    // Before, an option of any depth was read here (the options were values,
+    // so nothing stopped them), while Go refused 10,000 levels; and the
+    // evidence, null and repeated-key cases were read three ways.
     const v = corpus("17_dossier_parsing.json");
     const kinds = new Map<string, number>();
     for (const c of v.inputs as Array<{ name: string; input: string; text: string; dossier: string; min_witnesses: number | null; expect: any }>) {
       kinds.set(c.input, (kinds.get(c.input) ?? 0) + 1);
       const dossier = v.cases.find((x: { name: string }) => x.name === c.dossier).dossier_json;
-      // The option as a caller holds it: the text parsed (V8's JSON.parse
-      // takes 100,000 levels), an evidence item in the list of them.
-      const value = parseJsonExact(c.text);
-      const opts =
+      const optsOf = (input: unknown) =>
         c.input === "directory"
-          ? { directory: value as WitnessDirectory, minWitnesses: c.min_witnesses ?? undefined }
+          ? { directory: input as never, minWitnesses: c.min_witnesses ?? undefined }
           : c.input === "revocations"
-            ? { revocations: value as never }
-            : { evidence: [value] as never };
-      const t0 = performance.now();
-      if (c.expect.refused) {
-        assert.throws(() => verifyDossier(dossier, opts), (e: Error) => e instanceof TypeError && /nested deeper than 1000/.test(e.message), c.name);
-      } else {
-        const r = verifyDossier(dossier, opts);
-        assert.equal(r.report.verdict, c.expect.verdict, c.name);
-        assert.equal(r.exitCode, c.expect.exit_code, c.name);
-        assert.equal(r.failures.length > 0, c.expect.has_failures, c.name);
-        assert.equal(r.contradictions.length, c.expect.contradictions, c.name);
-        assert.equal(r.report.quorum?.valid_receipts ?? null, c.expect.valid_receipts, c.name);
+            ? { revocations: input as never }
+            : { evidence: input as never };
+      // The text, as the CLIs read their files; and the value JSON.parse
+      // builds (it takes 100,000 levels), which has lost an earlier copy of
+      // a repeated key and what was nested under it: that one case reads
+      // differently from a value, as SPEC.md §9 says.
+      const runs: Array<[string, unknown]> = [["text", c.text]];
+      if (!c.name.includes("given twice, the first copy nested")) runs.push(["value", JSON.parse(c.text)]);
+      if (c.input === "evidence") runs.push(["value in a list", [JSON.parse(c.text)]]);
+      for (const [how, input] of runs) {
+        const t0 = performance.now();
+        const what = `${c.name} (${how})`;
+        if (c.expect.refused) {
+          assert.throws(
+            () => verifyDossier(dossier, optsOf(input)),
+            (e: Error) => e instanceof TypeError && (!c.name.includes("nested") || /nested deeper than 1000/.test(e.message)),
+            what,
+          );
+        } else {
+          const r = verifyDossier(dossier, optsOf(input));
+          assert.equal(r.report.verdict, c.expect.verdict, what);
+          assert.equal(r.exitCode, c.expect.exit_code, what);
+          assert.equal(r.failures.length > 0, c.expect.has_failures, what);
+          assert.equal(r.contradictions.length, c.expect.contradictions, what);
+          assert.equal(r.report.quorum?.valid_receipts ?? null, c.expect.valid_receipts, what);
+        }
+        assert.ok(performance.now() - t0 < 1500, what);
       }
-      assert.ok(performance.now() - t0 < 1500, c.name);
     }
     assert.deepEqual([...kinds.keys()].sort(), ["directory", "evidence", "revocations"]);
     // parseEvidence on its own refuses the item too.
@@ -531,15 +543,27 @@ describe("corpus 17: reading a dossier (outside review III, H2 and P3)", () => {
     assert.throws(() => parseEvidence(JSON.parse(deep.text)), /evidence: nested deeper than 1000/);
   });
 
-  it("revocations: one statement or an array, as --revocations reads them", () => {
+  it("options: one evidence item or a list, revocations one statement or a list, each as text or a value", () => {
     const v = corpus("17_dossier_parsing.json");
     const dossier = v.cases.find((x: { name: string }) => x.name === "valid").dossier_json;
-    const statement = JSON.parse(v.inputs.find((c: { input: string }) => c.input === "revocations").text);
-    delete statement.zz;
+    const text = (n: string) => v.inputs.find((c: { name: string }) => c.name === n).text as string;
+    const item = text("an evidence item with 1001 brackets in a string after an escaped quote");
+    for (const evidence of [JSON.parse(item), [JSON.parse(item)], item, `[${item}, ${item}]`]) {
+      assert.equal(verifyDossier(dossier, { evidence }).verdict, "DIVERGED");
+    }
+    const statement = text("a revocation statement with 1001 brackets in a string after an escaped quote");
     assert.equal(verifyDossier(dossier).verdict, "UNANCHORED");
-    assert.equal(verifyDossier(dossier, { revocations: statement }).verdict, "INVALID");
-    assert.equal(verifyDossier(dossier, { revocations: [statement] }).verdict, "INVALID");
-    assert.throws(() => verifyDossier(dossier, { revocations: "x" as never }), TypeError);
+    for (const revocations of [JSON.parse(statement), [JSON.parse(statement)], statement, `[${statement}]`]) {
+      assert.equal(verifyDossier(dossier, { revocations }).verdict, "INVALID");
+    }
+    assert.throws(() => verifyDossier(dossier, { revocations: "x" }), TypeError);
+    assert.throws(() => verifyDossier(dossier, { revocations: 5 as never }), TypeError);
+    // A text's repeated field is refused in a struct, as the reference
+    // refuses it; a parsed value has kept only the last copy.
+    const dir = text("a trusted directory with 1001 brackets in a string after an escaped quote");
+    const twice = `${dir.slice(0, -1)},"witnesses":[]}`;
+    assert.throws(() => verifyDossier(dossier, { directory: twice }), /duplicate field witnesses/);
+    assert.equal(verifyDossier(dossier, { directory: JSON.parse(twice) }).verdict, "CONSISTENT-UNWITNESSED");
   });
 
   it("the report names a fleet origin only up to 255 bytes, as the reference does", () => {

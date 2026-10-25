@@ -725,6 +725,9 @@ def test_corpus_17_inputs_nest_at_most_1000_deep():
     for c in v["inputs"]:
         kinds[c["input"]] = kinds.get(c["input"], 0) + 1
         text = c["text"]
+        # The cases about nesting are refused for their depth; the others
+        # (evidence keys and fields, null files) for what they hold.
+        refusal = "nested deeper than 1000" if "nested" in c["name"] else None
         if c["input"] == "directory":
             runs = [{"trusted_directory_json": text, "min_witnesses": c["min_witnesses"]}]
         elif c["input"] == "revocations":
@@ -734,7 +737,7 @@ def test_corpus_17_inputs_nest_at_most_1000_deep():
         for kw in runs:
             started = time.monotonic()
             if c["expect"]["refused"]:
-                with pytest.raises(witness_log.MalformedError, match="nested deeper than 1000"):
+                with pytest.raises(witness_log.MalformedError, match=refusal):
                     witness_log.verify_dossier_json(dossiers[c["dossier"]], 0.66, **kw)
             else:
                 r = json.loads(witness_log.verify_dossier_json(dossiers[c["dossier"]], 0.66, **kw))
@@ -747,7 +750,7 @@ def test_corpus_17_inputs_nest_at_most_1000_deep():
         if c["input"] == "directory":
             key = "aa" * 32
             if c["expect"]["refused"]:
-                with pytest.raises(witness_log.MalformedError, match="nested deeper than 1000"):
+                with pytest.raises(witness_log.MalformedError, match=refusal):
                     _core.select_witnesses(text, key, 1)
             else:
                 assert len(json.loads(_core.select_witnesses(text, key, 1))) == 1

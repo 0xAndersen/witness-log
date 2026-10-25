@@ -15,7 +15,9 @@ categories = ["cryptography"]
 witness-log-core = { version = "0.6.1", path = "../witness-log-core" }
 ed25519-dalek = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# raw_value: an evidence item's proof fields are kept as JSON text until the
+# last copy of each is known, so an ignored copy is only checked as syntax.
+serde_json = { workspace = true, features = ["raw_value"] }
 hex = { workspace = true }
 thiserror = { workspace = true }
 base64ct = { workspace = true }

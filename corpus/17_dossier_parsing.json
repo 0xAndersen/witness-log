@@ -3339,7 +3339,7 @@
       "threshold": 0.66
     }
   ],
-  "description": "Reading a dossier (outside review III, H2 and P3). Each case's `dossier_json` is the input text, byte for byte; give it to your verifier as text. The rule is the reference's (SPEC.md §9, \"Reading a dossier\"): the text is RFC 8259 JSON (no byte order mark, no trailing characters) and nests at most 1000 arrays and objects deep, counted outside strings with the dossier object at depth 1, wherever the nesting is (an ignored key's value included); a deeper text is not a dossier, and a verifier stops reading at the 1001st level; the dossier and every struct in it (checkpoint, leaf, receipt, directory and entry, key binding, revocation, custody threshold) is an object, never an array; a key that names a field appears once, is matched exactly (case-sensitive, after unescaping) and any other key is ignored, its value only checked as JSON syntax; a u64 is an integer literal with no sign, fraction or exponent, at most 2^64 - 1 (leaf_type at most 255), read exactly, including above 2^53; a string, bool or list field has that JSON type; optional fields may be absent or null, defaulted ones (witness_receipts, witness_directory, key_bindings, revocations, runtime, is_project_operated, custody) absent but not null; a unit enum variant is its name or {\"name\": null}; a field's string and every key of a struct have no unpaired surrogate escape; fleet_anchor is any JSON value whose strings have no unpaired surrogate, whose numbers are finite as binary64 once rounded to nearest, ties to even (1.7976931348623158e308 and 2^1024 - 2^970 - 1 are; 1.7976931348623159e308 and 2^1024 - 2^970 are not) and which nests at most 126 deep below the dossier object. `not_a_dossier` true: the reference cannot deserialise the text; a CLI exits 2, a library refuses it (Rust's Dossier::from_json fails; wasm, Node and Python raise; Go's VerifyDossier returns Invalid with the error and no report; TypeScript's verifyDossier returns INVALID, exit 40, with the reason in failures) and no verifier returns any other verdict. Otherwise run the case as in 15_evidence_and_args.json, with the named trusted directory from `directories` (none when null), expected_identity, threshold, min_witnesses and known_heads; the verdict, exit code and report fields must equal expect. Hex: identity and witness keys compare case-insensitively; the checkpoint's root_hash is compared, as written, with the lowercase hex of the rebuilt root and a receipt's root_hash with the checkpoint's, both case-sensitively; every signed message covers the strings as written. `inputs` holds the other JSON inputs a verifier reads, as text, under the same nesting rule: a trusted directory (`input` \"directory\": {\"witnesses\": [...]} or a bare array of entries, as --directory), revocations (\"revocations\": one statement or an array of them, as --revocations) and an evidence item (\"evidence\": a bare proof or one as `witness serve` writes it, as --evidence), each nesting at most 1000 arrays and objects deep, counted outside strings from its own top-level value at depth 1, wherever the nesting is. Verify the dossier of the case named by `dossier` with that one input, min_witnesses and threshold 0.66. `refused` true: the verifier refuses the input as it refuses a malformed one, and gives no verdict (a CLI exits 2; Rust's WitnessDirectory::from_json, revocations_from_json and EquivocationProof::from_evidence_json fail; wasm, Node and Python raise; Go's ParseDirectory, ParseRevocations and ParseEvidence return an error; TypeScript's verifyDossier throws a TypeError for the option); otherwise the verdict, exit code and report fields must equal expect. Where one JSON text carries several inputs (an array of evidence items, wasm's options object), the limit applies to each input in it. Every key here is public and for testing only.",
+  "description": "Reading a dossier (outside review III, H2 and P3). Each case's `dossier_json` is the input text, byte for byte; give it to your verifier as text. The rule is the reference's (SPEC.md §9, \"Reading a dossier\"): the text is RFC 8259 JSON (no byte order mark, no trailing characters) and nests at most 1000 arrays and objects deep, counted outside strings with the dossier object at depth 1, wherever the nesting is (an ignored key's value included); a deeper text is not a dossier, and a verifier stops reading at the 1001st level; the dossier and every struct in it (checkpoint, leaf, receipt, directory and entry, key binding, revocation, custody threshold) is an object, never an array; a key that names a field appears once, is matched exactly (case-sensitive, after unescaping) and any other key is ignored, its value only checked as JSON syntax; a u64 is an integer literal with no sign, fraction or exponent, at most 2^64 - 1 (leaf_type at most 255), read exactly, including above 2^53; a string, bool or list field has that JSON type; optional fields may be absent or null, defaulted ones (witness_receipts, witness_directory, key_bindings, revocations, runtime, is_project_operated, custody) absent but not null; a unit enum variant is its name or {\"name\": null}; a field's string and every key of a struct have no unpaired surrogate escape; fleet_anchor is any JSON value whose strings have no unpaired surrogate, whose numbers are finite as binary64 once rounded to nearest, ties to even (1.7976931348623158e308 and 2^1024 - 2^970 - 1 are; 1.7976931348623159e308 and 2^1024 - 2^970 are not) and which nests at most 126 deep below the dossier object. `not_a_dossier` true: the reference cannot deserialise the text; a CLI exits 2, a library refuses it (Rust's Dossier::from_json fails; wasm, Node and Python raise; Go's VerifyDossier returns Invalid with the error and no report; TypeScript's verifyDossier returns INVALID, exit 40, with the reason in failures) and no verifier returns any other verdict. Otherwise run the case as in 15_evidence_and_args.json, with the named trusted directory from `directories` (none when null), expected_identity, threshold, min_witnesses and known_heads; the verdict, exit code and report fields must equal expect. Hex: identity and witness keys compare case-insensitively; the checkpoint's root_hash is compared, as written, with the lowercase hex of the rebuilt root and a receipt's root_hash with the checkpoint's, both case-sensitively; every signed message covers the strings as written. `inputs` holds the other JSON inputs a verifier reads, as text, under the same nesting rule: a trusted directory (`input` \"directory\": {\"witnesses\": [...]} or a bare array of entries, as --directory), revocations (\"revocations\": one statement or an array of them, as --revocations) and an evidence item (\"evidence\": a bare proof or one as `witness serve` writes it, as --evidence), each nesting at most 1000 arrays and objects deep, counted outside strings from its own top-level value at depth 1, wherever the nesting is. Verify the dossier of the case named by `dossier` with that one input, min_witnesses and threshold 0.66. `refused` true: the verifier refuses the input as it refuses a malformed one, and gives no verdict (a CLI exits 2; Rust's WitnessDirectory::from_json, revocations_from_json and EquivocationProof::from_evidence_json fail; wasm, Node and Python raise; Go's ParseDirectory, ParseRevocations and ParseEvidence return an error; TypeScript's verifyDossier throws a TypeError for the option); otherwise the verdict, exit code and report fields must equal expect. Where one JSON text carries several inputs (an array of evidence items, wasm's options object), the limit applies to each input in it. An evidence item is valid UTF-8 JSON and an object: the proof, or one carrying the proof under \"proof\"; of a key given twice the last counts and only it is read; every other member (an earlier copy, and beside \"proof\" every member of the item) is ignored, its value only checked as JSON syntax; the keys of the item and of the proof, and the proof's four string fields, have no unpaired surrogate escape. A directory or revocations input that is null is refused. Give each input as text: a value already parsed has lost an earlier copy of a repeated key and whatever was nested under it. Every key here is public and for testing only.",
   "directories": {
     "corpus": {
       "witnesses": [
@@ -3701,6 +3701,231 @@
       "min_witnesses": null,
       "name": "an evidence item with 1001 brackets in a string after an escaped quote",
       "text": "{\"observed_unix\":1700000100,\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"},\"zz\":\"\\\"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item with an origin beside its proof holding 1e400, ignored",
+      "text": "{\"origin\":1e400,\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item with an origin beside its proof holding an unpaired surrogate escape, ignored",
+      "text": "{\"origin\":\"\\ud800\",\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item with an ignored member holding 1e400",
+      "text": "{\"x\":1e400,\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item with an ignored member holding an unpaired surrogate escape",
+      "text": "{\"x\":\"\\ud800\",\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "a bare equivocation proof whose origin is given twice, the first holding 1e400",
+      "text": "{\"origin\":1e400,\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "a bare equivocation proof whose origin is given twice, the first with an unpaired surrogate escape",
+      "text": "{\"origin\":\"\\ud800\",\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": 1,
+        "exit_code": 30,
+        "has_failures": false,
+        "refused": false,
+        "valid_receipts": null,
+        "verdict": "diverged"
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item whose proof is given twice, the first an array",
+      "text": "{\"kind\":\"equivocation\",\"proof\":[1],\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item whose proof is given twice, the last null",
+      "text": "{\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"},\"proof\":null}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "a bare equivocation proof whose origin has an unpaired surrogate escape",
+      "text": "{\"origin\":\"\\ud800\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "a bare equivocation proof with an ignored key that has an unpaired surrogate escape",
+      "text": "{\"\\ud800\":1,\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item with a key beside its proof that has an unpaired surrogate escape",
+      "text": "{\"\\ud800\":1,\"kind\":\"equivocation\",\"proof\":{\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "evidence",
+      "min_witnesses": null,
+      "name": "an evidence item whose proof has a key with an unpaired surrogate escape",
+      "text": "{\"observed_unix\":1700000100,\"kind\":\"equivocation\",\"proof\":{\"\\ud800\":1,\"origin\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\",\"log_vkey\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f+a6c1e2ef+ATHzMi1JI9NsQcEJvbAJkZMYe+2ZlCCW5JJqJMd+/Q0v\",\"earlier_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi76KrxsxjBRJOfZWYYEDAXk/VgCCZ8rHbSSufef6ciaypNQQXkG0kT/s6lnoW8NloBCdpGD6+9O7fqCFnCTT1jgE=\\n\",\"conflicting_note\":\"witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f\\n2\\noqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI=\\n\\n— witness-log/31f3322d4923d36c41c109bdb0099193187bed99942096e4926a24c77efd0d2f psHi77TVJQMnMRjsbobW0pHIGHXI1+xzKSNLCIqyICIdrX1FYssXa8PyOXgqooIN1+wCmBVneAT/P7f3pGdU8FzFsgE=\\n\"}}"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "directory",
+      "min_witnesses": 2,
+      "name": "a trusted directory that is null",
+      "text": "null"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "revocations",
+      "min_witnesses": null,
+      "name": "revocations that are null",
+      "text": "null"
+    },
+    {
+      "dossier": "valid",
+      "expect": {
+        "contradictions": null,
+        "exit_code": 2,
+        "has_failures": null,
+        "refused": true,
+        "valid_receipts": null,
+        "verdict": null
+      },
+      "input": "directory",
+      "min_witnesses": 2,
+      "name": "a trusted directory with an ignored key given twice, the first copy nested to depth 1001",
+      "text": "{\"witnesses\":[{\"name\":\"corpus-17-witness-0\",\"operator_org\":\"corpus-17-operator-0\",\"url\":\"https://corpus-17-witness-0.example\",\"pubkey\":\"fa4834147f6e690c3693eff61336046403cd8ae2a14f31b3c407358569239565\",\"runtime\":\"human\",\"compute_provider\":null,\"is_project_operated\":false},{\"name\":\"corpus-17-witness-1\",\"operator_org\":\"corpus-17-operator-1\",\"url\":\"https://corpus-17-witness-1.example\",\"pubkey\":\"197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61\",\"runtime\":\"human\",\"compute_provider\":null,\"is_project_operated\":false}],\"zz\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"zz\":0}"
     }
   ]
 }

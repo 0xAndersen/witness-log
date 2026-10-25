@@ -473,6 +473,12 @@ function jsonable(v: unknown): Payload {
 
 export interface NativeVerifyOptions extends VerifyDossierOptions {}
 
+/** An option as the JSON text the native verifier reads: text as given, a value as JSON.stringify writes it. */
+function asJsonText(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
 const VERDICT_NAME: Record<string, Verdict> = {
   witnessed: "WITNESSED",
   consistent_unwitnessed: "CONSISTENT-UNWITNESSED",
@@ -492,15 +498,15 @@ export function verifyDossierNative(dossier: Dossier | string, opts: NativeVerif
     wrapNative(() =>
       native.verifyDossierJson(json, {
         identity: opts.identity,
-        directoryJson: opts.directory === undefined ? undefined : JSON.stringify(opts.directory),
+        directoryJson: asJsonText(opts.directory),
         threshold: opts.threshold,
         minWitnesses: opts.minWitnesses,
-        revocationsJson: opts.revocations === undefined ? undefined : JSON.stringify(opts.revocations),
+        revocationsJson: asJsonText(opts.revocations),
         knownHeads: opts.knownHeads?.map((h) => {
           const k = parseKnownHead(h);
           return `${k.tree_size}:${k.root_hash}`;
         }),
-        evidenceJson: opts.evidence === undefined ? undefined : JSON.stringify(opts.evidence),
+        evidenceJson: asJsonText(opts.evidence),
         subjectOrg: opts.subjectOrg,
         acceptFleetAnchor: opts.acceptFleetAnchor,
       }),

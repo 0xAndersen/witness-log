@@ -201,7 +201,7 @@ fn cli_refuses_directory_revocations_and_evidence_nested_deeper_than_1000() {
         if e["refused"] == true {
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert!(
-                stderr.contains("nested deeper than 1000"),
+                !name.contains("nested") || stderr.contains("nested deeper than 1000"),
                 "{name}: {stderr}"
             );
             assert!(out.stdout.is_empty(), "{name}");
@@ -240,6 +240,44 @@ fn cli_json_reports_a_bounded_identity() {
         let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(report["identity_pubkey"], reported.as_str());
     }
+}
+
+/// `bind` names each dossier's identity as `verify --json` does: cut to 64
+/// characters and "…" when longer than a key, in the JSON, the text and the
+/// refusal of two equal claims. Through 0.6.1 it printed them whole, and
+/// both dossiers are input the caller does not control.
+#[test]
+fn cli_bind_reports_bounded_identities() {
+    let key = "aa".repeat(32);
+    let huge = "ab".repeat(5_000_000);
+    let dossier = |identity: &str| {
+        tempfile_write(&format!(
+            r#"{{"identity_pubkey":"{identity}","leaves":[],"checkpoint":{{"sig_alg":"ed25519","tree_size":0,"root_hash":"","timestamp_ms":0,"signer_pubkey":"{key}","signature":""}}}}"#
+        ))
+    };
+    let (a, b) = (dossier(&huge), dossier(&key));
+    let cut = format!("{}\u{2026}", "ab".repeat(32));
+    let bind = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_witness-log"))
+            .arg("bind")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = bind(&[a.path_str(), b.path_str(), "--json"]);
+    assert_eq!(out.status.code(), Some(10));
+    assert!(out.stdout.len() < 10_000, "{} bytes", out.stdout.len());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["a"]["identity"], cut.as_str());
+    assert_eq!(v["b"]["identity"], key.as_str());
+    let out = bind(&[a.path_str(), b.path_str()]);
+    assert!(out.stdout.len() < 10_000, "{} bytes", out.stdout.len());
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&cut));
+    let out = bind(&[a.path_str(), a.path_str()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stderr.len() < 1_000, "{} bytes", out.stderr.len());
+    a.close();
+    b.close();
 }
 
 /// SPEC.md §9: a dossier text nests at most 1000 arrays and objects deep

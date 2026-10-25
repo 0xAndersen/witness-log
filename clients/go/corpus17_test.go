@@ -104,7 +104,8 @@ func TestCorpus17Inputs(t *testing.T) {
 		}
 		e := c.Expect
 		if e.Refused {
-			if err == nil || !strings.Contains(err.Error(), "nested deeper than 1000") {
+			// The cases about nesting are refused for their depth.
+			if err == nil || (strings.Contains(c.Name, "nested") && !strings.Contains(err.Error(), "nested deeper than 1000")) {
 				t.Errorf("%s: refused by the reference, got %v", c.Name, err)
 			}
 			continue
@@ -137,6 +138,30 @@ func TestCorpus17Inputs(t *testing.T) {
 		if kinds[k] < 6 {
 			t.Errorf("only %d %s inputs", kinds[k], k)
 		}
+	}
+}
+
+// TestEvidenceIsValidUTF8: an evidence item is UTF-8 JSON, as every other
+// input (a corpus, itself JSON, cannot carry invalid UTF-8). Before,
+// ParseEvidence alone of the Parse functions read invalid bytes in an
+// ignored member as U+FFFD, and the reference refused the file.
+func TestEvidenceIsValidUTF8(t *testing.T) {
+	var v struct {
+		Inputs []corpusInputCase `json:"inputs"`
+	}
+	readCorpus(t, "17_dossier_parsing.json", &v)
+	var item string
+	for _, c := range v.Inputs {
+		if c.Name == "an evidence item with an ignored member holding 1e400" {
+			item = c.Text
+		}
+	}
+	if _, err := ParseEvidence([]byte(item)); err != nil {
+		t.Fatal(err)
+	}
+	bad := strings.Replace(item, "1e400", "\"\xff\"", 1)
+	if _, err := ParseEvidence([]byte(bad)); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("invalid UTF-8 in an ignored member: %v", err)
 	}
 }
 

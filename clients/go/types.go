@@ -324,8 +324,14 @@ func ParseDirectory(directoryJSON []byte) (*Directory, error) {
 	if !utf8.Valid(directoryJSON) || !json.Valid(directoryJSON) {
 		return nil, fmt.Errorf("directory: not valid JSON")
 	}
-	var entries []json.RawMessage
-	if err := json.Unmarshal(directoryJSON, &entries); err == nil {
+	// Only an array is a bare list of entries: encoding/json reads null
+	// into a slice as no entries, and a null directory file was an empty
+	// trusted directory here and refused by the reference.
+	if t := bytes.TrimSpace(directoryJSON); len(t) > 0 && t[0] == '[' {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(t, &entries); err != nil {
+			return nil, fmt.Errorf("directory: %w", err)
+		}
 		return parseEntries(entries)
 	}
 	return parseDirectoryObject(directoryJSON)
@@ -344,10 +350,15 @@ func ParseRevocations(raw []byte) ([]Revocation, error) {
 		return nil, fmt.Errorf("revocations: not valid JSON")
 	}
 	items := []json.RawMessage{trimmed}
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	switch {
+	case trimmed[0] == '[':
 		if err := json.Unmarshal(trimmed, &items); err != nil {
 			return nil, fmt.Errorf("revocations: %w", err)
 		}
+	case trimmed[0] != '{':
+		// null too: encoding/json reads it into a slice as no statements,
+		// and a null revocations file applied nothing here.
+		return nil, fmt.Errorf("revocations: expected a statement or an array of them")
 	}
 	many := []Revocation{}
 	for i, item := range items {

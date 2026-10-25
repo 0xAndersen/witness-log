@@ -13,6 +13,7 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"syscall/js"
 
@@ -31,6 +32,52 @@ type verifyOptions struct {
 	Evidence               []json.RawMessage `json:"evidence"`
 	SubjectOrg             string            `json:"subject_org"`
 	AcceptFleetAnchor      bool              `json:"accept_fleet_anchor"`
+}
+
+// optionFields are the Rust crate's VerifyOptions fields: Nullable where the
+// field is an Option, String where it is a string.
+var optionFields = map[string]witnesslog.Field{
+	"expected_identity_pubkey": {Nullable: true, String: true},
+	"threshold":                {Nullable: true},
+	"min_receipts":             {Nullable: true},
+	"allow_sub_majority":       {},
+	"revocations":              {Nullable: true},
+	"known_heads":              {},
+	"evidence":                 {},
+	"subject_org":              {Nullable: true, String: true},
+	"accept_fleet_anchor":      {},
+}
+
+// decodeOptions reads the options JSON as the Rust build's serde reads its
+// VerifyOptions: an object whose keys match a field exactly and at most once
+// (other keys ignored), null only where the field is optional, and the whole
+// text nested at most two levels above MaxDossierDepth (the options object
+// and the evidence list around an evidence item; each input in it is then
+// read with its own limit). Plain encoding/json matched keys
+// case-insensitively, so {"Evidence": [...]} took effect here and not in
+// the Rust build.
+func decodeOptions(optionsJSON string) (verifyOptions, error) {
+	var opts verifyOptions
+	raw := []byte(optionsJSON)
+	if err := witnesslog.CheckJSONDepthWithin(raw, witnesslog.MaxDossierDepth+2); err != nil {
+		return opts, err
+	}
+	m, err := witnesslog.ReadObject(raw, "options", optionFields)
+	if err != nil {
+		return opts, err
+	}
+	// The members present, under their exact names, decoded by type.
+	b, err := json.Marshal(m)
+	if err == nil {
+		err = json.Unmarshal(b, &opts)
+	}
+	if err != nil {
+		return opts, err
+	}
+	if opts.MinReceipts != nil && *opts.MinReceipts < 0 {
+		return opts, errors.New("min_receipts must not be negative")
+	}
+	return opts, nil
 }
 
 func fail(msg string) string {
@@ -136,7 +183,8 @@ func bindingRows(d *witnesslog.Dossier) []map[string]any {
 func verifyDossier(dossierJSON string, directoryJSON *string, optionsJSON string) string {
 	var opts verifyOptions
 	if optionsJSON != "" {
-		if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
+		var err error
+		if opts, err = decodeOptions(optionsJSON); err != nil {
 			return fail("options: " + err.Error())
 		}
 	}

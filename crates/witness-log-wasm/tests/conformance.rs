@@ -643,16 +643,25 @@ fn corpus_17_inputs() {
                 Some(text),
                 format!(r#"{{"min_receipts":{}}}"#, c["min_witnesses"]),
             ),
+            // `"revocations": null` in the options is the field absent, as in
+            // Go's wasm build: a null revocations file has no options form.
+            "revocations" if text == "null" => continue,
             "revocations" => (None, format!(r#"{{"revocations":{text}}}"#)),
             "evidence" => (None, format!(r#"{{"evidence":[{text}]}}"#)),
             other => panic!("{name}: {other}"),
         };
-        let opts: VerifyOptions = serde_json::from_str(&options).unwrap();
         let e = &c["expect"];
-        match verify_dossier_value(dossier, directory, &opts) {
+        // An input far too deep is already refused with the options text,
+        // past the two levels the options add above it.
+        let out = VerifyOptions::from_json(&options)
+            .and_then(|opts| verify_dossier_value(dossier, directory, &opts));
+        match out {
             Err(err) => {
                 assert_eq!(e["refused"], json!(true), "{name}: refused: {err}");
-                assert!(err.contains("nested deeper than 1000"), "{name}: {err}");
+                assert!(
+                    !name.contains("nested") || err.contains("nested deeper than"),
+                    "{name}: {err}"
+                );
             }
             Ok(out) => {
                 assert_eq!(e["refused"], json!(false), "{name}: read");
@@ -714,6 +723,91 @@ fn options_revocations_are_one_statement_or_an_array() {
     }
     let opts: VerifyOptions = serde_json::from_str(r#"{"revocations":"x"}"#).unwrap();
     assert!(verify_dossier_value(&dossier, None, &opts).is_err());
+}
+
+/// The options JSON as both wasm builds read it (Go's main_test.go has the
+/// same cases): an object with exact keys, each once, null only for the
+/// optional fields, the whole text at most two levels above an evidence
+/// item. Before, an array of the field values read here, and the options
+/// text could nest an unknown key arbitrarily deep.
+#[test]
+fn options_are_read_as_both_wasm_builds_read_them() {
+    let v = read_json("corpus/17_dossier_parsing.json");
+    let find = |list: &str, n: &str| -> String {
+        let c = v[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == n)
+            .unwrap();
+        c[if list == "cases" {
+            "dossier_json"
+        } else {
+            "text"
+        }]
+        .as_str()
+        .unwrap()
+        .to_string()
+    };
+    let dossier = find("cases", "valid");
+    let item = find(
+        "inputs",
+        "an evidence item as witness serve writes it, an unknown member nested to depth 1000, the limit",
+    );
+    let key = "ab".repeat(32);
+    let nested = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+    for (options, verdict, pinned) in [
+        ("{}".to_string(), Some("unanchored"), false),
+        (
+            format!(r#"{{"evidence":[{item}]}}"#),
+            Some("diverged"),
+            false,
+        ),
+        (
+            format!(r#"{{"Evidence":[{item}]}}"#),
+            Some("unanchored"),
+            false,
+        ),
+        (
+            format!(r#"{{"EXPECTED_IDENTITY_PUBKEY":"{key}"}}"#),
+            Some("unanchored"),
+            false,
+        ),
+        (
+            format!(r#"{{"expected_identity_pubkey":"{key}"}}"#),
+            Some("invalid"),
+            true,
+        ),
+        (
+            r#"{"expected_identity_pubkey":null,"revocations":null,"subject_org":null}"#
+                .to_string(),
+            Some("unanchored"),
+            false,
+        ),
+        (r#"{"evidence":[],"evidence":[]}"#.to_string(), None, false),
+        (r#"{"evidence":null}"#.to_string(), None, false),
+        (r#"{"allow_sub_majority":null}"#.to_string(), None, false),
+        (r#"{"min_receipts":-1}"#.to_string(), None, false),
+        ("[]".to_string(), None, false),
+        (
+            format!(r#"{{"zz":{}}}"#, nested(1001)),
+            Some("unanchored"),
+            false,
+        ),
+        (format!(r#"{{"zz":{}}}"#, nested(1002)), None, false),
+    ] {
+        let label = &options[..40.min(options.len())];
+        let out = VerifyOptions::from_json(&options)
+            .and_then(|o| verify_dossier_value(&dossier, None, &o));
+        match (out, verdict) {
+            (Ok(out), Some(verdict)) => {
+                assert_eq!(out["report"]["verdict"], verdict, "{label}");
+                assert_eq!(out["identity_pinned"], pinned, "{label}");
+            }
+            (Err(_), None) => {}
+            (out, _) => panic!("{label}: {out:?}"),
+        }
+    }
 }
 
 #[test]

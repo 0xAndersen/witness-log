@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Verdict is the five-valued result of SPEC.md §9.2 (RFC-0002 split
@@ -210,28 +211,44 @@ type EquivocationProof struct {
 	ConflictingNote string `json:"conflicting_note"`
 }
 
-// ParseEvidence reads one evidence item as every verifier reads it: a JSON
-// object that is the proof itself or, as `witness-log witness serve`
-// writes it, carries the proof under "proof" ({"observed_unix", "kind":
+// ParseEvidence reads one evidence item as every verifier reads it (SPEC.md
+// §9): valid UTF-8 JSON, nested at most MaxDossierDepth deep, that is an
+// object: the proof itself or, as `witness-log witness serve` writes it,
+// one that carries the proof under "proof" ({"observed_unix", "kind":
 // "equivocation", "proof": {...}}). The proof must be an object whose
-// origin, log_vkey, earlier_note and conflicting_note are JSON strings;
-// other keys are ignored. Anything else is an error (the caller's
-// mistake, exit 2), never a proof that silently fails to verify. An item
-// nested deeper than MaxDossierDepth is refused before it is read
-// (CheckJSONDepth). The reference (EquivocationProof::from_evidence_json)
+// origin, log_vkey, earlier_note and conflicting_note are JSON strings
+// without an unpaired surrogate escape. Of a key given twice the last
+// counts and only it is read; every other member (an earlier copy, and
+// beside "proof" every member of the item) is ignored, its value only
+// checked as JSON syntax. The keys of the item and of the proof have no
+// unpaired surrogate escape, as a dossier's struct keys. Anything else is
+// an error (the caller's mistake, exit 2), never a proof that silently
+// fails to verify. The reference (EquivocationProof::from_evidence_json)
 // and TypeScript verifiers apply the same rule.
 func ParseEvidence(raw []byte) (EquivocationProof, error) {
 	var p EquivocationProof
+	if !utf8.Valid(raw) {
+		return p, errors.New("evidence: not valid UTF-8")
+	}
 	if err := CheckJSONDepth(raw); err != nil {
 		return p, err
 	}
-	var item map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &item); err != nil || item == nil {
+	if !json.Valid(raw) {
+		var probe any
+		return p, fmt.Errorf("evidence: %w", json.Unmarshal(raw, &probe))
+	}
+	item, err := evidenceMembers(raw)
+	if err != nil {
+		return p, err
+	}
+	if item == nil {
 		return p, errors.New(`an evidence item must be a JSON object: a proof, or {"proof": {...}} as witness serve writes it`)
 	}
 	if inner, ok := item["proof"]; ok {
-		item = nil
-		if err := json.Unmarshal(inner, &item); err != nil || item == nil {
+		if item, err = evidenceMembers(inner); err != nil {
+			return p, fmt.Errorf(`the evidence item's "proof": %w`, err)
+		}
+		if item == nil {
 			return p, errors.New(`the evidence item's "proof" must be a JSON object`)
 		}
 	}
@@ -247,8 +264,44 @@ func ParseEvidence(raw []byte) (EquivocationProof, error) {
 		if t := bytes.TrimLeft(v, " \t\r\n"); len(t) == 0 || t[0] != '"' || json.Unmarshal(v, f.dst) != nil {
 			return p, fmt.Errorf("equivocation proof field %s must be a string", f.key)
 		}
+		if hasUnpairedSurrogate(v) {
+			return p, fmt.Errorf("equivocation proof field %s has an unpaired surrogate", f.key)
+		}
 	}
 	return p, nil
+}
+
+// evidenceMembers reads raw, valid JSON, as an object's members, the last of
+// a repeated key winning; nil (and no error) when raw is another JSON value.
+// A key with an unpaired surrogate escape is an error (encoding/json would
+// read it as U+FFFD).
+func evidenceMembers(raw []byte) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, nil
+	}
+	out := map[string]json.RawMessage{}
+	for dec.More() {
+		start := dec.InputOffset()
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		if hasUnpairedSurrogate(raw[start:dec.InputOffset()]) {
+			return nil, errors.New("evidence: a key has an unpaired surrogate")
+		}
+		key, _ := tok.(string)
+		var val json.RawMessage
+		if err := dec.Decode(&val); err != nil {
+			return nil, err
+		}
+		out[key] = val
+	}
+	return out, nil
 }
 
 // Verify checks the proof with the key the canonical origin names: the

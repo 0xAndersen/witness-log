@@ -853,6 +853,44 @@ fn main() {
         input("an evidence item nested 100000 deep", Evidence, add_field(&wrapped_t, &deep(100_000)), Refused),
         input("an evidence item with 1001 brackets in a string after an escaped quote", Evidence, add_field(&wrapped_t, &in_string), Exit(30)),
     ];
+    // ---- reading an evidence item (SPEC.md §9): of a repeated key the last
+    // counts and only it is read; every other member is checked as JSON
+    // syntax only; keys and the four fields have no unpaired surrogate. An
+    // audit of the depth rule found the reference refusing items Go and
+    // TypeScript counted, and Go and TypeScript reading null directories,
+    // null revocations and the keys below differently.
+    let origin_member = format!(
+        "\"origin\":\"{}\"",
+        canonical_origin(&k.identity.verifying_key())
+    );
+    let proof_rest = &proof_t[1..]; // the proof's members and its closing brace
+    let item_with =
+        |members: &str| format!("{{{members},\"kind\":\"equivocation\",\"proof\":{proof_t}}}");
+    let mut inputs_more = vec![
+        input("an evidence item with an origin beside its proof holding 1e400, ignored", Evidence, item_with("\"origin\":1e400"), Exit(30)),
+        input("an evidence item with an origin beside its proof holding an unpaired surrogate escape, ignored", Evidence, item_with("\"origin\":\"\\ud800\""), Exit(30)),
+        input("an evidence item with an ignored member holding 1e400", Evidence, item_with("\"x\":1e400"), Exit(30)),
+        input("an evidence item with an ignored member holding an unpaired surrogate escape", Evidence, item_with("\"x\":\"\\ud800\""), Exit(30)),
+        input("a bare equivocation proof whose origin is given twice, the first holding 1e400", Evidence, format!("{{\"origin\":1e400,{proof_rest}"), Exit(30)),
+        input("a bare equivocation proof whose origin is given twice, the first with an unpaired surrogate escape", Evidence, format!("{{\"origin\":\"\\ud800\",{proof_rest}"), Exit(30)),
+        input("an evidence item whose proof is given twice, the first an array", Evidence, format!("{{\"kind\":\"equivocation\",\"proof\":[1],\"proof\":{proof_t}}}"), Exit(30)),
+        input("an evidence item whose proof is given twice, the last null", Evidence, format!("{{\"kind\":\"equivocation\",\"proof\":{proof_t},\"proof\":null}}"), Refused),
+        input("a bare equivocation proof whose origin has an unpaired surrogate escape", Evidence, sub(&proof_t, &origin_member, "\"origin\":\"\\ud800\""), Refused),
+        input("a bare equivocation proof with an ignored key that has an unpaired surrogate escape", Evidence, format!("{{\"\\ud800\":1,{proof_rest}"), Refused),
+        input("an evidence item with a key beside its proof that has an unpaired surrogate escape", Evidence, item_with("\"\\ud800\":1"), Refused),
+        input("an evidence item whose proof has a key with an unpaired surrogate escape", Evidence, wrapped(&format!("{{\"\\ud800\":1,{proof_rest}")), Refused),
+        // ---- null and repeated keys in a directory or revocations file
+        input("a trusted directory that is null", Directory, "null".into(), Refused),
+        input("revocations that are null", Revocations, "null".into(), Refused),
+        input(
+            "a trusted directory with an ignored key given twice, the first copy nested to depth 1001",
+            Directory,
+            add_field(&add_field(&dir_t, &deep(1000)), "\"zz\":0"),
+            Refused,
+        ),
+    ];
+    let mut inputs = inputs;
+    inputs.append(&mut inputs_more);
 
     // ---- expectations from the reference
     let mut out = Vec::new();
@@ -950,7 +988,14 @@ fn main() {
                     "{}: the reference refuses it: {e}",
                     c.name
                 );
-                assert!(matches!(e, InputParseError::TooDeep(_)), "{}: {e}", c.name);
+                // A case about nesting is refused for its depth, not for
+                // something else wrong with the text.
+                assert_eq!(
+                    matches!(e, InputParseError::TooDeep(_)),
+                    c.name.contains("nested"),
+                    "{}: {e}",
+                    c.name
+                );
                 json!({
                     "refused": true, "verdict": null, "exit_code": 2,
                     "has_failures": null, "contradictions": null, "valid_receipts": null,
@@ -1040,7 +1085,14 @@ fn main() {
             verifyDossier throws a TypeError for the option); otherwise the verdict, exit code \
             and report fields must equal expect. Where one JSON text carries several inputs (an \
             array of evidence items, wasm's options object), the limit applies to each input in \
-            it. Every key here is public and for testing only.",
+            it. An evidence item is valid UTF-8 JSON and an object: the proof, or one carrying the \
+            proof under \"proof\"; of a key given twice the last counts and only it is read; every \
+            other member (an earlier copy, and beside \"proof\" every member of the item) is \
+            ignored, its value only checked as JSON syntax; the keys of the item and of the proof, \
+            and the proof's four string fields, have no unpaired surrogate escape. A directory or \
+            revocations input that is null is refused. Give each input as text: a value already \
+            parsed has lost an earlier copy of a repeated key and whatever was nested under it. \
+            Every key here is public and for testing only.",
         "directories": directories,
         "cases": out,
         "inputs": inputs_out,

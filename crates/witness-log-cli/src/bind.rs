@@ -58,8 +58,11 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
         }
     };
     let (ia, ib) = (a.identity_pubkey.as_str(), b.identity_pubkey.as_str());
+    // What the output names an identity by: each dossier's claim, cut when
+    // it is longer than a key (`reported_identity`).
+    let (ra, rb) = (crate::reported_identity(ia), crate::reported_identity(ib));
     if ia == ib {
-        eprintln!("both dossiers claim the same identity {ia}; `bind` is for two different agents (use `diff` for two copies of one log)");
+        eprintln!("both dossiers claim the same identity {ra}; `bind` is for two different agents (use `diff` for two copies of one log)");
         return ExitCode::from(exit::USAGE);
     }
 
@@ -68,7 +71,9 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
 
     // Handoffs: A→B (A Sent, B Received) and B→A.
     let h = LeafType::HandoffAttestation.tag();
-    for (sender, sender_id, receiver, receiver_id) in [(&a, ia, &b, ib), (&b, ib, &a, ia)] {
+    for (sender, sender_id, sender_name, receiver, receiver_id, receiver_name) in
+        [(&a, ia, &ra, &b, ib, &rb), (&b, ib, &rb, &a, ia, &ra)]
+    {
         let sent: Vec<&Leaf> = names_other(&sender.leaves, receiver_id, h)
             .into_iter()
             .filter(|l| l.handoff_direction == Some(HandoffDirection::Sent))
@@ -87,8 +92,8 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
                 .find(|r| verify_handoff_binding(sender_id, s, receiver_id, r).is_ok());
             match hit {
                 Some(r) => bound.push(serde_json::json!({
-                    "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
-                    "receiver": receiver_id, "receiver_leaf": r.index,
+                    "kind": "handoff", "sender": sender_name, "sender_leaf": s.index,
+                    "receiver": receiver_name, "receiver_leaf": r.index,
                     "state_hash": s.handoff_state_hash,
                 })),
                 None => {
@@ -105,8 +110,8 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
                         })
                         .collect();
                     failed.push(serde_json::json!({
-                        "kind": "handoff", "sender": sender_id, "sender_leaf": s.index,
-                        "receiver": receiver_id,
+                        "kind": "handoff", "sender": sender_name, "sender_leaf": s.index,
+                        "receiver": receiver_name,
                         "reason": if reasons.is_empty() { "receiver logged no HandoffAttestation naming this sender".to_string() } else { reasons.join("; ") },
                     }));
                 }
@@ -124,12 +129,12 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
             .find(|lb| verify_authorization_binding(ia, la, ib, lb).is_ok())
         {
             Some(lb) => bound.push(serde_json::json!({
-                "kind": "authorization", "a": ia, "a_leaf": la.index, "a_event": event_name(la.authorization_event_kind),
-                "b": ib, "b_leaf": lb.index, "b_event": event_name(lb.authorization_event_kind),
+                "kind": "authorization", "a": ra, "a_leaf": la.index, "a_event": event_name(la.authorization_event_kind),
+                "b": rb, "b_leaf": lb.index, "b_event": event_name(lb.authorization_event_kind),
                 "scope_hash": la.authorization_scope_hash,
             })),
             None => failed.push(serde_json::json!({
-                "kind": "authorization", "a": ia, "a_leaf": la.index, "b": ib,
+                "kind": "authorization", "a": ra, "a_leaf": la.index, "b": rb,
                 "reason": if auth_b.is_empty() { "the other log has no AuthorizationEvent naming this agent".to_string() }
                           else { auth_b.iter().map(|lb| format!("b leaf {}: {}", lb.index, verify_authorization_binding(ia, la, ib, lb).err().unwrap_or_default())).collect::<Vec<_>>().join("; ") },
             })),
@@ -147,13 +152,13 @@ pub fn run_bind(path_a: &str, path_b: &str, json: bool) -> ExitCode {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "a": {"path": path_a, "identity": ia}, "b": {"path": path_b, "identity": ib},
+                "a": {"path": path_a, "identity": ra}, "b": {"path": path_b, "identity": rb},
                 "bound": bound, "failed": failed, "exit": code,
             }))
             .unwrap_or_default()
         );
     } else {
-        println!("witness-log bind\n  A: {ia}\n  B: {ib}\n");
+        println!("witness-log bind\n  A: {ra}\n  B: {rb}\n");
         for v in &bound {
             match v["kind"].as_str() {
                 Some("handoff") => println!(

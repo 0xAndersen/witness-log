@@ -125,8 +125,11 @@ fn corpus_vector_17_inputs() {
         let (directory, revocations, evidence) = match read {
             Err(err) => {
                 assert_eq!(e["refused"], json!(true), "{name}: refused: {err}");
-                assert!(matches!(err, InputParseError::TooDeep(_)), "{name}: {err}");
-                assert!(err.to_string().contains("nested deeper than 1000"), "{err}");
+                // The cases about nesting are refused for their depth.
+                if name.contains("nested") {
+                    assert!(matches!(err, InputParseError::TooDeep(_)), "{name}: {err}");
+                    assert!(err.to_string().contains("nested deeper than 1000"), "{err}");
+                }
                 continue;
             }
             Ok(read) => read,
@@ -182,7 +185,18 @@ fn every_input_nests_at_most_1000_deep() {
     );
     assert_eq!(
         check_json_depth(&nested(1001)),
-        Err(JsonTooDeep { offset: 1000 })
+        Err(JsonTooDeep {
+            offset: 1000,
+            max: 1000
+        })
+    );
+    // A text that carries inputs (wasm's options) gets the levels it adds.
+    use witness_log_network::check_json_depth_within;
+    assert_eq!(check_json_depth_within(&nested(1002), 1002), Ok(()));
+    let e = check_json_depth_within(&nested(1003), 1002).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "nested deeper than 1002 arrays and objects (at byte 1002)"
     );
     let v = corpus();
     let item = |n: &str| {

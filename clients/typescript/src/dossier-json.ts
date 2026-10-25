@@ -666,6 +666,14 @@ export const readWitnessEntry: Reader = withShape((v, path) => {
 
 const WITNESS_DIRECTORY = struct({ witnesses: req(list(readWitnessEntry)) });
 
+/** A trusted directory's object form, `{"witnesses": [...]}`, as the reference reads it. Throws NotADossier. */
+export const readWitnessDirectory: Reader = WITNESS_DIRECTORY;
+
+/** Whether a string holds an unpaired UTF-16 surrogate (what an unpaired `\u` escape decodes to). */
+export function hasUnpairedSurrogate(s: string): boolean {
+  return LONE_SURROGATE.test(s);
+}
+
 const CUSTODY_UNIT = ["self_held", "platform_held", "hsm", "kms", "session_delegated", "undisclosed"] as const;
 const THRESHOLD = struct({ k: req(str), n: req(str) });
 
