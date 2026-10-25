@@ -230,7 +230,7 @@ that name instead:
 ### 3. Binary and systemd
 
 ```sh
-VER=v0.3.5
+VER=v0.7.0
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/witness-log-$VER-x86_64-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/0xAndersen/witness-log/releases/download/$VER/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
@@ -241,7 +241,7 @@ sudo install -d -o witness-log -g witness-log -m 0700 /var/lib/witness-log
 sudo -u witness-log witness-log witness init /var/lib/witness-log/w1 \
     --name witness.example.org/w1 --org "Your Org" --url https://witness.example.org --compute hetzner
 sudo curl -fsSL -o /etc/systemd/system/witness-log-witness.service \
-    https://raw.githubusercontent.com/0xAndersen/witness-log/main/deploy/witness/witness-log-witness.service
+    https://raw.githubusercontent.com/0xAndersen/witness-log/$VER/deploy/witness/witness-log-witness.service
 sudo systemctl daemon-reload && sudo systemctl enable --now witness-log-witness
 curl -s http://127.0.0.1:7380/health     # ok
 ```

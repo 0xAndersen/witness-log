@@ -96,7 +96,7 @@ jobs:
                            ('COMPUTE="oracle-cloud"', 'COMPUTE="github-actions-qemu"'),
                            ('HOST=""', 'HOST="witness-ci.invalid"'),
                            ('WL_VERSION="latest"', f'WL_VERSION="{tag}"'),
-                           ('WL_REF="v0.6.1"', f'WL_REF="{sha}"')]:
+                           ('WL_REF="v0.7.0"', f'WL_REF="{sha}"')]:
               assert old in s, old
               s = s.replace(old, new, 1)
           s += f"\nssh_authorized_keys:\n  - {pub}\n"

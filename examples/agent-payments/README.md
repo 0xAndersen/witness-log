@@ -27,9 +27,8 @@ keeps the journals, dossiers, witness state and evidence files.
 it on every push to main and every pull request
 (`.github/workflows/ci.yml`, the Python bindings job).
 
-The CLI must be built from this repository at or after the change that
-made `bind` match leaves one to one (0.7.0 when released; a build from
-this checkout still reports 0.6.1). `make payments` builds one. With an
+The CLI must be 0.7.0 or later, the release in which `bind` matches
+leaves one to one. `make payments` builds one from this checkout. With an
 older CLI, `bind buyer.json seller-extra.json` exits 0, because `bind` did
 not check a grant that only the second log holds. The run then fails on
 that row and prints why.

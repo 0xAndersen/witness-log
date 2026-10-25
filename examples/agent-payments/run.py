@@ -22,9 +22,8 @@ three disputes, each of which must fail in a specific way:
     cargo install witness-log-cli        # or put a release binary on PATH
     python3 examples/agent-payments/run.py
 
-The CLI must be built from this repository at or after the one-to-one
-`bind` change (0.7.0 when released; a build from this checkout still
-reports 0.6.1). `make payments` builds one. An older `bind` misses a grant
+The CLI must be 0.7.0 or later, the release with the one-to-one `bind`.
+`make payments` builds one from this checkout. An older `bind` misses a grant
 only one side holds; the run then fails on those rows and says why.
 
 All payment data is fictional test data: placeholder addresses, amounts in

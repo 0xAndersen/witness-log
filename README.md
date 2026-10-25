@@ -165,7 +165,7 @@ witness-log testnet down
 or a witness and prints the fix for each problem. Every subcommand and exit code:
 [CLI reference](docs/wiki/CLI-Reference.md).
 
-**CI.** `uses: 0xAndersen/witness-log@v0.6.1` verifies a dossier in a GitHub workflow and fails the job unless
+**CI.** `uses: 0xAndersen/witness-log@v0.7.0` verifies a dossier in a GitHub workflow and fails the job unless
 it is WITNESSED. [GitHub Action](docs/wiki/GitHub-Action.md).
 
 **Rust.** `witness-log-core` (log, journal, redaction, C2SP encoding) and `witness-log-network` (witnesses,
@@ -247,6 +247,6 @@ deploy/fly/       Fly.io config for one witness (render.yaml at the root is the 
 registry/         the public witness list (CI-validated) and directory builder
 ```
 
-Pre-1.0 (v0.5.0). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
+Pre-1.0 (v0.7.0). Apache-2.0; see `LICENSE` and `NOTICE`. Spec changes go through RFCs in
 [`docs/rfcs/`](docs/rfcs) and `GOVERNANCE.md`; vulnerability disclosure in `SECURITY.md`;
 [Contributing](docs/wiki/Contributing.md).

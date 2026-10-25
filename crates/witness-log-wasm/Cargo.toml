@@ -16,8 +16,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-witness-log-core = { version = "0.6.1", path = "../witness-log-core" }
-witness-log-network = { version = "0.6.1", path = "../witness-log-network" }
+witness-log-core = { version = "0.7.0", path = "../witness-log-core" }
+witness-log-network = { version = "0.7.0", path = "../witness-log-network" }
 serde = { workspace = true }
 # raw_value: the options' revocations and evidence are each read from their
 # own JSON text, so SPEC.md §9's nesting limit counts from each input as it

@@ -1,5 +1,287 @@
 # Changelog
 
+## 0.7.0 — 2026-10-25
+
+Ten improvements. An independent reviewer checked each one before it
+landed, and everything the reviews found is fixed in this release. A final
+review of the whole range looked for problems between the changes. No
+leaf-encoding or verdict-rule change: every well-formed dossier verifies
+as it did under 0.6.1, in all three verifiers. `bind` and the new
+silence-proof commands decide differently, and every verifier input now
+has one depth rule. All of it is listed under "Behaviour changes" at the
+end.
+
+### Join the public witness network
+
+- **`witness-log witness-network log-list`** prints a `logs/v0` log list
+  for a fleet log (`--fleet`), an agent's own log (`--identity`) or any
+  C2SP log whose origin is its key name (`--vkey`). The rate comes from
+  `--every SECS` or `--qpd`. This is the list transparency-dev's
+  omniwitness polls with `--public_witness_config_url`.
+- **`witness-log witness-network request`** prints the participation
+  email the witness-network.org guidelines ask for. Nothing is sent.
+- **Interop in CI** (`.github/workflows/interop.yml`,
+  `tests/interop/omniwitness.sh`). Two omniwitness instances, built from a
+  pinned transparency-dev/witness commit, are configured from a list this
+  CLI wrote. They cosign an agent log until it reaches WITNESSED and grows.
+  The cosignatures verify with `c2sp verify`. A rewritten history is
+  refused. A fleet log anchors an agent that is not on the list.
+  `WITNESS_IMPL=witness-log` runs the same checks against witness-log's
+  own witness. The job runs weekly and on every Rust change.
+- `directory add` takes the full add-checkpoint URL that witness about
+  pages give. An add-checkpoint 404, 403 or 429 says what it means: not
+  enrolled, another key, or busy. A witness's response body reaches the
+  terminal bounded, on one line, with control and bidi characters escaped.
+  Before, a hostile witness could print a forged "✓ cosigned" line.
+- `fleet init` refuses Unicode whitespace in an origin, because
+  omniwitness refuses the whole list that holds one.
+- New guide: docs/wiki/Public-Witness-Network.md.
+
+### Agent payments: x402 and AP2, witnessed and disputed
+
+- **`examples/agent-payments`** (`make payments`, and a step in CI). A
+  buyer agent pays a seller agent over x402 under an AP2-style mandate.
+  Each side records the mandate, the payment, the settlement receipt and
+  the delivered bytes in its own log. Three local witnesses cosign both
+  logs, and `bind` binds the two. Each dispute is then asserted by its
+  exit code: another amount, a grant only one side logged, a rewrite and
+  an edited leaf. All payment data is fictional, and nothing leaves
+  127.0.0.1.
+- **`bind` matches one to one and checks both sides.** This was found
+  while building the example. `bind` read B's leaves only as counterparts
+  to A's, so a grant, revocation or handoff that only B recorded was
+  ignored. The same two files could give exit 0 in one order and 30 in the
+  other. Several leaves could also bind the same counterpart. Now each
+  leaf binds at most once, in index order. Anything left over on either
+  side is a failure, and it is reported the same way in either order. The
+  fix is in all four implementations: the CLI, Python `bind_dossiers`, Go
+  `Bind` and wasm `bind_value`. SPEC §3 describes how a tool matches two
+  whole dossiers.
+
+### Write receipts and silence proofs from the CLI and Python
+
+Witnesses stop a log from rewriting what they cosigned. They do not stop
+it from leaving out an event it accepted. A write receipt is the log's
+signed promise that an event will be at a given index. A silence proof
+checks that promise against witnessed history.
+
+- **`witness-log log receipt <journal> <index>`**: the operator signs a
+  write receipt for an entry the journal holds and hands it to the
+  counterparty.
+- **`witness-log prove-silence <receipt.json> --dossier D... --directory T`**
+  is the counterparty's offline check. Exit codes: 0 PRESENT, 20
+  INCONCLUSIVE, 30 CENSORED, 31 MISPLACED (the event is in the witnessed
+  history at another index than promised), 2 usage. `--json`,
+  `--identity`, `--min-checkpoints` (default 2), `--subject-org` and
+  `--revocations` are supported.
+- **Python:** `write_receipt_json(index)` on `JournaledLog` and
+  `WitnessLog`, and `witness_log.prove_silence(...)`.
+- **The rule.** A dossier counts only when four things hold:
+  - its checkpoint is signed by the receipt's key;
+  - it is larger than the receipt;
+  - it is cosigned by two independent operators;
+  - its leaves reproduce its own checkpoint.
+
+  Leaves come only from the largest counted dossier and must reproduce
+  every counted root, so a fork across sizes is named and is INCONCLUSIVE.
+  PRESENT requires the event at the promised index. A revocation of the
+  receipt's key is applied only when it is in effect: it must be a v2
+  statement, and a counted checkpoint must have reached its `as_of_index`.
+  A log therefore cannot cancel an accusation with a revocation that cuts
+  off nothing. SPEC §9.4 and Threat-Model "Proving an omission" state all
+  of this.
+- The library gains `silence_proof_in_context`, `SilenceContext`,
+  `silence_proof_over_dossiers` and `SilenceProofResult::Misplaced`.
+  `silence_proof` and `silence_proof_for_subject` keep their signatures.
+
+### OpenTelemetry: any traced agent writes a witness-log
+
+- **Python `witness_log.integrations.otel.WitnessLogSpanProcessor`**
+  (`pip install "witness-log[otel]"`) reads spans in the GenAI semantic
+  conventions or in OpenInference. Those come from Google ADK,
+  pydantic-ai, Strands, OpenLLMetry, and the instrumentors for LangChain,
+  LlamaIndex, OpenAI Agents and CrewAI.
+  - A tool span becomes an intent leaf when it starts and a result leaf
+    when it ends. Instrumentors that set the span kind only at the end
+    write the intent late, marked `late: true`.
+  - A model or agent span becomes one memory leaf: model, provider, usage
+    and outcome. Prompts and completions are left out unless you pass
+    `record_content=True`.
+  - Every leaf carries trace and span ids.
+  - The processor sits next to an existing exporter. A failed append
+    never breaks tracing. At most 10,000 open tool spans are held, and
+    payloads are not kept by default.
+- **TypeScript:** `witnessTelemetry(log, { otherInstrumentations: true })`
+  in `@witness-log/ai-sdk` records the same spans from Mastra,
+  LangChain.js or OpenInference JS. It does not record the AI SDK's own
+  spans twice.
+
+### subject_org on every surface that computes a verdict (closes #21, #18)
+
+Since 0.6.0 the verifiers take the organisation that operates the log
+being checked, and that organisation's own witnesses never count as
+independent. Four surfaces still scored without it:
+
+- **MCP server:** a `subject_org` argument, or one value set by the
+  operator with `WITNESS_LOG_SUBJECT_ORG` or `--subject-org`. A tool call
+  cannot override the operator's value.
+- **MCP proxy** and **`witness-log-hookd`:** `--subject-org`.
+- **`Log.submit(subject_org=)`** in Python.
+- **Browser verifier:** a "Who operates this log?" field.
+
+`witness_log.normalize_label` exposes the verifier's label rule. Every
+surface passes the label to the verifier exactly as given. Cleaning it
+first with Python's `split()` or JavaScript's `trim()` let an operator's
+own witness count as independent (U+001F, U+FEFF). The CLI and the page
+now say when the named operator matches no witness in the directory.
+
+### One depth rule for every verifier input
+
+Since 0.6.1 a dossier text may nest at most 1000 levels. Directories,
+revocations, evidence, write receipts and the wasm options object were
+left to each JSON library, so the same file could be read by one verifier
+and refused by another. Every input now follows the dossier's rule. A
+deeper input is a usage error (exit 2, or a library error), never a
+verdict.
+
+- Evidence items are read by one rule in Rust, Go and TypeScript:
+  - of a key given twice, the last copy counts;
+  - other members are only syntax-checked;
+  - no unpaired surrogate escape is allowed in keys or proof strings.
+
+  SPEC §9 states the rule.
+- Go refuses a directory or revocations file that is JSON `null`, as the
+  reference does.
+- The Go and Rust wasm builds read the options object with exact keys.
+- TypeScript options take JSON text as well as values. TypeScript
+  `revocations` and `evidence` take a single item.
+- Report fields no longer echo hostile input whole:
+  - `verify --json` and `bind` cut `identity_pubkey` to 64 characters;
+  - `fleet_anchor.origin` is null when it is over 255 bytes.
+- Corpus 17 gains 36 `inputs` cases, and every verifier runs them.
+  Corpora 01–16 are byte-identical.
+
+### TypeScript reader memory
+
+On hostile text, a member of the wrong kind is now checked without being
+built. After the first refused item, a list keeps nothing more, and
+unknown keys are counted, not kept. Peak memory on a million-item hostile
+dossier is now 12–30 MB, down from 110–580 MB. A test bounds it in a child
+process. Verdicts and messages were unchanged on 84,488 generated texts.
+
+### Docs that run (closes #17)
+
+`docs/doctest.py` now runs 44 marked blocks on 11 pages, up from 13 on 4.
+CI and `make docs` run them. Running them found and fixed the following:
+
+- The payments tutorial reopened a journal it still held, raced its
+  witnesses and showed wrong output.
+- The TypeScript quickstart read the wrong file.
+- Five commands rejected `--help`.
+- `witness-log-hook install` wrote the journal to `./~/.witness-log/`.
+- Stale "planned for 0.4.0" notes are gone.
+
+`--help` and `-h` are now a help request only when they are the sole
+argument after a command or subcommand. Anywhere else they are an
+ordinary argument. Before, `verify d.json --identity --help` and
+`prove-silence r.json --dossier -h` exited 0.
+
+### One-click independent witnesses (issue #1)
+
+- **Render** (`render.yaml`, the Deploy to Render button) and **Fly.io**
+  (`deploy/fly/fly.toml`) build `deploy/witness/Dockerfile` from this
+  repository. Each runs one instance with `/state` on a persistent disk
+  and a `/health` check. `WITNESS_ORG` is left for the operator to fill
+  in, and a push here never redeploys anyone's witness.
+- **The entrypoint** creates a key only on a mounted `/state` (exit 78
+  otherwise). Starting as root, it hands `/state` to uid 10001 and drops
+  privileges with `setpriv`. With `WITNESS_PUBKEY` set, it refuses a
+  volume holding another key or none (78; a malformed value gives 64).
+  Fly's `auto_start_machines` is off, so a stopped copy cannot cosign
+  after a snapshot was taken.
+- **CI** (`deploy-configs`): `deploy/check_configs.py` checks both
+  configurations against the image. `deploy/smoke-test.sh` then runs the
+  image the way each platform does, checking:
+  - health, the vkey and a cosignature;
+  - uid 10001 with no capabilities;
+  - the same key after a stop, a kill and a new container;
+  - a second container refused.
+- Operator-Onboarding starts with "Deploy in one click".
+
+### Dependencies and CI
+
+- **TLS advisories:** rustls-webpki 0.103.16 and webpki-roots 1.0.11
+  (RUSTSEC-2026-0382, RUSTSEC-2026-0381).
+- **thiserror 2.** Patch releases stay at what the MSRV, Rust 1.75, can
+  build, and `.cargo/config.toml` keeps `cargo update` from raising it.
+- **npm lockfile:** body-parser 2.4.0 and fast-uri 3.1.9 (GHSA-27r3-jxmh-p828
+  and four fast-uri advisories). Both are dev and MCP-SDK dependencies,
+  not shipped in a package.
+- **testnet:**
+  - `testnet up` after `testnet down` starts again;
+  - a witness that cannot start is reported at once, with its log;
+  - each witness gets 60 s to come up.
+
+### Found by the release review
+
+- `prove-silence` printed a hostile receipt's `sig_alg` and `payload_hash`
+  raw. Both are now quoted and bounded, and the receipt file follows the
+  depth rule. Python's `prove_silence` gets the same 64 KiB cap.
+- The MCP server serialized a pinned directory at Python's default
+  recursion limit. Below Python 3.13 that is less than 1000 levels.
+- `bind` labelled a leaf "B" when A's identity was long enough to be cut.
+
+Known and left as is:
+
+- wasm `bind_value` and Python `bind_dossiers` report identities uncut,
+  as before.
+- `prove-silence --revocations` has no size cap of its own.
+
+### Behaviour changes
+
+- `bind` can now return 30 where 0.6.1 returned 0 or 10. That happens
+  when one side holds a grant, revocation, scope change or Received
+  handoff the other side does not match, or when two leaves claim one
+  counterpart. The result no longer depends on argument order.
+- `--help` and `-h` count only as the sole argument after a (sub)command.
+- A directory, revocations or evidence file, or a wasm options text,
+  nested more than 1000 levels is refused (exit 2). A `null` directory or
+  revocations file is refused by Go too.
+- Evidence members other than the four named ones are no longer decoded
+  by the reference: an ignored `1e400` no longer refuses the item.
+- wasm `VerifyOptions.revocations` and `.evidence` are raw JSON per input.
+  They accept a single item, and the options object has exact keys.
+- TypeScript `verifyDossier` options accept JSON text. `revocations` and
+  `evidence` take one item or an array.
+- `verify --json`'s `identity_pubkey` is cut to 64 characters with "…"
+  when longer, and `fleet_anchor.origin` is null over 255 bytes.
+- `SilenceProofResult` has a new `Misplaced` variant. This breaks code
+  that matches it exhaustively. `silence_proof` and
+  `silence_proof_for_subject` now return `Present` only when the event
+  sits at the receipt's index, in leaves that reproduce a counted
+  witnessed checkpoint. The event at another index is `Misplaced`, and a
+  match anywhere else is `Inconclusive`.
+- `WriteReceipt` is read from a JSON object only.
+- `fleet init` and `witness-network --fleet` refuse Unicode whitespace in
+  an origin.
+- The MCP server refuses a tool call naming a `subject_org` other than
+  the one the operator configured.
+- The OTel span processor no longer reads OpenInference
+  `tool.parameters`. In TypeScript, recording other instrumentations is
+  opt-in.
+- The deploy entrypoint exits 78 instead of creating a key when `/state`
+  is not a mount point. The from-source Dockerfile has no `VOLUME`.
+
+### Packages
+
+- **crates:** `witness-log-core`, `-network` and `-cli` 0.7.0.
+- **PyPI:** `witness-log` 0.7.0.
+- **Go module:** `clients/go/v0.7.0`.
+- **npm:** `@witness-log/client` 0.6.0. `@witness-log/node` (and its
+  platform packages), `@witness-log/ai-sdk` and `create-witness-log`
+  0.5.0. These are versioned, but publishing to npm still needs the
+  owner's token.
+
 ## 0.6.1 — 2026-10-18
 
 Fixes from an outside code review of 0.5.0 (review III) and a security

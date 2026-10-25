@@ -57,7 +57,7 @@ write_files:
       # ---- optional ----
       HOST=""                        # your DNS name for this box; empty = <public-ip>.sslip.io (no DNS needed; this needs the public-IP lookup)
       WL_VERSION="latest"            # a tag like v0.4.0 to pin, or latest
-      WL_REF="v0.6.1"                # repo tag the systemd unit is fetched from; keep it a release tag, not a branch
+      WL_REF="v0.7.0"                # repo tag the systemd unit is fetched from; keep it a release tag, not a branch
       CADDY_VERSION="2.11.7"         # Caddy release to install, checked against that release's checksum file
 
   - path: /usr/local/sbin/witness-log-bootstrap
@@ -66,7 +66,7 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       . /etc/witness-log/env
-      WL_REF="${WL_REF:-v0.6.1}"
+      WL_REF="${WL_REF:-v0.7.0}"
       # SHA-256 of deploy/witness/witness-log-witness.service at WL_REF. A
       # tag can be moved by anyone with write access, so the unit (which
       # systemd runs as root) is checked against this pin as well; CI fails

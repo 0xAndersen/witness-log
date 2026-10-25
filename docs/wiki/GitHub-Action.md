@@ -9,7 +9,7 @@ are step outputs, and the job summary says in plain words what each check
 found.
 
 ```yaml
-- uses: 0xAndersen/witness-log@v0.6.1
+- uses: 0xAndersen/witness-log@v0.7.0
   with:
     dossier: dossier.json
     identity: ${{ vars.AGENT_IDENTITY }}
@@ -117,7 +117,7 @@ The job log has `verify`'s own output, exactly as the CLI prints it.
 ## Which CLI runs
 
 **Version.** `version` wins when set. Otherwise, when the action is used
-at a version tag (`uses: 0xAndersen/witness-log@v0.6.1`), the CLI of that
+at a version tag (`uses: 0xAndersen/witness-log@v0.7.0`), the CLI of that
 release runs, so pinning the action pins the verifier. With a branch, a
 commit SHA, or a local `uses: ./`, the latest release is resolved through
 the GitHub API. **If you pin the action to a commit SHA, set `version` as
@@ -155,7 +155,7 @@ built by this repository's `release.yml` (signed through Sigstore), so an
 asset uploaded by hand is refused. Without the `gh` CLI or a token that
 check is skipped with a notice; `verify-provenance: false` skips it on
 purpose. You can run the same check yourself:
-`gh attestation verify witness-log-v0.6.1-x86_64-unknown-linux-gnu.tar.gz --repo 0xAndersen/witness-log`.
+`gh attestation verify witness-log-v0.7.0-x86_64-unknown-linux-gnu.tar.gz --repo 0xAndersen/witness-log`.
 
 **Downloads** go through `gh release download` with `token` (preinstalled
 on GitHub-hosted runners) and fall back to the public release URL. A
@@ -203,7 +203,7 @@ jobs:
       verdict: ${{ steps.wl.outputs.verdict }}
     steps:
       - uses: actions/checkout@v7
-      - uses: 0xAndersen/witness-log@v0.6.1
+      - uses: 0xAndersen/witness-log@v0.7.0
         id: wl
         with:
           dossier: audit/dossier.json
@@ -231,7 +231,7 @@ Verify every dossier, never block, keep the report, and fail only on
 evidence that something is wrong with the record itself.
 
 ```yaml
-      - uses: 0xAndersen/witness-log@v0.6.1
+      - uses: 0xAndersen/witness-log@v0.7.0
         id: wl
         with:
           dossier: dossier.json
@@ -296,7 +296,7 @@ jobs:
             echo "head=$(tr '\n' ',' < prev/head.txt)" >> "$GITHUB_OUTPUT"   # one head per line
           fi
 
-      - uses: 0xAndersen/witness-log@v0.6.1
+      - uses: 0xAndersen/witness-log@v0.7.0
         id: wl
         with:
           dossier: dossier.json
