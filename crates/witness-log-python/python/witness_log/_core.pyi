@@ -222,6 +222,10 @@ def verify_inclusion(
 ) -> bool: ...
 def payload_hash(payload: bytes, salt: bytes, index: int) -> str:
     """SPEC §8: ``SHA256(bucket_pad(payload) || salt || index)``, hex."""
+def normalize_label(label: str) -> str:
+    """An operator label as the verifier compares it: Unicode White_Space
+    runs collapsed to one space, trimmed, Unicode lowercased. Two labels
+    name one operator exactly when these are equal; "" is blank."""
 def verify_handoff_binding(
     sender_identity_hex: str, sender_leaf_json: str, receiver_identity_hex: str, receiver_leaf_json: str
 ) -> bool:

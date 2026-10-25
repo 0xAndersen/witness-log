@@ -118,7 +118,8 @@ async def test_the_subject_org_drops_its_own_witness_from_the_count(tmp_path, wi
         )
     assert _independent(plain) == 3
     assert _independent(own) == 2, own["report"]["quorum"]
-    assert own["subject_org"] == "org a" and own["subject_org_source"] == "caller"
+    # Passed to the verifier as given; the verifier normalises it.
+    assert own["subject_org"] == "  org a " and own["subject_org_source"] == "caller"
     assert own["verdict"] == "witnessed"  # B and C are still two independent operators
 
 
@@ -195,4 +196,64 @@ def test_log_submit_and_the_proxy_take_subject_org(tmp_path, witnesses):
     assert log.submit(directory)["verdict"] == "witnessed"
     assert log.submit(directory, subject_org="org a")["verdict"] != "witnessed"
     p = Proxy([sys.executable, "-c", "pass"], str(tmp_path / "p.wlog"), "t", subject_org="  Org   A ")
-    assert p.subject_org == "Org A"
+    assert p.subject_org == "  Org   A "
+    assert Proxy([sys.executable, "-c", "pass"], str(tmp_path / "q.wlog"), "t", subject_org=" \t ").subject_org is None
+
+
+def _two_operator_directory_file(tmp_path, witnesses):
+    path = tmp_path / "trusted.json"
+    path.write_text(json.dumps({"witnesses": witnesses[:2]}))
+    return str(path)
+
+
+@pytest.mark.parametrize("subject, witnessed", [(None, True), ("Org A", False), ("ORG  a", False), ("Org Z", True)])
+def test_the_proxy_verdicts_use_subject_org(tmp_path, witnesses, subject, witnessed):
+    """`last_verdict` (periodic submit) and the `audit__export` verdict both
+    drop below WITNESSED when the subject runs one of the two operators."""
+    from witness_log.mcp_proxy import Proxy
+
+    directory = _two_operator_directory_file(tmp_path, witnesses)
+    p = Proxy([sys.executable, "-c", "pass"], str(tmp_path / "p.wlog"), "t", directory=directory, subject_org=subject)
+    p.log.append_intent(b"x")
+    p._submit()
+    assert (p.last_verdict == "witnessed") is witnessed, p.last_verdict
+    export = p._export()
+    assert (export["verdict"] == "witnessed") is witnessed, export
+    assert export["subject_org"] == subject
+
+
+def test_hookd_submits_with_subject_org(tmp_path, witnesses):
+    from witness_log.hookd import Hookd
+
+    directory = _two_operator_directory_file(tmp_path, witnesses)
+    for subject, witnessed in ((None, True), ("org a", False)):
+        d = Hookd(str(tmp_path / f"h{bool(subject)}.wlog"), str(tmp_path / "h.sock"), directory=directory, subject_org=subject)
+        d.log.append_intent(b"x")
+        out = d._submit()
+        assert out is not None and (out["verdict"] == "witnessed") is witnessed, out
+        d.log.sync()
+
+
+# Labels the verifier reads differently from Python's str.split() and
+# JavaScript's trim()/\s: U+001F is not Unicode White_Space (Python splits
+# on it), U+FEFF is not either (JavaScript trims it). Corpus 15, F12.
+@pytest.mark.parametrize("label", ["Org\x1fA", "\ufeffOrg A", "Org\ufeffA"])
+def test_a_label_reaches_the_verifier_as_written(tmp_path, witnesses, label):
+    directory = {"witnesses": [dict(witnesses[0], operator_org=label), witnesses[1]]}
+    log = wl.open(str(tmp_path / "a.wlog"), store_payloads=False)
+    log.append_intent(b"x")
+    # The witness labelled exactly `label` belongs to the subject: one independent operator left.
+    assert log.submit(directory, subject_org=label)["verdict"] != "witnessed"
+    assert wl.normalize_label(label) == label.lower()
+    assert wl.normalize_label("  Org \u00a0\t A ") == "org a"
+    # The MCP server keeps the operator's value as written.
+    from witness_log import mcp_server
+
+    mcp_server.set_subject_org(label)
+    try:
+        assert mcp_server._subject_org(None) == (label, "operator")
+        with pytest.raises(ValueError, match="refused"):
+            # What Python's split() or JavaScript's trim() would have made of it names another org.
+            mcp_server._subject_org(label.replace("\x1f", " ").replace("\ufeff", ""))
+    finally:
+        mcp_server._subject.update(loaded=False, org=None)

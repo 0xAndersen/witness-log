@@ -91,7 +91,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from . import IDENTITY_SEED_ENV, canonical_json
+from . import IDENTITY_SEED_ENV, canonical_json, normalize_label
 from . import open as open_journal
 
 PROFILE = "mcp.tools/call v1"
@@ -179,8 +179,9 @@ class Proxy:
         self.directory = directory
         self.submit_every = submit_every
         # The organisation that operates the wrapped server's log: its own
-        # witnesses never count as independent of it.
-        self.subject_org = " ".join(subject_org.split()) if subject_org and subject_org.strip() else None
+        # witnesses never count as independent of it. Passed to the verifier
+        # as given; blank (by the verifier's own rule) means not set.
+        self.subject_org = subject_org if subject_org and normalize_label(subject_org) else None
         self.log = open_journal(journal, store_payloads=False)
         self._in = stdin if stdin is not None else sys.stdin.buffer
         self._out = stdout if stdout is not None else sys.stdout.buffer

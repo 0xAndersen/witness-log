@@ -62,6 +62,7 @@ __all__ = [
     "witness_entry_independent",
     "witness_entry_project_operated",
     "payload_hash",
+    "normalize_label",
     "WitnessLogError",
     "SignatureError",
     "ContinuityError",

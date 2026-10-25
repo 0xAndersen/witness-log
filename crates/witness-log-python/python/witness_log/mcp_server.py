@@ -176,15 +176,19 @@ _subject: Dict[str, Any] = {"loaded": False, "org": None}
 
 
 def set_subject_org(org: Optional[str]) -> None:
-    """The operator's own organisation (None or blank: not set)."""
-    org = " ".join(org.split()) if isinstance(org, str) else None
-    _subject.update(loaded=True, org=org or None)
+    """The operator's own organisation (None or blank: not set). Kept as
+    given: the verifier normalises it, and any cleaning here could differ
+    from the verifier's (Python splits on characters Rust does not)."""
+    org = org if isinstance(org, str) and _label(org) else None
+    _subject.update(loaded=True, org=org)
 
 
 def _label(org: str) -> str:
-    # The verifier compares operator labels trimmed, with runs of
-    # whitespace collapsed and case-folded.
-    return " ".join(org.split()).casefold()
+    # Exactly how the verifier compares operator labels
+    # (witness_log_network::normalize_label): Unicode White_Space runs
+    # collapsed, Unicode lowercased. Not str.split()/casefold(), which
+    # differ from it (U+001C..U+001F, "ß").
+    return wl.normalize_label(org)
 
 
 def _subject_org(given: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
@@ -200,7 +204,7 @@ def _subject_org(given: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
     configured = _subject["org"]
     if given is not None and not isinstance(given, str):
         raise ValueError("subject_org must be a string")
-    given = " ".join(given.split()) if given else None
+    given = given if given and _label(given) else None
     if configured is not None:
         if given is not None and _label(given) != _label(configured):
             raise ValueError(

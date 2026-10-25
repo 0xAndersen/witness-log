@@ -95,6 +95,27 @@ function updateVerifyButton() {
   if (state.engine && state.dossier) setStatus("Ready. Click Verify.");
 }
 
+// The verifier's `normalize_label`, exactly (clients/typescript/src/verify.ts
+// has the same port): Unicode White_Space runs, then Unicode lowercasing.
+// Not `trim()` or `\s`, which also take U+FEFF: a label written with one
+// must reach the verifier as written (corpus 15, F12).
+const WHITE_SPACE_RUN = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/;
+function normalizeLabel(s) {
+  return s.split(WHITE_SPACE_RUN).filter((x) => x !== "").join(" ").toLowerCase();
+}
+
+/** What the quorum line says about `subject_org`: only what is true of this dossier. */
+function subjectNote(r) {
+  const subject = options().subject_org;
+  if (subject === undefined) return "";
+  const own = (r.summary?.receipts ?? []).filter(
+    (w) => w.signature_valid && w.in_trusted_directory && !w.trusted_is_project_operated && normalizeLabel(w.trusted_operator_org ?? "") === normalizeLabel(subject),
+  ).length;
+  return own > 0
+    ? `; ${own} receipt(s) from witnesses of ${subject}, which operates this log, not counted as independent`
+    : `; no receipt is from a witness your directory lists under ${subject} (the operator you named)`;
+}
+
 function options() {
   const o = {};
   const id = $("identity").value.trim();
@@ -105,8 +126,9 @@ function options() {
   if (min !== "") o.min_receipts = parseInt(min, 10);
   // The log's operator (`witness-log verify --subject-org`): its own
   // witnesses still count as receipts but never as independent operators.
-  const subject = $("subject-org").value.trim().replace(/\s+/g, " ");
-  if (subject) o.subject_org = subject;
+  // Passed as typed; the verifier normalises it.
+  const subject = $("subject-org").value;
+  if (normalizeLabel(subject)) o.subject_org = subject;
   const heads = $("known-heads").value.split(/[\s,]+/).filter((h) => h !== "");
   if (heads.length) o.known_heads = heads;
   if ($("allow-sub-majority").checked) o.allow_sub_majority = true;
@@ -158,7 +180,7 @@ function render(r) {
     rep.externally_anchored
       ? rep.quorum
         ? ["witness quorum", rep.quorum.meets_count_threshold && rep.quorum.distinct_independent_operators >= 2,
-          `${rep.quorum.valid_receipts} valid receipt(s) from ${rep.quorum.total_directory_witnesses} trusted witness(es); gate ${rep.quorum.count_gate}; ${rep.quorum.distinct_independent_operators} independent operator(s) (need 2): ${rep.quorum.independent_operators_represented.join(", ") || "none"}; project-operated receipts ${rep.quorum.project_operated_receipts}; split-view resistant: ${rep.quorum.split_view_resistant ? "yes" : "no"}${options().subject_org ? `; witnesses of ${options().subject_org}, which operates this log, not counted as independent` : ""}.`]
+          `${rep.quorum.valid_receipts} valid receipt(s) from ${rep.quorum.total_directory_witnesses} trusted witness(es); gate ${rep.quorum.count_gate}; ${rep.quorum.distinct_independent_operators} independent operator(s) (need 2): ${rep.quorum.independent_operators_represented.join(", ") || "none"}; project-operated receipts ${rep.quorum.project_operated_receipts}; split-view resistant: ${rep.quorum.split_view_resistant ? "yes" : "no"}${subjectNote(r)}.`]
         : ["witness quorum", false, "the dossier carries no receipts to score against your directory."]
       : ["witness quorum", null, "not scored: no trusted directory supplied."],
   ];

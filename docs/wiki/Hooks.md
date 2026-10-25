@@ -96,7 +96,10 @@ witness-log-hookd --journal agent.jsonl --socket /run/user/1000/wl.sock \
   `{"op": "shutdown"}`. `witness_log.hook.request(socket, req)` is a
   client for scripts.
 - Witnessing: with `--directory`, every `--submit-every` appends and on
-  shutdown.
+  shutdown. `--subject-org ORG` (default `$WITNESS_LOG_SUBJECT_ORG`) names
+  the organisation that operates the journal, so its own witnesses never
+  count as independent in the verdict (as `witness-log verify
+  --subject-org`).
 
 ## Cursor and Codex
 

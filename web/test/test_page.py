@@ -103,6 +103,19 @@ def run_engine(browser, base, engine, failures):
         checks = page.text_content("#checks") or ""
         if "1 independent operator(s)" not in checks or "which operates this log, not counted as independent" not in checks:
             failures.append(f"{engine} subject org: the quorum line does not say what was excluded: {checks[:400]!r}")
+        # A label the verifier reads differently from JavaScript's trim():
+        # U+FEFF is not whitespace to it (corpus 15, F12), so this names no
+        # operator in the directory and excludes nothing; the page must
+        # pass it as typed and say so.
+        page.fill("#subject-org", "\ufeffgolden org one")
+        page.click("#verify")
+        try:
+            wait_for(page, f"document.getElementById('verdict-word').textContent === {json.dumps(want)}", timeout=10000)
+        except Exception:
+            failures.append(f"{engine} U+FEFF subject: got {page.text_content('#verdict-word')!r}, want {want}")
+        checks = page.text_content("#checks") or ""
+        if "no receipt is from a witness your directory lists under" not in checks:
+            failures.append(f"{engine} U+FEFF subject: the quorum line claims an exclusion: {checks[:400]!r}")
         page.fill("#subject-org", "")
         page.click("#verify")
         wait_for(page, f"document.getElementById('verdict-word').textContent === {json.dumps(want)}", timeout=10000)

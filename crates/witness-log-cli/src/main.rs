@@ -1207,7 +1207,7 @@ fn run_verify(opts: &Options) -> ExitCode {
         return ExitCode::from(verify_exit_code(&report, opts));
     }
 
-    render_text(&dossier, &report, opts);
+    render_text(&dossier, &report, opts, trusted_directory.as_ref());
 
     println!();
     // The five-valued verdict is THE result — see Verdict's doc comment.
@@ -1348,7 +1348,12 @@ fn unwitnessed_reason(report: &DossierReport) -> String {
     }
 }
 
-fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
+fn render_text(
+    dossier: &Dossier,
+    report: &DossierReport,
+    opts: &Options,
+    trusted_directory: Option<&WitnessDirectory>,
+) {
     println!("WitnessLog dossier verification");
     println!("  identity: {}", short(&dossier.identity_pubkey));
     println!("  claimed tree size: {}", report.claimed_tree_size);
@@ -1503,9 +1508,27 @@ fn render_text(dossier: &Dossier, report: &DossierReport, opts: &Options) {
                 );
             }
             if let Some(org) = &opts.subject_org {
-                println!(
-                    "    Witnesses operated by {org:?} (this log's own operator, per --subject-org) are not counted as independent."
-                );
+                // Say what is true of this directory: a misspelt label
+                // excludes nothing (audit of the subject_org surfaces).
+                let subject = witness_log_network::normalize_label(org);
+                let listed = trusted_directory.map_or(0, |d| {
+                    d.witnesses
+                        .iter()
+                        .filter(|w| {
+                            !w.is_project_operated
+                                && witness_log_network::normalize_label(&w.operator_org) == subject
+                        })
+                        .count()
+                });
+                if listed > 0 {
+                    println!(
+                        "    Witnesses operated by {org:?} (this log's own operator, per --subject-org) are not counted as independent ({listed} in your directory)."
+                    );
+                } else {
+                    println!(
+                        "    No witness in your directory is operated by {org:?} (--subject-org), so it excluded nothing. Check the spelling against the directory's operator_org labels."
+                    );
+                }
             } else if result.distinct_independent_operators > 0 {
                 println!(
                     "    Tip: pass --subject-org <who operates this log> so that operator's own witnesses are never counted as independent of it."

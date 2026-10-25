@@ -51,7 +51,7 @@ import tempfile
 import threading
 from typing import Any, Dict, List, Optional
 
-from . import canonical_json
+from . import canonical_json, normalize_label
 from . import open as open_journal
 
 MAX_REQUEST_BYTES = 4_000_000
@@ -111,6 +111,7 @@ class Hookd:
         *,
         directory: Optional[str] = None,
         submit_every: int = 0,
+        subject_org: Optional[str] = None,
     ) -> None:
         if not hasattr(socket, "AF_UNIX"):
             raise OSError("witness-log-hookd needs Unix domain sockets")
@@ -118,6 +119,9 @@ class Hookd:
         self.socket_path = socket_path or default_socket_path()
         self.directory = directory
         self.submit_every = submit_every
+        # The organisation that operates this journal: its own witnesses
+        # never count as independent of it (as `verify --subject-org`).
+        self.subject_org = subject_org if subject_org and normalize_label(subject_org) else None
         self.log = open_journal(journal)
         self._lock = threading.RLock()
         self._since_submit = 0
@@ -200,7 +204,7 @@ class Hookd:
         with self._lock:
             self._since_submit = 0
         try:
-            out = self.log.submit(self.directory)
+            out = self.log.submit(self.directory, subject_org=self.subject_org)
             self.last_verdict = out.get("verdict")
             return out
         except Exception as e:  # noqa: BLE001 -- witnessing must not take the daemon down
@@ -327,11 +331,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--socket", help=f"Unix socket path (default {default_socket_path()})")
     ap.add_argument("--directory", help="witness directory JSON file you trust; enables witnessing")
     ap.add_argument("--submit-every", type=int, default=0, help="submit to witnesses every N appends")
+    ap.add_argument(
+        "--subject-org",
+        default=os.environ.get("WITNESS_LOG_SUBJECT_ORG"),
+        help="the organisation that operates this journal; its own witnesses never count as independent operators "
+        "(default: $WITNESS_LOG_SUBJECT_ORG)",
+    )
     a = ap.parse_args(argv)
     if a.submit_every and not a.directory:
         ap.error("--submit-every needs --directory")
     try:
-        d = Hookd(a.journal, a.socket, directory=a.directory, submit_every=a.submit_every)
+        d = Hookd(a.journal, a.socket, directory=a.directory, submit_every=a.submit_every, subject_org=a.subject_org)
         d.bind()
     except (OSError, ValueError) as e:
         sys.stderr.write(f"witness-log-hookd: {e}\n")

@@ -657,6 +657,16 @@ fn payload_hash(payload: &[u8], salt: &[u8], index: u64) -> PyResult<String> {
     ))
 }
 
+/// An operator label as the verifier compares it (`operator_org`,
+/// `subject_org`, `compute_provider`): split on Unicode White_Space runs,
+/// joined with one space, Unicode lowercased. Two labels name the same
+/// operator exactly when this returns the same string; a label is blank
+/// when it returns "".
+#[pyfunction]
+fn normalize_label(label: &str) -> String {
+    witness_log_network::normalize_label(label)
+}
+
 /// Verify an inclusion proof offline. All hashes hex. False on any
 /// malformed input rather than raising, so a verifier loop never stops
 /// on a hostile dossier.
@@ -2177,6 +2187,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWitnessService>()?;
     m.add_function(pyo3::wrap_pyfunction!(verify_dossier_json, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_inclusion, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(normalize_label, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(payload_hash, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(verify_handoff_binding, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(handoff_binding_error, m)?)?;

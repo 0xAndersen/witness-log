@@ -260,7 +260,13 @@ fn normalize_hex(s: &str) -> String {
 /// commitment this crate hasn't taken on. Directory curators should
 /// treat visually-identical operator names from different parties as a
 /// review item — see GOVERNANCE.md on who curates directories.
-fn normalize_label(s: &str) -> String {
+/// Public so that every surface that compares or cleans an operator label
+/// (the MCP server, the proxy, the CLI's notes) uses this exact rule rather
+/// than its own language's idea of whitespace and case: Python's
+/// `str.split` also splits on U+001C..U+001F and JavaScript's `\s` also
+/// matches U+FEFF, and either difference let an operator's own witnesses
+/// count as independent again (audit of the subject_org surfaces, 0.6.2).
+pub fn normalize_label(s: &str) -> String {
     s.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

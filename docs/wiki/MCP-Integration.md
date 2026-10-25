@@ -91,13 +91,23 @@ witness-log-mcp --subject-org "Example Org"     # or WITNESS_LOG_SUBJECT_ORG="Ex
 ```
 
 Its witnesses then still cosign, but never count among the two independent
-operators WITNESSED needs (the same rule as `witness-log verify
---subject-org`; labels compare trimmed and case-folded). It can only lower a
+operators WITNESSED needs. This is the rule `witness-log verify
+--subject-org` applies: the value goes to the verifier as given, and labels
+compare as the verifier compares them (`witness_log.normalize_label`:
+Unicode whitespace runs collapsed, Unicode lowercase). It can only lower a
 verdict. A tool call may pass `subject_org` itself when none is configured;
 when one is, a call naming a different organisation is refused, since that
 would let the operator's own witnesses count again. Results carry
 `subject_org` and `subject_org_source` (`"operator"`, `"caller"` or `null`)
 on `verify_chain_integrity` and `submit_to_witnesses`.
+
+This protects the verdict only with a directory the operator pinned
+(`WITNESS_LOG_TRUSTED_DIRECTORY` or `--trusted-directory`). When a tool call
+may supply the directory itself, it can also relabel the operator's own
+witness as another organisation, and no subject setting stops that: pin the
+directory too (results then say `directory_source: "pinned"`).
+`witness-log-hookd` takes the same `--subject-org` (default
+`$WITNESS_LOG_SUBJECT_ORG`) for its `submit` op and periodic witnessing.
 
 ## Claude Code
 
