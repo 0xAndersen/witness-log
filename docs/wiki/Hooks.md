@@ -17,10 +17,36 @@ witness-log-hook install claude-code --journal ~/.witness-log/claude-code.jsonl
 prints (and does not write) the entries for `.claude/settings.json`, with
 the journal path your shell expanded:
 
-```json
-{"hooks": {
-  "PreToolUse":  [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"}]}],
-  "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"}]}]}}
+```
+# Claude Code: merge into .claude/settings.json (project) or ~/.claude/settings.json (user).
+# Every tool call becomes an intent leaf (PreToolUse) and a result leaf (PostToolUse).
+# Add --strict to the command to block tool calls when the trail cannot be written.
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "witness-log-hook --autostart --journal /home/you/.witness-log/claude-code.jsonl"
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 `--autostart` starts the daemon on the first call if none is listening.

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
@@ -318,6 +319,22 @@ def test_install_prints_snippets_without_writing(tmp_path, monkeypatch):
     assert cfg["hooks"]["PreToolUse"][0]["hooks"][0]["type"] == "command"
     with pytest.raises(SystemExit):
         hook.main(["install", "emacs"], stdout=io.StringIO())
+
+
+def test_install_expands_the_home_directory(tmp_path, monkeypatch):
+    """Without --journal the default ~/.witness-log/hooks.jsonl was printed
+    shell-quoted ('~/...'), so no shell expanded the ~ and the journal
+    landed in ./~/.witness-log/ of the host's working directory."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for argv in (["install", "claude-code"], ["install", "codex", "--journal", "~/j.jsonl", "--socket", "~/s.sock"]):
+        out = io.StringIO()
+        assert hook.main(argv, stdout=out) == 0
+        assert "~" not in out.getvalue().replace("~/.claude", "").replace("~/.cursor", "")
+    out = io.StringIO()
+    hook.main(["install", "claude-code"], stdout=out)
+    body = "\n".join(line for line in out.getvalue().splitlines() if not line.startswith("#"))
+    command = json.loads(body)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert shlex.split(command)[-1] == str(tmp_path / "home" / ".witness-log" / "hooks.jsonl")
 
 
 def test_cli_errors():

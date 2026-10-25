@@ -210,7 +210,7 @@ console.log(r.ok, r.cosignatures, r.outcomes);              // per witness: 200,
 if (r.ok) writeFileSync("dossier.json", JSON.stringify(r.dossier));
 
 const v = verifyDossier(r.dossier!, { directory: "trusted.json", identity: log.identityPubkey, minWitnesses: 2 });
-console.log(v.verdict, v.report.quorum?.independent_operators_represented);   // WITNESSED [ 'org one', 'org two' ]
+console.log(v.verdict, v.report.quorum?.independent_operators_represented);   // WITNESSED [ 'testnet-a', 'testnet-b', 'testnet-c' ] (by hand: 'org one', 'org two')
 ```
 
 `submit` is the same procedure as `witness-log witness submit` and the

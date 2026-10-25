@@ -271,7 +271,7 @@ USAGE:
       unexpected verdict can ask why without a human in the loop.
 
   witness-log c2sp show <dossier.json> --origin <name> [--raw] [--sign-with <journal>]
-  witness-log c2sp export <dossier.json> [--directory trusted.json] --out note.txt
+  witness-log c2sp export <dossier.json> [--directory trusted.json] [--sign-with <journal>] --out note.txt
   witness-log c2sp verify <note.txt> --vkey <vkey> [--vkey <vkey>...]
       Transparency-log interoperability (c2sp.org). `show` renders a
       dossier's checkpoint as a C2SP checkpoint body — the artifact an
@@ -279,6 +279,8 @@ USAGE:
       note with the dossier's cosignatures attached, for any C2SP tool.
       `verify` checks a signed note and any cosignatures against verifier
       keys you supply; exit 40 when a supplied key does not verify.
+      --sign-with  (show, export) also sign with the identity key in this journal;
+                   --identity-seed-env NAME | --identity-seed-file F if it is sealed
       See SPEC.md §9.3.
 
   witness-log witness init <dir> --name <key-name> [--org <operator>] [--url <url>]
@@ -297,11 +299,11 @@ USAGE:
       checks an equivocation proof a witness recorded (exit 0 proven,
       40 not).
 
-  witness-log conform <candidate-corpus-dir>
+  witness-log conform <candidate-corpus-dir> [--reference <corpus-dir>]
       Compare another implementation's generated conformance vectors
-      against this implementation's committed /corpus. This is how a
-      from-scratch reimplementation proves wire-format agreement — see
-      CONTRIBUTING.md.
+      against this implementation's committed /corpus (or --reference,
+      default ./corpus). This is how a from-scratch reimplementation
+      proves wire-format agreement — see CONTRIBUTING.md.
 
   witness-log --help | -h | help
       This text.
@@ -358,6 +360,22 @@ fn help_for(cmd: &str) -> String {
         .collect()
 }
 
+/// Whether `args`, the arguments after a command or subcommand, ask for
+/// its help: `--help` or `-h` and nothing else. Anywhere else they are
+/// ordinary arguments, so `verify d.json --identity --help` is a usage
+/// error and `diff -h b.json` a file that cannot be read, never a help page
+/// that exits 0 where 0 means "verified". (Until 0.6.1 most commands
+/// answered `--help` anywhere on the line.)
+pub(crate) fn asks_help(args: &[String]) -> bool {
+    matches!(args, [a] if a == "--help" || a == "-h")
+}
+
+/// The same for a command with subcommands (`log`, `witness`, ...), given
+/// the word after it and the rest: `log --help`, `log help`, `log init -h`.
+pub(crate) fn asks_sub_help(sub: Option<&str>, rest: &[String]) -> bool {
+    (matches!(sub, Some("--help" | "-h" | "help")) && rest.is_empty()) || asks_help(rest)
+}
+
 fn main() -> ExitCode {
     // Rust ignores SIGPIPE at startup, which turns a closed pipe (`| head`)
     // into a panic with a backtrace on the next print. A CLI should just
@@ -372,7 +390,12 @@ fn main() -> ExitCode {
     if let Some(cmd @ ("demo" | "diff" | "bind" | "explain" | "c2sp" | "conform")) =
         args.get(1).map(String::as_str)
     {
-        if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+        let c2sp_sub = cmd == "c2sp"
+            && matches!(
+                args.get(2).map(String::as_str),
+                Some("show" | "export" | "verify")
+            );
+        if asks_help(&args[2..]) || (c2sp_sub && asks_help(&args[3..])) {
             print!("{}", help_for(cmd));
             return ExitCode::SUCCESS;
         }
@@ -399,7 +422,7 @@ fn main() -> ExitCode {
             }
         }
         Some("verify") => {
-            if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+            if asks_help(&args[2..]) {
                 println!("{VERIFY_USAGE}");
                 return ExitCode::SUCCESS;
             }

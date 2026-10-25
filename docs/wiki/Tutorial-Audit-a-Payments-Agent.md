@@ -151,13 +151,14 @@ nothing else was touched. ([Redaction explained](Redaction-Explained))
 
 Start two witnesses, standing in for two organisations, in a second terminal:
 
-<!-- doctest: group=tutorial -->
+<!-- doctest: group=tutorial timeout=30 -->
 ```sh
 witness-log witness init ./wA --name local/a --org "Org A" --url http://127.0.0.1:7381
 witness-log witness init ./wB --name local/b --org "Org B" --url http://127.0.0.1:7382
 witness-log witness serve ./wA --listen 127.0.0.1:7381 --open-enrollment &
 witness-log witness serve ./wB --listen 127.0.0.1:7382 --open-enrollment &
-sleep 1                                                  # give them a moment to start listening
+until witness-log witness info http://127.0.0.1:7381 >/dev/null 2>&1 &&
+      witness-log witness info http://127.0.0.1:7382 >/dev/null 2>&1; do sleep 0.2; done   # until both answer
 ```
 
 Build the directory **you** trust from their entries, then submit:
@@ -188,11 +189,11 @@ In production, the two organisations are real and not yours:
 Copy `dossier.json` and `trusted.json` to a laptop with no network and the
 `witness-log` binary. Compliance also has, from your configuration
 management (not from the dossier), the agent's identity key: the
-`agent identity:` that step 1 printed, which `log info` also shows.
+`agent identity:` that step 1 printed. On the laptop, put it in a variable
+(`AGENT_ID=` followed by those 64 hex characters) and verify:
 
-<!-- doctest: group=tutorial -->
+<!-- doctest: group=tutorial before="AGENT_ID=$(witness-log log info payments.jsonl | jq -r .identity)" -->
 ```sh
-AGENT_ID=$(witness-log log info payments.jsonl | jq -r .identity)    # compliance: from configuration management
 witness-log verify dossier.json --identity "$AGENT_ID" --directory trusted.json --min-witnesses 2
 echo "exit $?"
 ```
@@ -255,7 +256,7 @@ by deleting `payments.jsonl.witnesses.json` and the witness answers `422`
 and writes `wA/evidence/<hash>.json`: two checkpoints signed by *your* key
 for one size with two roots. Anyone can check it:
 
-<!-- doctest: group=tutorial before="sed '$d' payments.jsonl > backup.jsonl && cat backup.jsonl > payments.jsonl && witness-log log append payments.jsonl --result forged && ! witness-log submit payments.jsonl --directory trusted.json --out forged.json && rm payments.jsonl.witnesses.json && ! witness-log submit payments.jsonl --directory trusted.json --out forged.json" -->
+<!-- doctest: group=tutorial before="sed '$d' payments.jsonl > backup.jsonl; cat backup.jsonl > payments.jsonl; witness-log log append payments.jsonl --result forged; rc=0; witness-log submit payments.jsonl --directory trusted.json --out forged.json 2> guard.txt || rc=$?; cat guard.txt; test $rc = 1; grep -q 'REFUSING TO SUBMIT' guard.txt; rm payments.jsonl.witnesses.json; rc=0; witness-log submit payments.jsonl --directory trusted.json --out forged.json || rc=$?; test $rc = 20" -->
 ```sh
 witness-log witness verify-evidence wA/evidence/*.json   # exit 0: equivocation proven
 ```

@@ -186,9 +186,12 @@ def ensure_daemon(socket_path: str, journal: str, *, directory: Optional[str] = 
 
 
 def _snippet(host: str, journal: str, socket_path: Optional[str]) -> str:
-    cmd = f"witness-log-hook --autostart --journal {shlex.quote(journal)}"
+    # Expand ~ before quoting: a quoted '~' reaches the hook literally, and
+    # through 0.6.1 the default journal landed in ./~/.witness-log/ of
+    # whatever directory the host ran the hook from.
+    cmd = f"witness-log-hook --autostart --journal {shlex.quote(os.path.expanduser(journal))}"
     if socket_path:
-        cmd += f" --socket {shlex.quote(socket_path)}"
+        cmd += f" --socket {shlex.quote(os.path.expanduser(socket_path))}"
     if host == "claude-code":
         settings = {
             "hooks": {

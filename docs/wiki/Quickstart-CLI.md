@@ -158,13 +158,16 @@ it, or accept the split-view risk explicitly with `--allow-sub-majority`.
 
 ## 3. Get a journal witnessed
 
-<!-- doctest: group=submit before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello" after="witness-log testnet down" -->
+<!-- doctest: group=submit before="witness-log testnet up --out trusted.json && witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello && AGENT_KEY=$(witness-log log info agent.jsonl | jq -r .identity)" after="witness-log testnet down" -->
 ```sh
 witness-log submit agent.jsonl --directory trusted.json --out dossier.json
-witness-log verify dossier.json --identity $(jq -r .identity_pubkey dossier.json) --directory trusted.json
+witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json
 ```
 
-(`submit` and `witness submit` are the same command.)
+(`submit` and `witness submit` are the same command.) `$AGENT_KEY` is the
+identity `log init` printed, kept where the log's operator cannot change it,
+as in the gate above; the dossier's own `identity_pubkey` would only show
+that the file agrees with itself.
 
 **What `submit` does, step by step.**
 
@@ -188,16 +191,17 @@ Where `trusted.json` comes from: [Getting witnessed](Getting-Witnessed) and
 under two organisation names and list their entries (`witness init`
 prints the entry as JSON on stdout; the prose goes to stderr):
 
-<!-- doctest: group=manual before="witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello" -->
+<!-- doctest: group=manual timeout=30 before="witness-log log init agent.jsonl && witness-log log append agent.jsonl --memory hello && AGENT_KEY=$(witness-log log info agent.jsonl | jq -r .identity)" -->
 ```sh
 witness-log witness init w1 --name w1.local/w --org "Org One" --url http://127.0.0.1:7381 > w1.json
 witness-log witness init w2 --name w2.local/w --org "Org Two" --url http://127.0.0.1:7382 > w2.json
 witness-log witness serve w1 --listen 127.0.0.1:7381 --open-enrollment &
 witness-log witness serve w2 --listen 127.0.0.1:7382 --open-enrollment &
-sleep 1                                                  # give them a moment to start listening
+until witness-log witness info http://127.0.0.1:7381 >/dev/null 2>&1 &&
+      witness-log witness info http://127.0.0.1:7382 >/dev/null 2>&1; do sleep 0.2; done   # until both answer
 jq -s '{witnesses: .}' w1.json w2.json > trusted.json     # or a bare array: jq -s . w1.json w2.json
 witness-log witness submit agent.jsonl --directory trusted.json --out dossier.json
-witness-log verify dossier.json --identity "$(jq -r .identity_pubkey dossier.json)" --directory trusted.json   # exit 0
+witness-log verify dossier.json --identity "$AGENT_KEY" --directory trusted.json   # exit 0
 ```
 
 Both witnesses are yours, so this proves the mechanics, not independence:

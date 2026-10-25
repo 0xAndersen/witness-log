@@ -59,7 +59,13 @@ python: cli
 	cd crates/witness-log-python && maturin develop --release --quiet && python -m pytest tests -q
 
 docs: cli
-	@if ! python3 -c "import witness_log" 2>/dev/null; then echo "skip docs: witness_log not importable (make python first, in a venv)"; exit 0; fi; \
+	@want=$$(sed -n 's/^version = "\(.*\)"$$/\1/p' crates/witness-log-python/Cargo.toml | head -1); \
+	have=$$(python3 -c "import witness_log; print(witness_log.__version__)" 2>/dev/null) \
+	  || { echo "skip docs: witness_log not importable (make python first, in a venv)"; exit 0; }; \
+	if [ "$$have" != "$$want" ]; then \
+	  echo "docs: python3 imports witness_log $$have ($$(python3 -c 'import witness_log; print(witness_log.__file__)')), this checkout is $$want: make python first, in a venv"; \
+	  exit 1; \
+	fi; \
 	python3 -m pytest -q docs/tests && WITNESS_LOG_CLI=$(CLI) python3 docs/doctest.py
 
 pilot: cli

@@ -262,35 +262,86 @@ fn diff_rejects_extra_paths_and_stray_flags() {
 
 /// The CLI quickstart says "Every subcommand has `--help`". Through 0.6.1
 /// `demo`, `diff`, `bind`, `c2sp` and `conform` answered it with
-/// "unrecognized flag" and exit 2.
+/// "unrecognized flag" and exit 2. Every command and subcommand the main
+/// help lists answers `--help` and `-h` with usage that names it.
 #[test]
 fn every_subcommand_in_help_answers_help() {
     let (_, help, _) = run(&["--help"]);
-    let mut cmds: Vec<&str> = help
-        .lines()
-        .filter_map(|l| l.strip_prefix("  witness-log "))
-        .filter_map(|rest| rest.split_whitespace().next())
-        .filter(|c| !c.starts_with('-'))
-        .collect();
+    let mut cmds: Vec<Vec<&str>> = Vec::new();
+    for line in help.lines() {
+        let Some(rest) = line.strip_prefix("  witness-log ") else {
+            continue;
+        };
+        let words: Vec<&str> = rest.split_whitespace().take(2).collect();
+        if words[0].starts_with('-') {
+            continue;
+        }
+        cmds.push(vec![words[0]]);
+        if let Some(sub) = words
+            .get(1)
+            .filter(|w| w.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+        {
+            cmds.push(vec![words[0], sub]);
+        }
+    }
     cmds.dedup();
-    assert!(cmds.len() >= 15, "{cmds:?}");
-    for cmd in cmds {
-        let (code, stdout, stderr) = run(&[cmd, "--help"]);
-        assert_eq!(
+    assert!(cmds.len() >= 30, "{cmds:?}");
+    for cmd in &cmds {
+        for flag in ["--help", "-h"] {
+            let mut args = cmd.clone();
+            args.push(flag);
+            let (code, stdout, stderr) = run(&args);
+            let name = cmd.last().unwrap();
+            assert_eq!(code, 0, "`{args:?}`\nstdout: {stdout}\nstderr: {stderr}");
+            assert!(
+                stdout.contains("witness-log ") && stdout.contains(&format!(" {name} ")),
+                "`{args:?}` must show its usage: {stdout}"
+            );
+        }
+    }
+    let (_, stdout, _) = run(&["conform", "--help"]);
+    assert!(stdout.contains("--reference"), "{stdout}");
+    let (_, stdout, _) = run(&["c2sp", "export", "--help"]);
+    for flag in ["--sign-with", "--identity-seed-env", "--identity-seed-file"] {
+        assert!(stdout.contains(flag), "{flag}: {stdout}");
+    }
+}
+
+/// `--help` or `-h` is a help request only on its own after the command.
+/// Anywhere else it is an ordinary argument: through 0.6.1 most commands
+/// answered it anywhere, so `verify d.json --identity --help` exited 0, the
+/// code a gate reads as "verified".
+#[test]
+fn help_anywhere_else_is_an_argument_not_a_success() {
+    for args in [
+        &["verify", "d.json", "--identity", "--help"][..],
+        &["verify", "d.json", "-h"],
+        &["verify", "--help", "d.json"],
+        &["c2sp", "verify", "note.txt", "--vkey", "-h"],
+        &["c2sp", "show", "d.json", "--origin", "--help"],
+        &["diff", "-h", "b.json"],
+        &["bind", "a.json", "--help"],
+        &["demo", "--tamper", "--help"],
+        &["conform", "dir", "--help"],
+        &["witness", "verify-evidence", "x.json", "-h"],
+        &["witness", "--help", "info"],
+        &["submit", "j.jsonl", "--directory", "--help"],
+        &["log", "info", "j.jsonl", "--help"],
+        &["doctor", "--offline", "--help"],
+        &["directory", "build", "--out", "--help"],
+        &["journal", "serve", "j.jsonl", "-h"],
+        &["fleet", "init", "x", "--help"],
+    ] {
+        let (code, stdout, stderr) = run(args);
+        assert_ne!(
             code, 0,
-            "`{cmd} --help`\nstdout: {stdout}\nstderr: {stderr}"
+            "`{args:?}` must not succeed\nstdout: {stdout}\nstderr: {stderr}"
         );
         assert!(
-            stdout.contains("witness-log ") && stdout.contains(&format!(" {cmd} ")),
-            "`{cmd} --help` must show its usage: {stdout}"
+            !stdout.contains("usage"),
+            "`{args:?}` printed help: {stdout}"
         );
     }
-    let (code, stdout, _) = run(&["c2sp", "show", "-h"]);
-    assert_eq!(code, 0);
-    assert!(
-        stdout.contains("witness-log c2sp show <dossier.json>"),
-        "{stdout}"
-    );
 }
 
 #[test]

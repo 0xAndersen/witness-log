@@ -171,7 +171,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
 }
 
 pub fn run(args: &[String]) -> ExitCode {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if crate::asks_help(args) {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }

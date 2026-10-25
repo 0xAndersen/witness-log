@@ -21,21 +21,28 @@ Options, space-separated inside the comment after "doctest:":
     timeout=S     seconds before the block is killed (default 120)
     file=NAME     do not run the block: write it to NAME in the group's
                   directory, for a script the prose tells the reader to
-                  save (a later block runs it). Any fence language.
+                  save (a later block runs it). Any fence language; NAME is
+                  relative and stays inside that directory.
 
 `sh`/`bash`/`shell` blocks run with `bash -eo pipefail`. Shell variables a
 block (or a before=/after= command) sets are set in the later shell blocks
-of its group, as in one terminal; changes to inherited variables such as
-PATH are not carried, nor is `cd`. The `python` blocks of a group run in
-one interpreter (this one), in order, sharing variables as if pasted into
-one session. Each group runs in a fresh temporary directory with the
-witness-log CLI first on PATH and, when this interpreter is a virtual
-environment's, that environment's commands next, so `python`, `pip` and
-the package's own commands in a shell block are the ones the python
-blocks use (`pip install witness-log` then finds the build under test
-installed and changes nothing). Every process a group starts (a witness
-put in the background with `&`, say) is killed when the group ends. Exit
-0 when every marked block behaved, 1 otherwise.
+of its group, as in one terminal, also when the block sets its own `trap
+... EXIT`; changes to inherited variables such as PATH are not carried, nor
+is `cd`. The `python` blocks of a group run in one interpreter (this one),
+in order, sharing variables as if pasted into one session.
+
+Each group runs in a fresh temporary directory with the witness-log CLI
+first on PATH and, when this interpreter is a virtual environment's, that
+environment's commands next, so `python`, `pip` and the package's own
+commands in a shell block are the ones the python blocks use (`pip install
+witness-log` then finds the build under test installed and changes
+nothing). A loopback port a page names (`127.0.0.1:7381`, `localhost:7381`)
+is replaced by a free one, the same port by the same free port throughout
+the group, before= and after= included: a witness the reader may already
+run on 7381 is never enrolled into, or sent a tutorial's equivocation.
+Every process a group starts (a witness put in the background with `&`,
+say) is stopped when the group ends: SIGTERM, then SIGKILL after a few
+seconds. Exit 0 when every marked block behaved, 1 otherwise.
 
     python3 docs/doctest.py                      # every file listed below
     python3 docs/doctest.py docs/wiki/Quickstart-CLI.md
@@ -51,12 +58,13 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 REPO = Path(__file__).resolve().parents[1]
 FILES = [
@@ -92,6 +100,10 @@ def blocks(path: Path):
         if not f or (f.group("lang") not in LANGS and "file" not in opts):
             raise SystemExit(f"{path}:{i + 1}: a doctest marker must sit right above a ```sh or ```python fence"
                              " (or any fence, with file=)")
+        name = opts.get("file")
+        if name is not None and (not name or PurePosixPath(name).is_absolute() or PureWindowsPath(name).is_absolute()
+                                 or ".." in PurePosixPath(name.replace("\\", "/")).parts):
+            raise SystemExit(f"{path}:{i + 1}: file={name!r} must be a relative path inside the group's directory")
         j = i + 2
         while j < len(lines) and lines[j].strip() != "```":
             j += 1
@@ -117,22 +129,61 @@ def cli_dir() -> str:
 # Put before every shell block: the variables earlier blocks of the group
 # set come back, and on any exit (a failing command included) the ones this
 # block set, everything not inherited from the environment, are written
-# for the next. Names with __dt_ are this prelude's own.
+# for the next. A block's own `trap ... EXIT` runs after the save instead
+# of replacing it, and sees the exit status it would have seen. Names with
+# __dt_ are this prelude's own.
 PRELUDE = r"""set -eo pipefail
 __dt_vars=%(vars)s
 __dt_base=" $(compgen -v | tr '\n' ' ') "
 if [ -f "$__dt_vars" ]; then . "$__dt_vars"; fi
 __dt_save() {
-  local __dt_n
+  local __dt_rc=${1:-$?} __dt_n
   for __dt_n in $(compgen -v); do
     case "$__dt_base" in *" $__dt_n "*) continue ;; esac
     case "$__dt_n" in __dt_*|BASH_*|FUNCNAME|PIPESTATUS|GROUPS|DIRSTACK) continue ;; esac
     declare -p "$__dt_n"
   done > "$__dt_vars.new" 2>/dev/null || true
   mv -f "$__dt_vars.new" "$__dt_vars" 2>/dev/null || true
+  return $__dt_rc
 }
-trap __dt_save EXIT
+trap() {
+  local __dt_h __dt_s
+  if [ "$1" = -- ]; then shift; fi
+  case "$1" in -l|-p|"") builtin trap "$@"; return ;; esac
+  if [ $# -lt 2 ]; then set -- - "$1"; fi
+  __dt_h=$1; shift
+  for __dt_s in "$@"; do
+    case "$__dt_s" in
+      EXIT|exit|SIGEXIT|0)
+        case "$__dt_h" in
+          -|'') builtin trap __dt_save EXIT ;;
+          *) builtin trap "__dt_x=\$?; set +e; __dt_save \$__dt_x; $__dt_h" EXIT ;;
+        esac ;;
+      *) builtin trap -- "$__dt_h" "$__dt_s" ;;
+    esac
+  done
+}
+builtin trap __dt_save EXIT
 """
+
+
+# Loopback addresses whose port is replaced by a free one per group.
+LOOPBACK = re.compile(r"(?<![\w.])(127\.0\.0\.1|localhost):(\d{1,5})(?!\d)")
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def remap_ports(text: str, ports: dict) -> str:
+    """`text` with every loopback port replaced by this group's free one."""
+    def sub(m):
+        if m.group(2) not in ports:
+            ports[m.group(2)] = str(free_port())
+        return f"{m.group(1)}:{ports[m.group(2)]}"
+    return LOOPBACK.sub(sub, text)
 
 
 def shell_script(work: str, name: str, code: str) -> list:
@@ -224,19 +275,49 @@ class PySession:
             out.append(line)
 
 
+def stop(sessions: list, grace: float = 3.0) -> None:
+    """SIGTERM every process group a group started, SIGKILL what is still
+    there after `grace` seconds."""
+    def alive(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    left = []
+    for pgid in sessions:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+            left.append(pgid)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + grace
+    while left and time.monotonic() < deadline:
+        time.sleep(0.05)
+        left = [g for g in left if alive(g)]
+    for pgid in left:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def run_group(path: Path, name: str, items, env: dict) -> list[str]:
     failures = []
     work = tempfile.mkdtemp(prefix="wl-doctest-")
     sessions: list[int] = []
+    ports: dict = {}
     py = None
     try:
         for line, lang, code, opts in items:
             where = f"{shown(path)}:{line}"
             want = int(opts.get("exit", "0"))
             timeout = float(opts.get("timeout", "120"))
+            code = remap_ports(code, ports)
             setup_ok = True
             if "before" in opts:
-                argv = shell_script(work, ".before.sh", opts["before"] + "\n")
+                argv = shell_script(work, ".before.sh", remap_ports(opts["before"], ports) + "\n")
                 rc, out = run(argv, work, env, timeout, sessions)
                 if rc != 0:
                     failures.append(f"{where}: hidden setup {opts['before']!r} exited {rc}\n{out[-1500:]}")
@@ -261,7 +342,8 @@ def run_group(path: Path, name: str, items, env: dict) -> list[str]:
                 if rc != want:
                     failures.append(f"{where}: exited {rc}, the docs promise {want}\n--- output (tail) ---\n{out[-2500:]}")
             if "after" in opts:
-                run(shell_script(work, ".after.sh", opts["after"] + "\n"), work, env, timeout, sessions)
+                run(shell_script(work, ".after.sh", remap_ports(opts["after"], ports) + "\n"), work, env, timeout,
+                    sessions)
     finally:
         if py is not None:
             py.p.stdin.close()
@@ -269,12 +351,7 @@ def run_group(path: Path, name: str, items, env: dict) -> list[str]:
                 py.p.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
-        for pgid in sessions:
-            try:
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-        time.sleep(0.2)
+        stop(sessions)
         shutil.rmtree(work, ignore_errors=True)
     return failures
 
