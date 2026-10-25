@@ -21,6 +21,9 @@ its framework lazily, so ``import witness_log`` never needs them.
   ``pip install "witness-log[llamaindex]"``)
 * ``witness_log.integrations.crewai`` -- ``witness_crewai`` (CrewAI global
   tool-call hooks; ``pip install "witness-log[crewai]"``)
+* ``witness_log.integrations.otel`` -- ``WitnessLogSpanProcessor``
+  (any agent traced with the OpenTelemetry GenAI conventions or
+  OpenInference; ``pip install "witness-log[otel]"``)
 * ``witness_log.integrations.claude_agent_sdk`` -- ``witness_hooks`` /
   ``WitnessLogClaudeHooks`` (Claude Agent SDK ``PreToolUse`` /
   ``PostToolUse`` / ``PostToolUseFailure`` hooks;

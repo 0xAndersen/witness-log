@@ -86,6 +86,17 @@ await generateText({
 await provider.forceFlush();
 ```
 
+Other instrumentations sharing the provider are recorded too, when they
+follow the OpenTelemetry GenAI semantic conventions (`gen_ai.*`) or
+OpenInference (Mastra, LangChain.js and the OpenInference instrumentors):
+an `execute_tool` / `TOOL` span becomes an intent and a result leaf, a
+`chat`, `generate_content`, `text_completion`, `invoke_agent` or
+`invoke_workflow` / `LLM`, `AGENT` span one memory leaf (model, provider,
+agent, token usage, outcome; prompts and completions only with
+`recordPrompt` / `recordText`). The payloads have the shape the Python
+`witness_log.integrations.otel.WitnessLogSpanProcessor` writes, and the AI
+SDK's own `ai.*` spans are never recorded twice.
+
 ## Then
 
 `log.exportDossier()` is the verifiable record; `verifyDossier(dossier)`

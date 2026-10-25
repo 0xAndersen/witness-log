@@ -18,6 +18,7 @@ has one.
 | AutoGen AgentChat | `pip install "witness-log[autogen]"` | `witness_log.integrations.autogen.WitnessLogAutoGen` | `HandoffMessage` |
 | LlamaIndex | `pip install "witness-log[llamaindex]"` | `witness_log.integrations.llamaindex.WitnessLogLlamaIndex` / `WitnessLogSpanHandler` | `handoff` tool |
 | CrewAI | `pip install "witness-log[crewai]"` | `witness_log.integrations.crewai.witness_crewai` | – |
+| anything instrumented with OpenTelemetry (GenAI conventions or OpenInference) | `pip install "witness-log[otel]"` | `witness_log.integrations.otel.WitnessLogSpanProcessor` ([below](#opentelemetry)) | – |
 | MCP hosts | `pip install "witness-log[mcp]"` | `witness-log-mcp` ([MCP integration](MCP-Integration)) | – |
 | any stdio MCP server, as run | `pip install witness-log` | `witness-log-mcp-proxy` ([MCP proxy](MCP-Proxy)) | – |
 | Claude Code hooks | `pip install witness-log` | `witness-log-hook` ([Hooks](Hooks)) | – |
@@ -346,6 +347,39 @@ def search(query: str) -> str:
 
 crewai pins `mcp<2`, so install the `crewai` and `mcp` extras in separate
 environments.
+
+## OpenTelemetry
+
+If your agent already emits traces, one span processor is enough, whatever
+the framework: anything that follows the OpenTelemetry GenAI semantic
+conventions (`gen_ai.*`: Google ADK, pydantic-ai and Logfire, Strands,
+OpenLLMetry, the OpenTelemetry GenAI instrumentations) or OpenInference
+(Arize Phoenix's instrumentors for LangChain, LlamaIndex, OpenAI Agents,
+CrewAI and others).
+
+```python
+import witness_log
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from witness_log.integrations.otel import WitnessLogSpanProcessor
+
+provider = TracerProvider()
+provider.add_span_processor(WitnessLogSpanProcessor(witness_log.open("agent.jsonl")))
+trace.set_tracer_provider(provider)   # keep your exporter: the processor runs beside it
+```
+
+Each tool span (`execute_tool`, OpenInference `TOOL`) becomes an intent leaf
+when it starts, before the tool runs, and a result leaf when it ends, with
+the arguments and result the instrumentation records
+(`gen_ai.tool.call.arguments` / `.result`, or `input.value` /
+`output.value`). Each model or agent span (`chat`, `generate_content`,
+`invoke_agent`, ..., OpenInference `LLM` / `AGENT`) becomes one memory leaf
+with the model, provider, agent, conversation id, token usage and outcome.
+Prompts and completions stay out unless `record_content=True`;
+`record_inputs`, `record_outputs` and `record_calls` turn the rest off. Every
+leaf carries the span's `trace_id` and `span_id`, so an entry in the log
+points to the same span in your observability backend. A failing append
+never breaks tracing: it lands in `processor.errors`.
 
 ## A shared helper for anything else
 

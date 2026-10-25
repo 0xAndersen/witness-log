@@ -273,6 +273,8 @@ export interface WitnessTelemetryOptions {
 }
 
 const GENERATION_SPANS = new Set(["ai.generateText", "ai.streamText", "ai.generateObject", "ai.streamObject"]);
+/** `gen_ai.operation.name` values recorded as one call leaf each. */
+const GEN_AI_CALLS = new Set(["chat", "generate_content", "text_completion", "invoke_agent", "invoke_workflow"]);
 
 /**
  * An OpenTelemetry `SpanExporter` that turns the AI SDK's telemetry into
@@ -280,6 +282,13 @@ const GENERATION_SPANS = new Set(["ai.generateText", "ai.streamText", "ai.genera
  * each top-level `ai.generateText`/`ai.streamText`/`ai.generateObject`/
  * `ai.streamObject` span a memory leaf. Wire it with a `SimpleSpanProcessor`
  * and pass the provider's tracer as `experimental_telemetry.tracer`.
+ *
+ * Spans from other instrumentations in the same provider are recorded too
+ * when they follow the OpenTelemetry GenAI conventions or OpenInference:
+ * `execute_tool` / `TOOL` spans as an intent and a result leaf, `chat`,
+ * `generate_content`, `text_completion`, `invoke_agent`, `invoke_workflow`
+ * / `LLM`, `AGENT` spans as one memory leaf (prompts and completions only
+ * with `recordPrompt` / `recordText`).
  */
 export class WitnessLogSpanExporter {
   constructor(
@@ -343,6 +352,59 @@ export class WitnessLogSpanExporter {
       if (this.options.recordText) payload.text = str(a["ai.response.text"]);
       if (this.options.recordPrompt) payload.prompt = parseJson(a["ai.prompt"]);
       this.log.appendMemory(payload);
+      return;
+    }
+    // Spans from any other instrumentation that follows the OpenTelemetry
+    // GenAI conventions (gen_ai.*) or OpenInference (Mastra, LangChain.js,
+    // OpenInference instrumentors), in the shape the Python
+    // `witness_log.integrations.otel` processor writes. The AI SDK's own
+    // `ai.*` spans are handled above and never twice.
+    if (span.name.startsWith("ai.")) return;
+    const op = str(a["gen_ai.operation.name"]);
+    const oi = str(a["openinference.span.kind"]);
+    const ids = { trace_id: ctx.traceId, span_id: ctx.spanId, parent_span_id: parentSpanId(span) };
+    const failed = span.status?.code === 2; // SpanStatusCode.ERROR
+    if (op === "execute_tool" || oi === "TOOL") {
+      const tool = str(a["gen_ai.tool.name"]) ?? str(a["tool.name"]) ?? span.name.replace(/^execute_tool /, "");
+      const toolCallId = str(a["gen_ai.tool.call.id"]);
+      const rawArgs = a["gen_ai.tool.call.arguments"] ?? a["tool.parameters"] ?? a["input.value"];
+      const intentIndex = this.log.appendIntent({
+        tool,
+        args: rawArgs === undefined ? null : parseJson(rawArgs),
+        source: "otel",
+        tool_call_id: toolCallId,
+        ...ids,
+      });
+      const payload: Record<string, unknown> = { tool, intent_index: intentIndex, outcome: failed ? "error" : "ok", source: "otel", tool_call_id: toolCallId, ...ids };
+      if (failed) payload.value = span.status?.message ?? "error";
+      else if (this.options.recordOutputs !== false) {
+        const out = a["gen_ai.tool.call.result"] ?? a["output.value"];
+        payload.value = out === undefined ? null : parseJson(out);
+      }
+      this.log.appendResult(payload);
+      return;
+    }
+    if ((op !== null && GEN_AI_CALLS.has(op)) || oi === "LLM" || oi === "AGENT") {
+      const payload: Record<string, unknown> = {
+        profile: "otel.gen_ai.call/1",
+        source: "otel",
+        span_name: span.name,
+        operation: op ?? oi,
+        model: str(a["gen_ai.response.model"]) ?? str(a["gen_ai.request.model"]) ?? str(a["llm.model_name"]),
+        provider: str(a["gen_ai.provider.name"]) ?? str(a["gen_ai.system"]) ?? str(a["llm.provider"]),
+        agent: str(a["gen_ai.agent.name"]),
+        conversation_id: str(a["gen_ai.conversation.id"]) ?? str(a["session.id"]),
+        usage: {
+          input_tokens: num(a["gen_ai.usage.input_tokens"]) ?? num(a["llm.token_count.prompt"]),
+          output_tokens: num(a["gen_ai.usage.output_tokens"]) ?? num(a["llm.token_count.completion"]),
+        },
+        outcome: failed ? "error" : "ok",
+        ...ids,
+      };
+      if (failed) payload.error = span.status?.message ?? "error";
+      if (this.options.recordPrompt) payload.input_messages = parseJson(a["gen_ai.input.messages"] ?? a["input.value"]);
+      if (this.options.recordText) payload.output_messages = parseJson(a["gen_ai.output.messages"] ?? a["output.value"]);
+      this.log.appendMemory(dropNulls(payload));
     }
   }
 
@@ -399,4 +461,13 @@ function str(v: unknown): string | null {
 
 function num(v: unknown): number | null {
   return typeof v === "number" ? v : null;
+}
+
+function parentSpanId(span: SpanLike): string | null {
+  return span.parentSpanContext?.spanId ?? span.parentSpanId ?? null;
+}
+
+/** `o` without its null members (absent attributes are not recorded as null). */
+function dropNulls(o: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null));
 }

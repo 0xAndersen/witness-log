@@ -157,7 +157,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install maturin and pytest
-        run: pip install maturin pytest
+        # opentelemetry-sdk: tests/test_otel.py runs the span processor
+        # against the real SDK (it is skipped where the SDK is missing).
+        run: pip install maturin pytest opentelemetry-sdk
       - name: Build wheel
         working-directory: crates/witness-log-python
         run: maturin build --release
