@@ -23,32 +23,54 @@ observability backend. ``pip install "witness-log[otel]"``.
 What is recorded:
 
 * **Tool calls** (``gen_ai.operation.name = execute_tool``, or
-  OpenInference ``TOOL``): an *intent* leaf when the span starts, before
-  the tool runs, and a *result* leaf when it ends (``outcome`` ``ok`` or
-  ``error`` from the span status). Payloads match the other adapters':
-  ``{"tool", "args", "t_ms", ...}`` and ``{"tool", "intent_index",
-  "outcome", "value"}``, plus ``source``, ``trace_id``, ``span_id``,
-  ``parent_span_id`` and ``tool_call_id``. Arguments and results come
-  from ``gen_ai.tool.call.arguments`` / ``gen_ai.tool.call.result`` or
+  OpenInference ``TOOL``): an *intent* leaf and a *result* leaf
+  (``outcome`` ``ok`` or ``error`` from the span status). Payloads match
+  the other adapters': ``{"tool", "args", "t_ms", ...}`` and ``{"tool",
+  "intent_index", "outcome", "value"}``, plus ``source``, ``call_id``,
+  ``trace_id``, ``span_id`` and ``parent_span_id``. Arguments and results
+  come from ``gen_ai.tool.call.arguments`` / ``gen_ai.tool.call.result`` or
   OpenInference ``input.value`` / ``output.value`` when the
-  instrumentation records them. Arguments set only after the span started
-  are added to the result leaf (``args_at_end``).
+  instrumentation records them (never ``tool.parameters``, which is the
+  tool's schema). A JSON object or array is recorded as the value it
+  encodes; anything else as the text given.
+
+  **When the intent is written.** The processor sees a span's attributes
+  when it starts and when it ends. The intent is written at the start,
+  before the tool runs, only if the instrumentation marks the span as a
+  tool span when it creates it (``gen_ai.operation.name`` or
+  ``openinference.span.kind`` set at creation). Several instrumentations
+  set them only at the end (the OpenInference LangChain and LlamaIndex
+  instrumentors, for example); their intents are written when the span
+  ends, with ``"late": true``. Where the order matters, use the framework's
+  own adapter (``witness_log.integrations.<framework>``), which records
+  the intent before the call. Arguments set only after the span started
+  are added to the result leaf as ``args_at_end``.
 * **Model and agent calls** (``chat``, ``generate_content``,
   ``text_completion``, ``invoke_agent``, ``invoke_workflow``, or
-  OpenInference ``LLM`` / ``AGENT``): one *memory* leaf
-  when the span ends: operation, model, provider, agent, conversation id,
-  token usage, finish reasons, outcome. Prompts and completions
+  OpenInference ``LLM`` / ``AGENT``): one *memory* leaf when the span
+  ends: operation, model, provider, agent, conversation id, token usage,
+  finish reasons, outcome. Prompts and completions
   (``gen_ai.input.messages``, ``gen_ai.output.messages``) are left out
   unless ``record_content=True``.
 
+**Sampling.** OpenTelemetry runs span processors only for spans the
+sampler records. A ratio sampler, or a parent-based sampler under an
+incoming ``traceparent`` that is not sampled, therefore drops leaves
+without an error. Give this processor a ``TracerProvider`` whose sampler
+records every span (the default ``ParentBased(ALWAYS_ON)`` does, except
+under an unsampled parent), or a provider of its own.
+
 Every payload is committed to the log as a salted hash; what the journal
 keeps of the payload itself follows how the log was opened
-(``store_payloads``), and ``.payloads`` keeps the exact bytes by leaf index
-for later disclosure, as :class:`witness_log.integrations.Recorder` does.
+(``store_payloads``). ``keep_payloads=True`` also keeps the exact bytes in
+``.payloads`` by leaf index for later disclosure; it is off by default
+here because a tracing processor lives as long as the process.
 
 The processor never raises into the tracing pipeline: a failed append is
-kept in ``.errors`` (``raise_on_error=True`` raises instead). Callbacks may
-arrive from several threads; appends are serialised by the log.
+kept in ``.errors`` (``raise_on_error=True`` raises instead, inside the
+SDK's processor loop, so the processors after this one miss that span:
+for tests only). Callbacks may arrive from several threads; appends are
+serialised by the log.
 """
 
 from __future__ import annotations
@@ -56,7 +78,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.trace import StatusCode
@@ -72,20 +94,36 @@ CALL_OPERATIONS = frozenset({"chat", "generate_content", "text_completion", "inv
 # OpenInference span kinds (openinference.span.kind).
 OI_TOOL = "TOOL"
 OI_CALLS = frozenset({"LLM", "AGENT"})
+# Google ADK wraps parallel tool calls in one extra span named this, whose
+# tool name it sets to "(merged tools)"; the calls inside have their own.
+MERGED_SPAN_NAMES = frozenset({"execute_tool (merged)"})
+MERGED_TOOL_NAMES = frozenset({"(merged tools)"})
+# Tool spans started but not ended are held at most this many at once; a
+# span that never ends must not grow the processor without bound.
+MAX_PENDING = 10_000
 
 
 def _hex(n: Optional[int], width: int) -> Optional[str]:
     return None if n is None else format(n, f"0{width}x")
 
 
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"not JSON: {name}")
+
+
 def _json_or_text(v: Any) -> Any:
-    """An attribute holding JSON (tool arguments, results) as the value it
-    encodes; anything else as given."""
+    """A JSON object or array held as text (tool arguments, results) as the
+    value it encodes; any other text as given. A bare number, ``true``,
+    ``null`` or ``NaN`` is not reinterpreted: ``"12345678901234567890"`` or
+    ``"null"`` is what the tool said, not a JSON value."""
     if isinstance(v, str):
-        try:
-            return json.loads(v)
-        except ValueError:
-            return v
+        s = v.lstrip()
+        if s[:1] in ("{", "["):
+            try:
+                return json.loads(v, parse_constant=_no_constant)
+            except ValueError:
+                return v
+        return v
     if isinstance(v, (list, tuple)):
         return list(v)
     return v
@@ -96,6 +134,17 @@ def _first(attrs: Mapping[str, Any], *keys: str) -> Any:
         v = attrs.get(k)
         if v is not None:
             return v
+    return None
+
+
+def _exception_message(span: Any) -> Optional[str]:
+    """The message of the last ``exception`` event on the span, if any
+    (``exception.message`` is an event attribute, not a span attribute)."""
+    for ev in reversed(list(getattr(span, "events", None) or ())):
+        if getattr(ev, "name", None) == "exception":
+            msg = (getattr(ev, "attributes", None) or {}).get("exception.message")
+            if msg is not None:
+                return str(msg)
     return None
 
 
@@ -112,7 +161,7 @@ class WitnessLogSpanProcessor(SpanProcessor):
         record_content: bool = False,
         record_calls: bool = True,
         raise_on_error: bool = False,
-        keep_payloads: bool = True,
+        keep_payloads: bool = False,
     ) -> None:
         self.log = log
         self.record_inputs = record_inputs
@@ -122,7 +171,8 @@ class WitnessLogSpanProcessor(SpanProcessor):
         self.recorder = Recorder(
             log, record_output=record_outputs, raise_on_error=raise_on_error, keep_payloads=keep_payloads
         )
-        self._pending: Dict[int, Optional[int]] = {}
+        # (trace_id, span_id) -> (intent index, the arguments recorded in it).
+        self._pending: Dict[Tuple[int, int], Tuple[Optional[int], Any]] = {}
         self._lock = threading.Lock()
 
     @property
@@ -136,14 +186,21 @@ class WitnessLogSpanProcessor(SpanProcessor):
     # -- classification ---------------------------------------------------
 
     @staticmethod
-    def _kind(attrs: Mapping[str, Any]) -> Optional[str]:
+    def _kind(span: Any, attrs: Mapping[str, Any]) -> Optional[str]:
         op = attrs.get("gen_ai.operation.name")
         oi = attrs.get("openinference.span.kind")
         if op in TOOL_OPERATIONS or oi == OI_TOOL:
+            if span.name in MERGED_SPAN_NAMES or attrs.get("gen_ai.tool.name") in MERGED_TOOL_NAMES:
+                return None
             return "tool"
         if op in CALL_OPERATIONS or oi in OI_CALLS:
             return "call"
         return None
+
+    @staticmethod
+    def _key(span: Any) -> Tuple[int, int]:
+        ctx = span.get_span_context()
+        return (ctx.trace_id, ctx.span_id)
 
     @staticmethod
     def _ids(span: Any) -> Dict[str, Optional[str]]:
@@ -166,33 +223,49 @@ class WitnessLogSpanProcessor(SpanProcessor):
     def _args(self, attrs: Mapping[str, Any]) -> Any:
         if not self.record_inputs:
             return None
-        v = _first(attrs, "gen_ai.tool.call.arguments", "tool.parameters", "input.value")
+        # Not `tool.parameters`: in OpenInference that is the tool's schema.
+        v = _first(attrs, "gen_ai.tool.call.arguments", "input.value")
         return None if v is None else _json_or_text(v)
+
+    def _nested_in(self, span: Any) -> Optional[str]:
+        """The span id of the tool span this one runs inside (an MCP client
+        span under a framework's tool span: one call, two spans), if any."""
+        parent = getattr(span, "parent", None)
+        if parent is None:
+            return None
+        with self._lock:
+            enclosing = (parent.trace_id, parent.span_id) in self._pending
+        return _hex(parent.span_id, 16) if enclosing else None
 
     # -- SpanProcessor ----------------------------------------------------
 
     def on_start(self, span: Span, parent_context: Any = None) -> None:
         try:
             attrs = span.attributes or {}
-            if self._kind(attrs) != "tool":
+            if self._kind(span, attrs) != "tool":
                 return
-            ids = self._ids(span)
-            idx = self.recorder.intent(
-                self._tool_name(span, attrs),
-                self._args(attrs),
-                source="otel",
-                tool_call_id=attrs.get("gen_ai.tool.call.id"),
-                **ids,
-            )
+            extra: Dict[str, Any] = {"source": "otel", "call_id": attrs.get("gen_ai.tool.call.id"), **self._ids(span)}
+            nested = self._nested_in(span)
+            if nested is not None:
+                extra["nested_in"] = nested
+            args = self._args(attrs)
+            idx = self.recorder.intent(self._tool_name(span, attrs), args, **extra)
             with self._lock:
-                self._pending[span.get_span_context().span_id] = idx
+                if len(self._pending) >= MAX_PENDING:
+                    # The oldest span still open: it will get a late intent
+                    # of its own if it ever ends.
+                    self._pending.pop(next(iter(self._pending)))
+                    self.recorder.errors.append(
+                        f"on_start: more than {MAX_PENDING} tool spans open at once; forgot the oldest"
+                    )
+                self._pending[self._key(span)] = (idx, args)
         except Exception as e:  # noqa: BLE001 -- never break tracing unless asked
             self._fail("on_start", e)
 
     def on_end(self, span: ReadableSpan) -> None:
         try:
             attrs = span.attributes or {}
-            kind = self._kind(attrs)
+            kind = self._kind(span, attrs)
             if kind == "tool":
                 self._tool_end(span, attrs)
             elif kind == "call" and self.record_calls:
@@ -215,23 +288,27 @@ class WitnessLogSpanProcessor(SpanProcessor):
     # -- leaves -----------------------------------------------------------
 
     def _tool_end(self, span: ReadableSpan, attrs: Mapping[str, Any]) -> None:
+        key = self._key(span)
         with self._lock:
-            known = span.context.span_id in self._pending
-            intent_index = self._pending.pop(span.context.span_id, None)
+            pending = self._pending.pop(key, None)
         tool = self._tool_name(span, attrs)
-        ids = self._ids(span)
-        extra: Dict[str, Any] = {"source": "otel", "tool_call_id": attrs.get("gen_ai.tool.call.id"), **ids}
-        if not known:
-            # Started before this processor was added: write the intent now,
-            # so the pair stays complete (marked as written at the end).
-            intent_index = self.recorder.intent(tool, self._args(attrs), late=True, **extra)
-        elif self.record_inputs:
-            args = self._args(attrs)
-            if args is not None:
+        extra: Dict[str, Any] = {"source": "otel", "call_id": attrs.get("gen_ai.tool.call.id"), **self._ids(span)}
+        nested = self._nested_in(span)
+        if nested is not None:
+            extra["nested_in"] = nested
+        args = self._args(attrs)
+        if pending is None:
+            # Marked a tool span only at its end (or started before this
+            # processor was added): the intent is written now, after the
+            # tool ran, and says so.
+            intent_index = self.recorder.intent(tool, args, late=True, **extra)
+        else:
+            intent_index, args_at_start = pending
+            if args is not None and args != args_at_start:
                 extra["args_at_end"] = args
         failed = span.status is not None and span.status.status_code == StatusCode.ERROR
         if failed:
-            value: Any = span.status.description or _first(attrs, "error.type", "exception.message") or "error"
+            value: Any = span.status.description or _exception_message(span) or attrs.get("error.type") or "error"
         else:
             out = _first(attrs, "gen_ai.tool.call.result", "output.value")
             value = None if out is None else _json_or_text(out)
@@ -239,6 +316,7 @@ class WitnessLogSpanProcessor(SpanProcessor):
 
     def _call_end(self, span: ReadableSpan, attrs: Mapping[str, Any]) -> None:
         failed = span.status is not None and span.status.status_code == StatusCode.ERROR
+        finish = attrs.get("gen_ai.response.finish_reasons")
         payload: Dict[str, Any] = {
             "profile": "otel.gen_ai.call/1",
             "source": "otel",
@@ -250,7 +328,7 @@ class WitnessLogSpanProcessor(SpanProcessor):
             "agent_id": attrs.get("gen_ai.agent.id"),
             "conversation_id": _first(attrs, "gen_ai.conversation.id", "session.id"),
             "response_id": attrs.get("gen_ai.response.id"),
-            "finish_reasons": _json_or_text(attrs.get("gen_ai.response.finish_reasons")),
+            "finish_reasons": list(finish) if isinstance(finish, (list, tuple)) else finish,
             "usage": {
                 "input_tokens": _first(attrs, "gen_ai.usage.input_tokens", "llm.token_count.prompt"),
                 "output_tokens": _first(attrs, "gen_ai.usage.output_tokens", "llm.token_count.completion"),
@@ -276,4 +354,3 @@ class WitnessLogSpanProcessor(SpanProcessor):
         self.recorder.errors.append(f"{where}: {type(e).__name__}: {e}")
         if self.raise_on_error:
             raise e
-

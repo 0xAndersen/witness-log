@@ -270,6 +270,15 @@ export interface WitnessTelemetryOptions {
   recordOutputs?: boolean;
   /** Record `ai.prompt` in generation leaves. Default false. */
   recordPrompt?: boolean;
+  /**
+   * Also record spans from other instrumentations in the provider that
+   * follow the OpenTelemetry GenAI conventions or OpenInference. Default
+   * false: a provider instrumentation under `ai.generateText` would
+   * otherwise add a second leaf for the same generation.
+   */
+  otherInstrumentations?: boolean;
+  /** With `otherInstrumentations`: record tool arguments. Default true. */
+  recordInputs?: boolean;
 }
 
 const GENERATION_SPANS = new Set(["ai.generateText", "ai.streamText", "ai.generateObject", "ai.streamObject"]);
@@ -283,12 +292,14 @@ const GEN_AI_CALLS = new Set(["chat", "generate_content", "text_completion", "in
  * `ai.streamObject` span a memory leaf. Wire it with a `SimpleSpanProcessor`
  * and pass the provider's tracer as `experimental_telemetry.tracer`.
  *
- * Spans from other instrumentations in the same provider are recorded too
- * when they follow the OpenTelemetry GenAI conventions or OpenInference:
- * `execute_tool` / `TOOL` spans as an intent and a result leaf, `chat`,
- * `generate_content`, `text_completion`, `invoke_agent`, `invoke_workflow`
- * / `LLM`, `AGENT` spans as one memory leaf (prompts and completions only
- * with `recordPrompt` / `recordText`).
+ * With `otherInstrumentations: true`, spans from other instrumentations in
+ * the same provider are recorded too when they follow the OpenTelemetry
+ * GenAI conventions or OpenInference: `execute_tool` / `TOOL` spans as an
+ * intent and a result leaf, `chat`, `generate_content`, `text_completion`,
+ * `invoke_agent`, `invoke_workflow` / `LLM`, `AGENT` spans as one memory
+ * leaf (prompts and completions only with `recordPrompt` / `recordText`).
+ * An exporter sees a span only once it has ended, so those intents are
+ * written after the tool ran and carry `late: true`.
  */
 export class WitnessLogSpanExporter {
   constructor(
@@ -359,27 +370,32 @@ export class WitnessLogSpanExporter {
     // OpenInference instrumentors), in the shape the Python
     // `witness_log.integrations.otel` processor writes. The AI SDK's own
     // `ai.*` spans are handled above and never twice.
-    if (span.name.startsWith("ai.")) return;
+    if (span.name.startsWith("ai.") || !this.options.otherInstrumentations) return;
     const op = str(a["gen_ai.operation.name"]);
     const oi = str(a["openinference.span.kind"]);
     const ids = { trace_id: ctx.traceId, span_id: ctx.spanId, parent_span_id: parentSpanId(span) };
     const failed = span.status?.code === 2; // SpanStatusCode.ERROR
     if (op === "execute_tool" || oi === "TOOL") {
       const tool = str(a["gen_ai.tool.name"]) ?? str(a["tool.name"]) ?? span.name.replace(/^execute_tool /, "");
-      const toolCallId = str(a["gen_ai.tool.call.id"]);
-      const rawArgs = a["gen_ai.tool.call.arguments"] ?? a["tool.parameters"] ?? a["input.value"];
+      // Google ADK's wrapper around parallel calls: the calls have their own spans.
+      if (span.name === "execute_tool (merged)" || tool === "(merged tools)") return;
+      const callId = str(a["gen_ai.tool.call.id"]);
+      // Not `tool.parameters`: in OpenInference that is the tool's schema.
+      const rawArgs = this.options.recordInputs === false ? undefined : (a["gen_ai.tool.call.arguments"] ?? a["input.value"]);
       const intentIndex = this.log.appendIntent({
         tool,
-        args: rawArgs === undefined ? null : parseJson(rawArgs),
+        args: rawArgs === undefined ? null : jsonOrText(rawArgs),
+        t_ms: Date.now(),
+        late: true,
         source: "otel",
-        tool_call_id: toolCallId,
+        call_id: callId,
         ...ids,
       });
-      const payload: Record<string, unknown> = { tool, intent_index: intentIndex, outcome: failed ? "error" : "ok", source: "otel", tool_call_id: toolCallId, ...ids };
-      if (failed) payload.value = span.status?.message ?? "error";
+      const payload: Record<string, unknown> = { tool, intent_index: intentIndex, outcome: failed ? "error" : "ok", source: "otel", call_id: callId, ...ids };
+      if (failed) payload.value = span.status?.message ?? str(a["error.type"]) ?? "error";
       else if (this.options.recordOutputs !== false) {
         const out = a["gen_ai.tool.call.result"] ?? a["output.value"];
-        payload.value = out === undefined ? null : parseJson(out);
+        payload.value = out === undefined ? null : jsonOrText(out);
       }
       this.log.appendResult(payload);
       return;
@@ -391,8 +407,11 @@ export class WitnessLogSpanExporter {
         span_name: span.name,
         operation: op ?? oi,
         model: str(a["gen_ai.response.model"]) ?? str(a["gen_ai.request.model"]) ?? str(a["llm.model_name"]),
-        provider: str(a["gen_ai.provider.name"]) ?? str(a["gen_ai.system"]) ?? str(a["llm.provider"]),
-        agent: str(a["gen_ai.agent.name"]),
+        provider: str(a["gen_ai.provider.name"]) ?? str(a["gen_ai.system"]) ?? str(a["llm.provider"]) ?? str(a["llm.system"]),
+        agent: str(a["gen_ai.agent.name"]) ?? str(a["agent.name"]),
+        agent_id: str(a["gen_ai.agent.id"]),
+        response_id: str(a["gen_ai.response.id"]),
+        finish_reasons: Array.isArray(a["gen_ai.response.finish_reasons"]) ? a["gen_ai.response.finish_reasons"] : null,
         conversation_id: str(a["gen_ai.conversation.id"]) ?? str(a["session.id"]),
         usage: {
           input_tokens: num(a["gen_ai.usage.input_tokens"]) ?? num(a["llm.token_count.prompt"]),
@@ -401,9 +420,9 @@ export class WitnessLogSpanExporter {
         outcome: failed ? "error" : "ok",
         ...ids,
       };
-      if (failed) payload.error = span.status?.message ?? "error";
-      if (this.options.recordPrompt) payload.input_messages = parseJson(a["gen_ai.input.messages"] ?? a["input.value"]);
-      if (this.options.recordText) payload.output_messages = parseJson(a["gen_ai.output.messages"] ?? a["output.value"]);
+      if (failed) payload.error = span.status?.message ?? str(a["error.type"]) ?? "error";
+      if (this.options.recordPrompt) payload.input_messages = jsonOrText(a["gen_ai.input.messages"] ?? a["input.value"]);
+      if (this.options.recordText) payload.output_messages = jsonOrText(a["gen_ai.output.messages"] ?? a["output.value"]);
       this.log.appendMemory(dropNulls(payload));
     }
   }
@@ -448,6 +467,22 @@ function jsonSafe(v: unknown): unknown {
 
 function parseJson(v: unknown): unknown {
   if (typeof v !== "string") return v === undefined ? null : jsonSafe(v);
+  try {
+    return JSON.parse(v) as unknown;
+  } catch {
+    return v;
+  }
+}
+
+/**
+ * A JSON object or array held as text as the value it encodes; any other
+ * text as given (a bare number, `true` or `null` is what the tool said).
+ * The rule the Python processor applies.
+ */
+function jsonOrText(v: unknown): unknown {
+  if (typeof v !== "string") return v === undefined ? null : jsonSafe(v);
+  const s = v.trimStart();
+  if (!s.startsWith("{") && !s.startsWith("[")) return v;
   try {
     return JSON.parse(v) as unknown;
   } catch {

@@ -369,8 +369,7 @@ trace.set_tracer_provider(provider)   # keep your exporter: the processor runs b
 ```
 
 Each tool span (`execute_tool`, OpenInference `TOOL`) becomes an intent leaf
-when it starts, before the tool runs, and a result leaf when it ends, with
-the arguments and result the instrumentation records
+and a result leaf, with the arguments and result the instrumentation records
 (`gen_ai.tool.call.arguments` / `.result`, or `input.value` /
 `output.value`). Each model or agent span (`chat`, `generate_content`,
 `invoke_agent`, ..., OpenInference `LLM` / `AGENT`) becomes one memory leaf
@@ -380,6 +379,25 @@ Prompts and completions stay out unless `record_content=True`;
 leaf carries the span's `trace_id` and `span_id`, so an entry in the log
 points to the same span in your observability backend. A failing append
 never breaks tracing: it lands in `processor.errors`.
+
+What to know before relying on it:
+
+- **When the intent is written.** Before the tool runs only if the
+  instrumentation marks the span as a tool span when it creates it. Some set
+  the span kind only at the end (the OpenInference LangChain and LlamaIndex
+  instrumentors, for example); then the intent is written when the span ends
+  and carries `"late": true`. Where the order matters, use the framework's
+  own adapter above, which writes the intent before the call.
+- **Sampling.** OpenTelemetry runs span processors only for spans the
+  sampler records. A ratio sampler, or an unsampled incoming `traceparent`
+  under the default parent-based sampler, drops leaves without an error.
+  Give the processor a provider whose sampler records these spans.
+- **Payloads.** `keep_payloads=True` keeps each payload's exact bytes in
+  `processor.payloads` for later disclosure; it is off by default because a
+  tracing processor lives as long as the process. Open the log with
+  `store_payloads=True` to keep them in the journal instead.
+- **One call, two spans.** An MCP client span inside a framework's tool span
+  is recorded too, with `nested_in` naming the outer span.
 
 ## A shared helper for anything else
 

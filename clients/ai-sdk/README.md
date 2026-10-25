@@ -86,16 +86,23 @@ await generateText({
 await provider.forceFlush();
 ```
 
-Other instrumentations sharing the provider are recorded too, when they
-follow the OpenTelemetry GenAI semantic conventions (`gen_ai.*`) or
-OpenInference (Mastra, LangChain.js and the OpenInference instrumentors):
-an `execute_tool` / `TOOL` span becomes an intent and a result leaf, a
+With `witnessTelemetry(log, { otherInstrumentations: true })`, other
+instrumentations sharing the provider are recorded too, when they follow
+the OpenTelemetry GenAI semantic conventions (`gen_ai.*`) or OpenInference
+(Mastra, LangChain.js and the OpenInference instrumentors): an
+`execute_tool` / `TOOL` span becomes an intent and a result leaf, a
 `chat`, `generate_content`, `text_completion`, `invoke_agent` or
 `invoke_workflow` / `LLM`, `AGENT` span one memory leaf (model, provider,
 agent, token usage, outcome; prompts and completions only with
-`recordPrompt` / `recordText`). The payloads have the shape the Python
+`recordPrompt` / `recordText`; tool arguments unless `recordInputs:
+false`). It is off by default: a provider instrumentation under
+`ai.generateText` would add a second leaf for the same generation. An
+exporter sees a span only after it ends, so these intents are written after
+the tool ran and say so (`late: true`); `witnessTools` is the way to an
+intent written before the call. The payloads have the shape the Python
 `witness_log.integrations.otel.WitnessLogSpanProcessor` writes, and the AI
-SDK's own `ai.*` spans are never recorded twice.
+SDK's own `ai.*` spans are never recorded twice. Spans the sampler drops
+never reach an exporter.
 
 ## Then
 

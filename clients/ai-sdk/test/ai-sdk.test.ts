@@ -234,7 +234,9 @@ describe("witnessMiddleware", () => {
 describe("witnessTelemetry: other instrumentations (GenAI conventions, OpenInference)", () => {
   it("records execute_tool and chat spans, and never an ai.* span twice", async () => {
     const log = openLog(tempJournalPath(), { storePayloads: true });
-    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(witnessTelemetry(log))] });
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(witnessTelemetry(log, { otherInstrumentations: true }))],
+    });
     const tracer = provider.getTracer("other-instrumentation");
     const agent = tracer.startSpan("invoke_agent triage", { attributes: { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "triage" } });
     const inAgent = otelTrace.setSpan(otelContext.active(), agent);
@@ -248,7 +250,15 @@ describe("witnessTelemetry: other instrumentations (GenAI conventions, OpenInfer
       },
     }, inAgent);
     tool.end();
-    const failed = tracer.startSpan("lookup", { attributes: { "openinference.span.kind": "TOOL", "tool.name": "lookup" } });
+    const failed = tracer.startSpan("lookup", {
+      attributes: {
+        "openinference.span.kind": "TOOL",
+        "tool.name": "lookup",
+        // The tool's schema, not the call's arguments.
+        "tool.parameters": '{"type":"object"}',
+        "input.value": "12345678901234567890",
+      },
+    });
     failed.setStatus({ code: 2, message: "not found" });
     failed.end();
     const chat = tracer.startSpan("chat m", {
@@ -271,6 +281,12 @@ describe("witnessTelemetry: other instrumentations (GenAI conventions, OpenInfer
     assert.equal(p[0].body?.tool, "get_weather");
     assert.deepEqual(p[0].body?.args, { city: "Lisbon" });
     assert.equal(p[0].body?.source, "otel");
+    assert.equal(p[0].body?.call_id, "call_1");
+    // An exporter sees a span once it has ended: the intent says it came after the call.
+    assert.equal(p[0].body?.late, true);
+    assert.equal(typeof p[0].body?.t_ms, "number");
+    // Only an object or array is reinterpreted; the schema is never the arguments.
+    assert.equal(p[2].body?.args, "12345678901234567890");
     assert.deepEqual(p[1].body?.value, { temp_c: 21 });
     assert.equal(p[1].body?.intent_index, 0);
     assert.equal(p[3].body?.outcome, "error");
@@ -283,6 +299,21 @@ describe("witnessTelemetry: other instrumentations (GenAI conventions, OpenInfer
     assert.equal(p[5].body?.agent, "triage");
     assert.equal(p[0].body?.parent_span_id, p[5].body?.span_id);
     assertVerifies(log);
+    await provider.shutdown();
+    log.close();
+  });
+});
+
+describe("witnessTelemetry: other instrumentations are opt-in", () => {
+  it("records nothing from them by default", async () => {
+    const log = openLog(tempJournalPath(), { storePayloads: true });
+    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(witnessTelemetry(log))] });
+    const tracer = provider.getTracer("other-instrumentation");
+    tracer.startSpan("chat m", { attributes: { "gen_ai.operation.name": "chat" } }).end();
+    tracer.startSpan("execute_tool t", { attributes: { "gen_ai.operation.name": "execute_tool" } }).end();
+    tracer.startSpan("execute_tool (merged)", { attributes: { "gen_ai.operation.name": "execute_tool" } }).end();
+    await provider.forceFlush();
+    assert.equal(payloads(log).length, 0);
     await provider.shutdown();
     log.close();
   });
