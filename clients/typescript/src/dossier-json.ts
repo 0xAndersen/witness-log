@@ -61,6 +61,19 @@ const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[
 const NUMBER = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
 const HEX4 = /^[0-9a-fA-F]{4}$/;
 
+/**
+ * The members of a parsed object that its {@link Shape} does not name: not
+ * kept as properties (a million ignored keys held about 215 MB), only how
+ * many there were and whether any key had an unpaired surrogate, which is
+ * all a reader asks of them.
+ */
+const UNNAMED = new WeakMap<object, { count: number; loneSurrogate: boolean }>();
+
+/** How many members `o` had in its text, named or not. */
+function memberCount(o: object): number {
+  return Object.keys(o).length + (UNNAMED.get(o)?.count ?? 0);
+}
+
 function setOwn(obj: Record<string, unknown>, key: string, value: unknown): void {
   if (Object.prototype.hasOwnProperty.call(obj, key)) {
     let d = DUPLICATED.get(obj);
@@ -116,12 +129,23 @@ function literal(s: string): string {
  * An array or object where its shape wants another kind (an array where a
  * struct's object or a string belongs) is checked as JSON and not built:
  * it reads as {@link WRONG_ARRAY} or {@link WRONG_OBJECT}, which every
- * reader refuses with the same message it gives the value itself. So a
- * reader holds no more of a hostile text than the members it names
- * (outside audit of 0.6.1; it held a wrong-kind value whole, about 250
- * bytes of heap per byte of text).
+ * reader refuses with the same message it gives the value itself. A list
+ * keeps no item after the first one its item shape refuses, and an object
+ * keeps only the members its shape names ({@link UNNAMED} counts the
+ * rest). So hostile text costs the reader about its own size, not a
+ * multiple of it (outside audit of 0.6.1 and the review of 0.7.0: a
+ * wrong-kind value, a list of wrong-kind items or a million unknown keys
+ * held 110-580 MB for 8-12 MB of text). Still built whole: `fleet_anchor`,
+ * which is any JSON value by design, and right-kind items, which are only
+ * refused once read.
  */
-export type Shape = "all" | "scalar" | { fields: Readonly<Record<string, Shape>> } | { items: Shape };
+export type Shape =
+  | "all"
+  | "scalar"
+  // `scalar`: a string also fits (a unit variant's name), so a list of these
+  // is not cut short at one.
+  | { fields: Readonly<Record<string, Shape>>; scalar?: true }
+  | { items: Shape };
 
 /** The value of a member its object's {@link Shape} does not name: checked as JSON, not built. */
 export const IGNORED: unique symbol = Symbol("ignored");
@@ -248,6 +272,20 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
     arr: unknown[] | undefined;
     obj: Record<string, unknown> | undefined;
     key: string;
+    /**
+     * An array whose item shape refused an item: items after it are checked
+     * but not kept (the reader stops at that item, so nothing after it is
+     * ever read).
+     */
+    cut: boolean;
+  };
+  /** Whether a value its item shape `s` can never read sits in a list. */
+  const refusedItem = (s: Shape, v: unknown): boolean => {
+    if (s === "scalar") return v === WRONG_ARRAY || v === WRONG_OBJECT;
+    if (s === "all") return false;
+    if ("items" in s) return !Array.isArray(v);
+    const isObj = v !== null && typeof v === "object" && !Array.isArray(v) && !(v instanceof JsonNumber);
+    return !isObj && !(s.scalar === true && typeof v === "string");
   };
   const key = (f: Frame): void => {
     ws();
@@ -260,6 +298,7 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
   /** The shape of the next value in `f`: null to skip it. */
   const inner = (f: Frame): Shape | null => {
     const s = f.shape;
+    // A container's own shape is never "scalar": one under it is skipped (wrong).
     if (s === null || s === "all" || s === "scalar") return s === "scalar" ? null : s;
     if ("items" in s) return s.items;
     return Object.prototype.hasOwnProperty.call(s.fields, f.key) ? s.fields[f.key] : null;
@@ -289,6 +328,7 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
           isArray,
           shape: s,
           wrong,
+          cut: false,
           arr: s !== null && isArray ? [] : undefined,
           obj: s !== null && !isArray ? {} : undefined,
           key: "",
@@ -329,8 +369,23 @@ export function parseJsonExact(text: string, shape: Shape = "all", maxDepth = In
         if (i !== text.length) fail("trailing characters");
         return v;
       }
-      if (top.arr !== undefined) top.arr.push(v);
-      else if (top.obj !== undefined) setOwn(top.obj, top.key, v);
+      if (top.arr !== undefined) {
+        if (!top.cut) {
+          top.arr.push(v);
+          const s = top.shape;
+          if (s !== null && s !== "all" && s !== "scalar" && "items" in s && refusedItem(s.items, v)) top.cut = true;
+        }
+      } else if (top.obj !== undefined) {
+        const s = top.shape;
+        if (s !== null && s !== "all" && s !== "scalar" && "fields" in s && !Object.prototype.hasOwnProperty.call(s.fields, top.key)) {
+          const u = UNNAMED.get(top.obj) ?? { count: 0, loneSurrogate: false };
+          u.count++;
+          u.loneSurrogate ||= LONE_SURROGATE.test(top.key);
+          UNNAMED.set(top.obj, u);
+        } else {
+          setOwn(top.obj, top.key, v);
+        }
+      }
       ws();
       const d = text.charCodeAt(i);
       if (d === 0x2c) {
@@ -490,7 +545,7 @@ function unitVariant(variants: readonly string[]): Reader {
     if (typeof v === "string" && variants.includes(v)) return v;
     if (isObject(v) && !DUPLICATED.has(v)) {
       const keys = Object.keys(v);
-      if (keys.length === 1 && variants.includes(keys[0]) && v[keys[0]] === null) return keys[0];
+      if (memberCount(v) === 1 && keys.length === 1 && variants.includes(keys[0]) && v[keys[0]] === null) return keys[0];
     }
     return bad(path, `expected one of ${variants.join(", ")}, got ${describe(v)}`);
   }, unitShape(variants));
@@ -500,7 +555,7 @@ function unitVariant(variants: readonly string[]): Reader {
 function unitShape(variants: readonly string[]): Shape {
   const fields: Record<string, Shape> = Object.create(null);
   for (const name of variants) fields[name] = "scalar";
-  return { fields };
+  return { fields, scalar: true };
 }
 
 interface Field {
@@ -525,7 +580,9 @@ function structReader(fields: Record<string, Field>): Reader {
   return (v, path) => {
     if (!isObject(v)) bad(path, `expected an object, got ${describe(v)}`);
     const o = v as Obj;
-    for (const k of Object.keys(o)) if (LONE_SURROGATE.test(k)) bad(path, "a key has an unpaired surrogate");
+    if (UNNAMED.get(o)?.loneSurrogate || Object.keys(o).some((k) => LONE_SURROGATE.test(k))) {
+      bad(path, "a key has an unpaired surrogate");
+    }
     const dups = DUPLICATED.get(o);
     const out: Obj = {};
     for (const [name, f] of Object.entries(fields)) {
@@ -613,14 +670,15 @@ const CUSTODY_UNIT = ["self_held", "platform_held", "hsm", "kms", "session_deleg
 const THRESHOLD = struct({ k: req(str), n: req(str) });
 
 /** KeyCustody: a unit variant, or `{"threshold": {"k": "..", "n": ".."}}`. */
+const CUSTODY_VARIANT = unitVariant(CUSTODY_UNIT);
 const custody: Reader = withShape(
   (v, path) => {
-    if (isObject(v) && !DUPLICATED.has(v) && Object.keys(v).length === 1 && Object.prototype.hasOwnProperty.call(v, "threshold")) {
+    if (isObject(v) && !DUPLICATED.has(v) && memberCount(v) === 1 && Object.prototype.hasOwnProperty.call(v, "threshold")) {
       return { threshold: THRESHOLD(v.threshold, `${path}.threshold`) };
     }
-    return unitVariant(CUSTODY_UNIT)(v, path);
+    return CUSTODY_VARIANT(v, path);
   },
-  { fields: { ...(unitShape(CUSTODY_UNIT) as { fields: Record<string, Shape> }).fields, threshold: shapeOf(THRESHOLD) } },
+  { fields: { ...(unitShape(CUSTODY_UNIT) as { fields: Record<string, Shape> }).fields, threshold: shapeOf(THRESHOLD) }, scalar: true },
 );
 
 const KEY_BINDING = struct({

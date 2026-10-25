@@ -2,6 +2,7 @@
  * The TypeScript verifier against the conformance corpus (/corpus) and the
  * repository's sample dossier. Pure Node: no binary, no network.
  */
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -31,7 +32,7 @@ import {
   type Leaf,
   type WitnessDirectory,
 } from "../src/index.js";
-import { IGNORED, MAX_DOSSIER_DEPTH, WRONG_ARRAY, WRONG_OBJECT, parseJsonExact, readDossierText } from "../src/dossier-json.js";
+import { MAX_DOSSIER_DEPTH, WRONG_ARRAY, WRONG_OBJECT, parseJsonExact, readDossierText } from "../src/dossier-json.js";
 
 const here = dirname(fileURLToPath(import.meta.url)); // clients/typescript/dist/test
 const repo = resolve(here, "..", "..", "..", "..");
@@ -719,9 +720,9 @@ describe("parseJsonExact builds only what a dossier reads", () => {
   it("an ignored key's value is checked as JSON and not built", () => {
     const shape = { fields: { a: "all" as const } };
     const v = parseJsonExact('{"a":[1,{"b":2}],"zz":[[1,2],{"c":"\\u00e9"}],"zz2":"x","zz3":-1.5e3}', shape) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(v), ["a", "zz", "zz2", "zz3"]);
+    // Unnamed members are counted, not kept.
+    assert.deepEqual(Object.keys(v), ["a"]);
     assert.equal((v.a as unknown[]).length, 2);
-    for (const k of ["zz", "zz2", "zz3"]) assert.equal(v[k], IGNORED, k);
     for (const text of ['{"zz":[1,]}', '{"zz":"\\x"}', '{"zz":[1}', '{"zz":01}', '{"zz":"\u0001"}', '{"zz":{"a" 1}}', '{"zz":"\\u12"}', '{"zz":tru}']) {
       assert.throws(() => parseJsonExact(text, shape), SyntaxError, text);
     }
@@ -733,7 +734,7 @@ describe("parseJsonExact builds only what a dossier reads", () => {
     assert.equal(v.s, WRONG_ARRAY);
     assert.equal(v.o, WRONG_ARRAY);
     assert.equal(v.l, WRONG_OBJECT);
-    assert.equal(v.t, IGNORED);
+    assert.equal("t" in v, false);
     assert.equal((parseJsonExact('{"s":{}}', shape) as Record<string, unknown>).s, WRONG_OBJECT);
     const l = (parseJsonExact('{"l":[1,"a",null]}', shape) as { l: unknown[] }).l;
     assert.equal((l[0] as { literal: string }).literal, "1");
@@ -744,23 +745,36 @@ describe("parseJsonExact builds only what a dossier reads", () => {
     }
   });
 
-  it("a hostile wrong-kind value fails with the reader's message, not a heap of it", () => {
-    // About 8 MB of text, 2 million arrays: held whole before, about 500 MB of heap.
-    const big = "[" + Array(2_000_000).fill("[1]").join(",") + "]";
-    for (const [text, message] of [
-      [`{"identity_pubkey":${big},"leaves":[],"checkpoint":{}}`, /dossier\.identity_pubkey: expected a string, got an array/],
-      [`{"identity_pubkey":"a","leaves":[],"checkpoint":${big}}`, /dossier\.checkpoint: expected an object, got an array/],
-      [`{"identity_pubkey":"a","leaves":[{"index":${big}}],"checkpoint":{}}`, /leaves\[0\]\.index: expected an unsigned integer, got an array/],
-      [`{"identity_pubkey":"a","leaves":{"a":${big}},"checkpoint":{}}`, /dossier\.leaves: expected an array, got an object/],
-      [
-        `{"identity_pubkey":"a","leaves":[{"index":0,"leaf_type":0,"timestamp_ms":0,"session_pubkey":"s","payload_hash":"p","handoff_direction":${big}}],"checkpoint":{}}`,
-        /expected one of Sent, Received, got an array/,
-      ],
-    ] as const) {
-      const before = process.memoryUsage().heapUsed;
-      assert.throws(() => readDossierText(text), message);
-      const grew = process.memoryUsage().heapUsed - before;
-      assert.ok(grew < 64e6, `heap grew ${(grew / 1e6).toFixed(0)} MB reading ${text.slice(0, 40)}...`);
+  it("a hostile text fails with the reader's message, not a heap of it", () => {
+    // Each case in a fresh process, measured by peak RSS (heapUsed deltas
+    // depend on when the collector runs). Before this change: 110-290 MB each
+    // for a million items; after: 12-30 MB.
+    const mod = new URL("../src/dossier-json.js", import.meta.url).href;
+    const N = 1_000_000;
+    const cases: Array<[string, string]> = [
+      ["identity_pubkey holds arrays", `'{"identity_pubkey":[' + "[1],".repeat(${N}) + '[1]],"leaves":[],"checkpoint":{}}'`],
+      ["checkpoint holds arrays", `'{"identity_pubkey":"a","leaves":[],"checkpoint":[' + "[1],".repeat(${N}) + '[1]]}'`],
+      ["leaves holds numbers", `'{"identity_pubkey":"a","leaves":[' + "1,".repeat(${N}) + '1],"checkpoint":{}}'`],
+      ["leaves holds nulls", `'{"identity_pubkey":"a","leaves":[' + "null,".repeat(${N}) + 'null],"checkpoint":{}}'`],
+      ["a million unknown keys", `'{"identity_pubkey":"a",' + Array.from({ length: ${N} }, (_, i) => '"k' + i + '":0').join(",") + ',"leaves":[],"checkpoint":{}}'`],
+      ["unknown keys in a unit variant", `'{"identity_pubkey":"a","leaves":[{"index":0,"leaf_type":0,"timestamp_ms":0,"session_pubkey":"s","payload_hash":"p","handoff_direction":{' + Array.from({ length: ${N} }, (_, i) => '"k' + i + '":0').join(",") + '}}],"checkpoint":{}}'`],
+    ];
+    for (const [name, build] of cases) {
+      const script = `
+        const { readDossierText } = await import(${JSON.stringify(mod)});
+        const text = ${build};
+        globalThis.gc?.();
+        const before = process.memoryUsage().rss;
+        let message = "";
+        try { readDossierText(text); } catch (e) { message = e.message; }
+        const peak = process.resourceUsage().maxRSS * 1024;
+        console.log(JSON.stringify({ message, grew: peak - before }));
+      `;
+      const r = spawnSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", script], { encoding: "utf8" });
+      assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+      const out = JSON.parse(r.stdout) as { message: string; grew: number };
+      assert.ok(out.message !== "", `${name}: no failure`);
+      assert.ok(out.grew < 60e6, `${name}: peak RSS grew ${(out.grew / 1e6).toFixed(0)} MB past the text (${out.message})`);
     }
   });
 
